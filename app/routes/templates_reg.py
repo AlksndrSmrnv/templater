@@ -108,7 +108,11 @@ async def api_update(
 ):
     svc = TemplateService(session)
     template = await svc.update(template_id, data)
-    if data.placeholders is not None:
+    # update_placeholders rebuilds content from placeholders against
+    # original_content. If the caller replaced content, we already reset
+    # placeholders inside update(); running update_placeholders here would
+    # silently re-apply stale placeholder positions to the new body.
+    if data.placeholders is not None and data.content is None:
         template = await svc.update_placeholders(template_id, data.placeholders)
     return TemplateRead.model_validate(template, from_attributes=True)
 

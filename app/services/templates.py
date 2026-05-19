@@ -58,6 +58,7 @@ class TemplateService:
 
     async def update(self, template_id: uuid.UUID, data: TemplateUpdate) -> MessageTemplate:
         template = await self.get(template_id)
+        content_replaced = False
         if data.name is not None:
             template.name = data.name
         if data.description is not None:
@@ -70,10 +71,20 @@ class TemplateService:
                 self._extract_leaves(template.format, data.content)
             except Exception as exc:
                 raise ValidationFailed(f"content не парсится как {template.format}: {exc}") from exc
+            # Replacing the body is effectively a re-upload: sync the source of
+            # truth (original_content) and drop existing placeholders, since
+            # their locations are no longer guaranteed to exist in the new
+            # document. Caller is expected to re-run analyze afterwards.
             template.content = data.content
+            template.original_content = data.content
+            template.placeholders = []
+            content_replaced = True
         if data.llm_meta is not None:
             template.llm_meta = data.llm_meta
-        if data.placeholders is not None:
+        # Placeholders coming alongside a content replacement are ignored — they
+        # belonged to the old body. Anything else (e.g. an editor save without
+        # touching content) is honored.
+        if data.placeholders is not None and not content_replaced:
             template.placeholders = data.placeholders
         await self.session.flush()
         await self.session.commit()

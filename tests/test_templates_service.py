@@ -1,6 +1,42 @@
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 from app.services.templates import TemplateService
+
+
+def test_regenerate_content_uses_original_content_as_source():
+    """If original_content drifts out of sync with content, regenerate uses
+    the (now stale) original. This documents why update() must keep
+    original_content in lockstep with content on PUT."""
+
+    template = SimpleNamespace(
+        format="json",
+        content='{"a": "{{sender.name}}"}',
+        original_content='{"a": "Старое"}',
+        placeholders=[
+            {
+                "location": "/a",
+                "mode": "mapped",
+                "value": "{{sender.name}}",
+                "original": "Старое",
+            }
+        ],
+    )
+    result = TemplateService.regenerate_content(template)
+    parsed = json.loads(result)
+    assert parsed["a"] == "{{sender.name}}"
+
+
+def test_regenerate_content_returns_original_when_no_placeholders():
+    template = SimpleNamespace(
+        format="json",
+        content="will-be-ignored",
+        original_content='{"a": 1}',
+        placeholders=[],
+    )
+    assert TemplateService.regenerate_content(template) == '{"a": 1}'
 
 
 def test_heuristic_mappings_matches_by_tail():

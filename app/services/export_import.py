@@ -140,6 +140,12 @@ class ExportImportService:
             except Exception as exc:
                 errors.append(f"attribute_schema {raw.get('name')}: {exc}")
 
+        # Newly-added attribute_definitions are sitting in the session but not
+        # yet visible to a fresh SELECT (autoflush=False). Flush so that the
+        # ref-attributes coming from this same package are included in the
+        # remap map below — otherwise ref-id rewrites would miss them.
+        await self.session.flush()
+
         # Map of attribute_definitions used to detect ref-attributes that may
         # need remapping after we discover a (ref_type, code) collision.
         ref_attrs_by_owner: dict[str, list[tuple[str, str]]] = {}
@@ -242,6 +248,20 @@ class ExportImportService:
                 except Exception as exc:
                     errors.append(f"{kind} {raw.get('id')}: {exc}")
 
+        from app.utils import walker as _walker
+
+        def _validate_template_body(label: str, fmt: str, body: str) -> str | None:
+            """Return an error string if ``body`` doesn't parse as ``fmt``, else None."""
+
+            try:
+                if fmt == "json":
+                    _walker.walk_json(body)
+                else:
+                    _walker.walk_xml(body)
+            except Exception as exc:
+                return f"template {label}: {fmt} не парсится: {exc}"
+            return None
+
         # templates
         for raw in package.get("templates") or []:
             try:
@@ -250,20 +270,21 @@ class ExportImportService:
                 if fmt not in ("json", "xml"):
                     errors.append(f"template {raw.get('name')}: неподдерживаемый формат '{fmt}'")
                     continue
-                # Validate content parses as declared format; otherwise downstream
-                # placeholder substitution would degrade to unsafe text replacement.
-                try:
-                    if fmt == "json":
-                        from app.utils import walker as _walker
 
-                        _walker.walk_json(raw["content"])
-                    else:
-                        from app.utils import walker as _walker
-
-                        _walker.walk_xml(raw["content"])
-                except Exception as exc:
-                    errors.append(f"template {raw.get('name')}: content не парсится как {fmt}: {exc}")
+                # Both content and original_content must parse. The latter is
+                # what analyze/regenerate later use as source, so a broken
+                # original_content would manifest as a 500 in unrelated flows.
+                content_err = _validate_template_body(raw.get("name", "?"), fmt, raw["content"])
+                if content_err:
+                    errors.append(content_err.replace("template", "template content"))
                     continue
+                orig = raw.get("original_content")
+                if orig and orig != raw["content"]:
+                    orig_err = _validate_template_body(raw.get("name", "?"), fmt, orig)
+                    if orig_err:
+                        errors.append(orig_err.replace("template", "template original_content"))
+                        continue
+
                 existing = await self.session.get(MessageTemplate, tid)
                 if existing is None:
                     self.session.add(MessageTemplate(
