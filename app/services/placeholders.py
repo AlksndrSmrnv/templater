@@ -101,19 +101,17 @@ class PlaceholderFiller:
         the document for any value containing those characters.
         """
 
-        if fmt == "json":
+        if fmt in ("json", "xml"):
+            # For known formats we refuse to do raw-text substitution: silently
+            # falling back would re-introduce the JSON/XML escaping bug. Surface
+            # the parse error to the caller instead.
             try:
-                leaves = walker.walk_json(content)
-            except Exception:
-                # If the template is no longer valid JSON, fall back to text mode
-                return self._textual_fill(content, context)
-            return self._fill_via_walker(content, leaves, context, fmt="json")
-        if fmt == "xml":
-            try:
-                leaves = walker.walk_xml(content)
-            except Exception:
-                return self._textual_fill(content, context)
-            return self._fill_via_walker(content, leaves, context, fmt="xml")
+                leaves = walker.walk_json(content) if fmt == "json" else walker.walk_xml(content)
+            except Exception as exc:
+                raise ValidationFailed(
+                    f"Шаблон не парсится как {fmt}, безопасная подстановка невозможна: {exc}"
+                ) from exc
+            return self._fill_via_walker(content, leaves, context, fmt=fmt)
         return self._textual_fill(content, context)
 
     def _fill_via_walker(

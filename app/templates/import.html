@@ -15,11 +15,11 @@
         </label>
     </div>
     <div class="form-section">
-        <label>Политика конфликтов</label>
+        <label>Политика конфликтов <span class="muted">(значение по умолчанию берётся из «Настроек»)</span></label>
         <select id="policy">
-            <option value="skip">Пропускать существующие</option>
-            <option value="overwrite">Перезаписывать</option>
-            <option value="fail">Падать при ошибке</option>
+            <option value="skip" {% if default_policy == "skip" %}selected{% endif %}>Пропускать существующие</option>
+            <option value="overwrite" {% if default_policy == "overwrite" %}selected{% endif %}>Перезаписывать</option>
+            <option value="fail" {% if default_policy == "fail" %}selected{% endif %}>Падать при ошибке</option>
         </select>
     </div>
     <div class="form-actions">

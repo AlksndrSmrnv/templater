@@ -63,6 +63,13 @@ class TemplateService:
         if data.description is not None:
             template.description = data.description
         if data.content is not None:
+            # Verify the new body still parses as the template's declared format
+            # so we don't end up with a broken envelope that later falls back to
+            # raw-text substitution and bypasses JSON/XML escaping.
+            try:
+                self._extract_leaves(template.format, data.content)
+            except Exception as exc:
+                raise ValidationFailed(f"content не парсится как {template.format}: {exc}") from exc
             template.content = data.content
         if data.llm_meta is not None:
             template.llm_meta = data.llm_meta

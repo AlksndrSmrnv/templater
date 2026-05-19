@@ -140,13 +140,27 @@ class ExportImportService:
             except Exception as exc:
                 errors.append(f"attribute_schema {raw.get('name')}: {exc}")
 
-        # references (by id)
+        # Map of attribute_definitions used to detect ref-attributes that may
+        # need remapping after we discover a (ref_type, code) collision.
+        ref_attrs_by_owner: dict[str, list[tuple[str, str]]] = {}
+        for d in await self.attrs.list_all():
+            if d.data_type == "ref" and (d.options or {}).get("ref_entity"):
+                ref_attrs_by_owner.setdefault(d.entity_type, []).append((d.name, d.options["ref_entity"]))
+
+        # imported UUID → local UUID for any reference value that already exists
+        # under a different id but the same (entity_type, code). Used to rewrite
+        # ref-typed attributes in the imported clients/accounts/cards.
+        ref_id_remap: dict[str, str] = {}
+
+        # references (by id, then by (ref_type, code))
         for ref_type, items in (package.get("references") or {}).items():
             for raw in items:
                 try:
                     rid = uuid.UUID(raw["id"])
                     existing = await self.refs.get(rid)
-                    if existing is None:
+                    code_clash = None if existing is not None else await self.refs.get_by_code(ref_type, raw["code"])
+
+                    if existing is None and code_clash is None:
                         self.session.add(ReferenceValue(
                             id=rid,
                             entity_type=ref_type,
@@ -156,8 +170,25 @@ class ExportImportService:
                             attributes=raw.get("attributes", {}),
                         ))
                         created["references"] += 1
+                    elif existing is None and code_clash is not None:
+                        # Same code under a different local id — remap imported uuid → local uuid.
+                        ref_id_remap[str(rid)] = str(code_clash.id)
+                        if not conflict("references", raw):
+                            code_clash.name = raw["name"]
+                            code_clash.description = raw.get("description", code_clash.description)
+                            code_clash.attributes = raw.get("attributes", code_clash.attributes)
+                            updated["references"] += 1
                     elif not conflict("references", raw):
-                        existing.code = raw["code"]
+                        # Existing by id. If the new code would collide with *another* row,
+                        # surface it as an error rather than letting UNIQUE blow up on commit.
+                        if existing.code != raw["code"]:
+                            other = await self.refs.get_by_code(ref_type, raw["code"])
+                            if other is not None and other.id != existing.id:
+                                errors.append(
+                                    f"reference {ref_type}/{raw['code']}: код уже занят другой записью"
+                                )
+                                continue
+                            existing.code = raw["code"]
                         existing.name = raw["name"]
                         existing.description = raw.get("description", existing.description)
                         existing.attributes = raw.get("attributes", existing.attributes)
@@ -165,18 +196,33 @@ class ExportImportService:
                 except Exception as exc:
                     errors.append(f"reference {ref_type}/{raw.get('code')}: {exc}")
 
+        def _remap_ref_attrs(entity_type: str, attrs: dict[str, Any]) -> dict[str, Any]:
+            if not ref_id_remap or not attrs:
+                return attrs
+            out = dict(attrs)
+            for attr_name, _ref_type in ref_attrs_by_owner.get(entity_type, []):
+                val = out.get(attr_name)
+                if isinstance(val, str) and val in ref_id_remap:
+                    out[attr_name] = ref_id_remap[val]
+            return out
+
         # clients, accounts, cards (in dependency order)
-        for kind, model in (("clients", Client), ("accounts", Account), ("cards", Card)):
+        for kind, model, et in (
+            ("clients", Client, "client"),
+            ("accounts", Account, "account"),
+            ("cards", Card, "card"),
+        ):
             for raw in package.get(kind) or []:
                 try:
                     eid = uuid.UUID(raw["id"])
                     existing = await self.session.get(model, eid)
+                    remapped_attrs = _remap_ref_attrs(et, raw.get("attributes") or {})
                     if existing is None:
                         kwargs = {
                             "id": eid,
                             "description": raw.get("description", ""),
                             "tags": list(raw.get("tags", [])),
-                            "attributes": raw.get("attributes", {}),
+                            "attributes": remapped_attrs,
                         }
                         if kind == "accounts":
                             kwargs["client_id"] = uuid.UUID(raw["client_id"])
@@ -187,7 +233,7 @@ class ExportImportService:
                     elif not conflict(kind, raw):
                         existing.description = raw.get("description", existing.description)
                         existing.tags = list(raw.get("tags", existing.tags))
-                        existing.attributes = raw.get("attributes", existing.attributes)
+                        existing.attributes = remapped_attrs or existing.attributes
                         if kind == "accounts" and raw.get("client_id"):
                             existing.client_id = uuid.UUID(raw["client_id"])
                         if kind == "cards" and raw.get("account_id"):
@@ -200,13 +246,31 @@ class ExportImportService:
         for raw in package.get("templates") or []:
             try:
                 tid = uuid.UUID(raw["id"])
+                fmt = raw.get("format", "json")
+                if fmt not in ("json", "xml"):
+                    errors.append(f"template {raw.get('name')}: неподдерживаемый формат '{fmt}'")
+                    continue
+                # Validate content parses as declared format; otherwise downstream
+                # placeholder substitution would degrade to unsafe text replacement.
+                try:
+                    if fmt == "json":
+                        from app.utils import walker as _walker
+
+                        _walker.walk_json(raw["content"])
+                    else:
+                        from app.utils import walker as _walker
+
+                        _walker.walk_xml(raw["content"])
+                except Exception as exc:
+                    errors.append(f"template {raw.get('name')}: content не парсится как {fmt}: {exc}")
+                    continue
                 existing = await self.session.get(MessageTemplate, tid)
                 if existing is None:
                     self.session.add(MessageTemplate(
                         id=tid,
                         name=raw["name"],
                         description=raw.get("description", ""),
-                        format=raw.get("format", "json"),
+                        format=fmt,
                         content=raw["content"],
                         original_content=raw.get("original_content", raw["content"]),
                         llm_meta=raw.get("llm_meta", {}),
@@ -216,7 +280,7 @@ class ExportImportService:
                 elif not conflict("templates", raw):
                     existing.name = raw["name"]
                     existing.description = raw.get("description", existing.description)
-                    existing.format = raw.get("format", existing.format)
+                    existing.format = fmt
                     existing.content = raw["content"]
                     existing.original_content = raw.get("original_content", existing.original_content)
                     existing.llm_meta = raw.get("llm_meta", existing.llm_meta)
