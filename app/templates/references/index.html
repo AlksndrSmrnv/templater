@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Справочники — Template Maker{% endblock %}
+{% block content %}
+<h1>Справочники</h1>
+<div class="cards">
+    {% for code, name in references.items() %}
+    <a class="card" href="/references/{{ code }}">
+        <h3>{{ name }}</h3>
+        <p class="muted">/references/{{ code }}</p>
+    </a>
+    {% endfor %}
+</div>
+{% endblock %}

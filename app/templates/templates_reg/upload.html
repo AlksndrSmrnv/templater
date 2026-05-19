@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Загрузить шаблон — Template Maker{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Загрузка шаблона</h1>
+    <div class="actions">
+        <a class="btn" href="/templates">Назад</a>
+    </div>
+</div>
+
+<form id="upload-form" class="form">
+    <div id="form-errors" class="errors" hidden></div>
+    <div class="form-section">
+        <label>Имя <span class="required-mark">*</span>
+            <input type="text" id="name" required>
+        </label>
+    </div>
+    <div class="form-section">
+        <label>Описание (необязательно)
+            <textarea id="description" rows="2"></textarea>
+        </label>
+    </div>
+    <div class="form-section">
+        <label>Формат</label>
+        <select id="format">
+            <option value="json">JSON</option>
+            <option value="xml">XML</option>
+        </select>
+    </div>
+    <div class="form-section">
+        <label>Содержимое <span class="required-mark">*</span></label>
+        <div id="upload-zone" class="upload-zone">
+            Перетащите файл сюда, выберите файл или вставьте текст ниже
+            <div style="margin-top:8px;">
+                <input type="file" id="file-input" accept=".json,.xml,.txt">
+            </div>
+        </div>
+        <textarea id="content" rows="14" style="font-family: ui-monospace, Menlo, monospace; font-size: 13px; margin-top:8px;"></textarea>
+    </div>
+    <div class="form-section">
+        <label><input type="checkbox" id="use-llm" {% if llm_active %}checked{% endif %} {% if not llm_active %}disabled{% endif %}>
+            Запросить подсказки у LLM при сохранении
+            {% if not llm_active %}<span class="muted">(LLM не настроена)</span>{% endif %}
+        </label>
+    </div>
+    <div class="form-actions">
+        <button class="btn primary" type="submit">Сохранить</button>
+    </div>
+</form>
+
+<script>
+const zone = document.getElementById("upload-zone");
+const fileInput = document.getElementById("file-input");
+const contentArea = document.getElementById("content");
+const formatSel = document.getElementById("format");
+
+function detectFormat(text) {
+    const trimmed = (text || "").trim();
+    if (trimmed.startsWith("<")) return "xml";
+    return "json";
+}
+
+zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("dragover"); });
+zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
+zone.addEventListener("drop", async e => {
+    e.preventDefault(); zone.classList.remove("dragover");
+    const file = e.dataTransfer?.files?.[0];
+    if (file) await readFile(file);
+});
+fileInput.addEventListener("change", async e => {
+    const file = e.target.files?.[0];
+    if (file) await readFile(file);
+});
+
+async function readFile(file) {
+    const text = await file.text();
+    contentArea.value = text;
+    formatSel.value = detectFormat(text);
+}
+
+contentArea.addEventListener("paste", () => {
+    setTimeout(() => { formatSel.value = detectFormat(contentArea.value); }, 10);
+});
+
+document.getElementById("upload-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const errors = document.getElementById("form-errors");
+    errors.hidden = true; errors.innerHTML = "";
+    const data = {
+        name: document.getElementById("name").value.trim(),
+        description: document.getElementById("description").value,
+        format: formatSel.value,
+        content: contentArea.value,
+        analyze_with_llm: document.getElementById("use-llm").checked,
+    };
+    try {
+        const created = await TM.api("POST", "/api/templates", data);
+        window.location.href = `/templates/${created.id}`;
+    } catch (err) {
+        errors.hidden = false;
+        const detailLines = Array.isArray(err.details) ? "<br>" + err.details.map(TM.escapeHtml).join("<br>") : "";
+        errors.innerHTML = `<strong>${TM.escapeHtml(err.message)}</strong>${detailLines}`;
+    }
+});
+</script>
+{% endblock %}

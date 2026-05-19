@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: template_maker
+      POSTGRES_PASSWORD: template_maker
+      POSTGRES_DB: template_maker
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U template_maker -d template_maker"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://template_maker:template_maker@postgres:5432/template_maker
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8000"
+      APP_DEBUG: "false"
+      GIGACHAT_BASE_URL: ${GIGACHAT_BASE_URL:-}
+      GIGACHAT_CERT_B64: ${GIGACHAT_CERT_B64:-}
+      GIGACHAT_KEY_B64: ${GIGACHAT_KEY_B64:-}
+      GIGACHAT_MODEL: ${GIGACHAT_MODEL:-GigaChat-3-Ultra}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-120}
+      LLM_CONCURRENCY: ${LLM_CONCURRENCY:-3}
+      LLM_REQUEST_DELAY: ${LLM_REQUEST_DELAY:-2.0}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-5}
+      LLM_RETRY_BASE_DELAY: ${LLM_RETRY_BASE_DELAY:-3.0}
+    ports:
+      - "8000:8000"
+
+volumes:
+  postgres-data:

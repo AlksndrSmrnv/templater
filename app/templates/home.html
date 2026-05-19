@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Template Maker — главная{% endblock %}
+{% block content %}
+<h1>Template Maker</h1>
+<p class="muted">Подготовка тестовых данных и шаблонов сообщений для тестирования системы по REST.</p>
+
+<div class="cards">
+    <a class="card" href="/clients">
+        <h3>Тестовые данные</h3>
+        <p>Клиенты, счета, карты — с поддержкой связей и тегов.</p>
+    </a>
+    <a class="card" href="/references">
+        <h3>Справочники</h3>
+        <p>Валюты, типы счетов, типы карт, банки, гражданство.</p>
+    </a>
+    <a class="card" href="/templates">
+        <h3>Шаблоны сообщений</h3>
+        <p>Реестр JSON/XML шаблонов с подсказками от языковой модели.</p>
+    </a>
+    <a class="card disabled" href="/send" title="В разработке">
+        <h3>Отправка сообщений</h3>
+        <p>В разработке: отправка готовых сообщений в тестируемую систему.</p>
+    </a>
+    <a class="card" href="/settings">
+        <h3>Настройки</h3>
+        <p>Схема атрибутов сущностей, политики импорта, статус LLM.</p>
+    </a>
+</div>
+{% endblock %}

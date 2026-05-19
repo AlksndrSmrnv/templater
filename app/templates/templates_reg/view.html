@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ template.name }} — Template Maker{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ template.name }}</h1>
+    <div class="actions">
+        <a class="btn" href="/templates">Назад</a>
+        <a class="btn primary" href="/templates/{{ template.id }}/fill">Заполнить</a>
+        <button class="btn" id="btn-regenerate" {% if not llm_active %}disabled title="LLM не настроена"{% endif %}>Перегенерировать с LLM</button>
+        <button class="btn danger" id="btn-delete">Удалить</button>
+    </div>
+</div>
+
+<div class="template-editor">
+    <div style="display:flex; gap:24px; margin-bottom:14px; flex-wrap: wrap;">
+        <div style="flex:1; min-width:260px;">
+            <h3>Описание (для LLM)</h3>
+            <textarea id="description" rows="3" style="width:100%;">{{ template.description }}</textarea>
+        </div>
+        <div style="flex:1; min-width:260px;">
+            <h3>Метаинформация LLM</h3>
+            <div class="muted" style="font-size:12px;">
+                {% if template.llm_meta and template.llm_meta.summary %}
+                    <strong>Резюме:</strong> {{ template.llm_meta.summary }}<br>
+                {% endif %}
+                {% if template.llm_meta and template.llm_meta.category %}
+                    <strong>Категория:</strong> {{ template.llm_meta.category }}<br>
+                {% endif %}
+                {% if template.llm_meta and template.llm_meta.scenarios %}
+                    <strong>Сценарии:</strong>
+                    <ul style="margin:4px 0 0 18px;">
+                        {% for s in template.llm_meta.scenarios %}<li>{{ s }}</li>{% endfor %}
+                    </ul>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <h3>Содержимое</h3>
+    <p class="muted">Наведите на подсвеченное значение и выберите поле из тестовых данных, либо оставьте исходное.</p>
+    <pre class="template-code" id="template-code">{{ rendered_html | safe }}</pre>
+
+    <div class="form-actions" style="margin-top:14px;">
+        <button class="btn primary" id="btn-save">Сохранить изменения</button>
+    </div>
+</div>
+
+<script>
+window.TEMPLATE = {
+    id: "{{ template.id }}",
+    format: "{{ template.format }}",
+    placeholders: {{ template.placeholders | tojson }},
+};
+</script>
+<script src="/static/js/template-editor.js"></script>
+{% endblock %}

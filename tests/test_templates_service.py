@@ -1,0 +1,19 @@
+from __future__ import annotations
+
+from app.services.templates import TemplateService
+
+
+def test_heuristic_mappings_matches_by_tail():
+    leaves = [
+        type("L", (), {"location": "/fullName", "value": "Иванов"})(),
+        type("L", (), {"location": "/passport/series", "value": "4510"})(),
+        type("L", (), {"location": "/notes", "value": "Что-то"})(),
+    ]
+    catalog = [
+        {"path": "sender.fullName", "label": "Sender — ФИО", "data_type": "string"},
+        {"path": "sender.account.series", "label": "Sender — Серия", "data_type": "string"},
+    ]
+    out = TemplateService._heuristic_mappings(leaves, catalog)
+    assert out["/fullName"]["suggestion"] == "sender.fullName"
+    assert out["/passport/series"]["suggestion"] == "sender.account.series"
+    assert "/notes" not in out

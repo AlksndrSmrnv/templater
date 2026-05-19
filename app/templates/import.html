@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Импорт данных — Template Maker{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Импорт данных</h1>
+    <div class="actions">
+        <a class="btn" href="/clients">Клиенты</a>
+        <a class="btn" href="/templates">Шаблоны</a>
+    </div>
+</div>
+<form id="import-form" class="form">
+    <div class="form-section">
+        <label>Файл выгрузки (.json) <span class="required-mark">*</span>
+            <input type="file" id="file" accept=".json" required>
+        </label>
+    </div>
+    <div class="form-section">
+        <label>Политика конфликтов</label>
+        <select id="policy">
+            <option value="skip">Пропускать существующие</option>
+            <option value="overwrite">Перезаписывать</option>
+            <option value="fail">Падать при ошибке</option>
+        </select>
+    </div>
+    <div class="form-actions">
+        <button class="btn primary" type="submit">Импортировать</button>
+    </div>
+</form>
+<pre id="result" class="template-code" hidden></pre>
+<script>
+document.getElementById("import-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const file = document.getElementById("file").files[0];
+    if (!file) return;
+    const policy = document.getElementById("policy").value;
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("policy", policy);
+    const res = await fetch("/api/import", { method: "POST", body: fd });
+    const data = await res.json();
+    const out = document.getElementById("result");
+    out.hidden = false;
+    out.textContent = JSON.stringify(data, null, 2);
+});
+</script>
+{% endblock %}
