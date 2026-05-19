@@ -7,10 +7,9 @@ Create Date: 2026-05-19
 """
 from __future__ import annotations
 
-import json
-
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision = "0002_seed_attribute_schema"
 down_revision = "0001_init_core"
@@ -75,7 +74,7 @@ def upgrade() -> None:
         sa.column("is_deprecated", sa.Boolean),
         sa.column("display_order", sa.Integer),
         sa.column("description", sa.Text),
-        sa.column("options", sa.JSON),
+        sa.column("options", postgresql.JSONB),
     )
     rows = []
     for item in SEED:
@@ -89,7 +88,7 @@ def upgrade() -> None:
                 "is_deprecated": False,
                 "display_order": item.get("display_order", 0),
                 "description": item.get("description", ""),
-                "options": json.dumps(item.get("options", {})),
+                "options": item.get("options", {}),
             }
         )
     if rows:

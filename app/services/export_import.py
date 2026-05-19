@@ -6,6 +6,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -97,6 +98,20 @@ class ExportImportService:
         skipped = {k: 0 for k in created}
         errors: list[str] = []
 
+        def conflict(kind: str, raw: dict[str, Any]) -> bool:
+            """Record a conflict according to ``policy``. Returns True if caller
+            should stop processing this row (skip / fail), False if caller may
+            still apply changes (overwrite)."""
+
+            if policy == "overwrite":
+                return False
+            if policy == "fail":
+                errors.append(f"{kind} {raw.get('id') or raw.get('name') or raw.get('code')}: уже существует")
+                skipped[kind] += 1
+                return True
+            skipped[kind] += 1
+            return True
+
         # attribute_schema (merge by entity_type + name)
         for raw in package.get("attribute_schema") or []:
             try:
@@ -114,7 +129,7 @@ class ExportImportService:
                         options=raw.get("options", {}),
                     ))
                     created["attribute_schema"] += 1
-                elif policy == "overwrite":
+                elif not conflict("attribute_schema", raw):
                     existing.label = raw.get("label", existing.label)
                     existing.is_required = bool(raw.get("is_required", existing.is_required))
                     existing.is_deprecated = bool(raw.get("is_deprecated", existing.is_deprecated))
@@ -122,8 +137,6 @@ class ExportImportService:
                     existing.description = raw.get("description", existing.description)
                     existing.options = raw.get("options", existing.options)
                     updated["attribute_schema"] += 1
-                else:
-                    skipped["attribute_schema"] += 1
             except Exception as exc:
                 errors.append(f"attribute_schema {raw.get('name')}: {exc}")
 
@@ -143,14 +156,12 @@ class ExportImportService:
                             attributes=raw.get("attributes", {}),
                         ))
                         created["references"] += 1
-                    elif policy == "overwrite":
+                    elif not conflict("references", raw):
                         existing.code = raw["code"]
                         existing.name = raw["name"]
                         existing.description = raw.get("description", existing.description)
                         existing.attributes = raw.get("attributes", existing.attributes)
                         updated["references"] += 1
-                    else:
-                        skipped["references"] += 1
                 except Exception as exc:
                     errors.append(f"reference {ref_type}/{raw.get('code')}: {exc}")
 
@@ -173,7 +184,7 @@ class ExportImportService:
                             kwargs["account_id"] = uuid.UUID(raw["account_id"])
                         self.session.add(model(**kwargs))
                         created[kind] += 1
-                    elif policy == "overwrite":
+                    elif not conflict(kind, raw):
                         existing.description = raw.get("description", existing.description)
                         existing.tags = list(raw.get("tags", existing.tags))
                         existing.attributes = raw.get("attributes", existing.attributes)
@@ -182,8 +193,6 @@ class ExportImportService:
                         if kind == "cards" and raw.get("account_id"):
                             existing.account_id = uuid.UUID(raw["account_id"])
                         updated[kind] += 1
-                    else:
-                        skipped[kind] += 1
                 except Exception as exc:
                     errors.append(f"{kind} {raw.get('id')}: {exc}")
 
@@ -204,7 +213,7 @@ class ExportImportService:
                         placeholders=raw.get("placeholders", []),
                     ))
                     created["templates"] += 1
-                elif policy == "overwrite":
+                elif not conflict("templates", raw):
                     existing.name = raw["name"]
                     existing.description = raw.get("description", existing.description)
                     existing.format = raw.get("format", existing.format)
@@ -213,15 +222,31 @@ class ExportImportService:
                     existing.llm_meta = raw.get("llm_meta", existing.llm_meta)
                     existing.placeholders = raw.get("placeholders", existing.placeholders)
                     updated["templates"] += 1
-                else:
-                    skipped["templates"] += 1
             except Exception as exc:
                 errors.append(f"template {raw.get('name')}: {exc}")
 
+        # If fail-policy collected conflicts/errors, abort the whole transaction.
         if policy == "fail" and errors:
             await self.session.rollback()
-            return ImportSummary(created=created, updated=updated, skipped=skipped, errors=errors)
-        await self.session.commit()
+            # Nothing was actually written — collapse counters so the summary doesn't lie.
+            return ImportSummary(
+                created={k: 0 for k in created},
+                updated={k: 0 for k in updated},
+                skipped=skipped,
+                errors=errors,
+            )
+        try:
+            await self.session.commit()
+        except (IntegrityError, SQLAlchemyError) as exc:
+            await self.session.rollback()
+            errors.append(f"commit failed: {exc.orig if hasattr(exc, 'orig') else exc}")
+            # The transaction was rolled back, so nothing landed in DB.
+            return ImportSummary(
+                created={k: 0 for k in created},
+                updated={k: 0 for k in updated},
+                skipped={k: 0 for k in skipped},
+                errors=errors,
+            )
         return ImportSummary(created=created, updated=updated, skipped=skipped, errors=errors)
 
     @staticmethod

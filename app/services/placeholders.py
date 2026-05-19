@@ -19,6 +19,7 @@ from app.repositories.entity import (
     CardRepository,
     ClientRepository,
 )
+from app.utils import walker
 from app.utils.errors import NotFoundError, ValidationFailed
 
 TOKEN_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}")
@@ -88,7 +89,63 @@ class PlaceholderFiller:
                 out["card"] = dict(card.attributes or {})
         return out
 
-    def fill_content(self, content: str, context: dict[str, Any]) -> tuple[str, list[str]]:
+    def fill_content(
+        self, content: str, fmt: str, context: dict[str, Any]
+    ) -> tuple[str, list[str]]:
+        """Walk the parsed document and replace ``{{...}}`` tokens at the AST level.
+
+        Working at the AST keeps user-supplied values from breaking the document
+        envelope: JSON values are re-serialized via ``json.dumps`` (handling quotes,
+        backslashes, unicode) and XML text/attributes are placed via ElementTree
+        (handling ``< > & " '``). A regex sweep over the raw text would corrupt
+        the document for any value containing those characters.
+        """
+
+        if fmt == "json":
+            try:
+                leaves = walker.walk_json(content)
+            except Exception:
+                # If the template is no longer valid JSON, fall back to text mode
+                return self._textual_fill(content, context)
+            return self._fill_via_walker(content, leaves, context, fmt="json")
+        if fmt == "xml":
+            try:
+                leaves = walker.walk_xml(content)
+            except Exception:
+                return self._textual_fill(content, context)
+            return self._fill_via_walker(content, leaves, context, fmt="xml")
+        return self._textual_fill(content, context)
+
+    def _fill_via_walker(
+        self,
+        content: str,
+        leaves: list[walker.Leaf],
+        context: dict[str, Any],
+        *,
+        fmt: str,
+    ) -> tuple[str, list[str]]:
+        replacements: dict[str, str] = {}
+        unresolved: list[str] = []
+        for leaf in leaves:
+            if "{{" not in leaf.value:
+                continue
+            new_value, missing = self._expand_tokens(leaf.value, context)
+            unresolved.extend(missing)
+            if new_value != leaf.value:
+                replacements[leaf.location] = new_value
+        if not replacements:
+            return content, unresolved
+        if fmt == "json":
+            return walker.replace_json(content, replacements), unresolved
+        return walker.replace_xml(content, replacements), unresolved
+
+    def _textual_fill(self, content: str, context: dict[str, Any]) -> tuple[str, list[str]]:
+        """Last-resort text substitution. Use only when structural parse fails."""
+
+        rendered, unresolved = self._expand_tokens(content, context)
+        return rendered, unresolved
+
+    def _expand_tokens(self, text: str, context: dict[str, Any]) -> tuple[str, list[str]]:
         unresolved: list[str] = []
 
         def replace(match: re.Match) -> str:
@@ -99,8 +156,7 @@ class PlaceholderFiller:
                 return match.group(0)
             return str(value)
 
-        rendered = TOKEN_RE.sub(replace, content)
-        return rendered, unresolved
+        return TOKEN_RE.sub(replace, text), unresolved
 
     @staticmethod
     def _resolve_path(context: dict[str, Any], dotted: str) -> Any:
@@ -132,4 +188,4 @@ class PlaceholderFiller:
             receiver_account_id=receiver_account_id,
             receiver_card_id=receiver_card_id,
         )
-        return self.fill_content(template.content, ctx)
+        return self.fill_content(template.content, template.format, ctx)

@@ -102,7 +102,7 @@ async def api_list(entity_type: str, session: AsyncSession = SessionDep):
 @router.get("/api/references/{entity_type}/{value_id}", response_model=ReferenceValueRead)
 async def api_get(entity_type: str, value_id: uuid.UUID, session: AsyncSession = SessionDep):
     _check_ref_type(entity_type)
-    item = await ReferenceService(session).get(value_id)
+    item = await ReferenceService(session).get_typed(entity_type, value_id)
     return ReferenceValueRead.model_validate(item, from_attributes=True)
 
 
@@ -123,14 +123,14 @@ async def api_update(
     session: AsyncSession = SessionDep,
 ):
     _check_ref_type(entity_type)
-    item = await ReferenceService(session).update(value_id, data)
+    item = await ReferenceService(session).update(value_id, data, entity_type=entity_type)
     return ReferenceValueRead.model_validate(item, from_attributes=True)
 
 
 @router.delete("/api/references/{entity_type}/{value_id}", status_code=204)
 async def api_delete(entity_type: str, value_id: uuid.UUID, session: AsyncSession = SessionDep):
     _check_ref_type(entity_type)
-    await ReferenceService(session).delete(value_id)
+    await ReferenceService(session).delete(value_id, entity_type=entity_type)
     return Response(status_code=204)
 
 

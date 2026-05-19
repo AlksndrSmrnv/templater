@@ -35,6 +35,19 @@ class ReferenceService:
             raise NotFoundError("Запись справочника не найдена")
         return value
 
+    async def get_typed(self, entity_type: str, value_id: uuid.UUID) -> ReferenceValue:
+        """Same as :meth:`get`, but also verifies the value belongs to ``entity_type``.
+
+        Without this check, ``/api/references/{type}/{id}`` would happily fetch /
+        mutate / delete a row from a different reference table.
+        """
+
+        self._check_entity_type(entity_type)
+        value = await self.repo.get(value_id)
+        if value is None or value.entity_type != entity_type:
+            raise NotFoundError("Запись справочника не найдена")
+        return value
+
     async def create(self, data: ReferenceValueCreate) -> ReferenceValue:
         self._check_entity_type(data.entity_type)
         existing = await self.repo.get_by_code(data.entity_type, data.code)
@@ -53,8 +66,18 @@ class ReferenceService:
         await self.session.refresh(value)
         return value
 
-    async def update(self, value_id: uuid.UUID, data: ReferenceValueUpdate) -> ReferenceValue:
-        value = await self.get(value_id)
+    async def update(
+        self,
+        value_id: uuid.UUID,
+        data: ReferenceValueUpdate,
+        *,
+        entity_type: str | None = None,
+    ) -> ReferenceValue:
+        value = (
+            await self.get_typed(entity_type, value_id)
+            if entity_type is not None
+            else await self.get(value_id)
+        )
         if data.code is not None and data.code != value.code:
             duplicate = await self.repo.get_by_code(value.entity_type, data.code)
             if duplicate is not None:
@@ -73,8 +96,12 @@ class ReferenceService:
         await self.session.refresh(value)
         return value
 
-    async def delete(self, value_id: uuid.UUID) -> None:
-        value = await self.get(value_id)
+    async def delete(self, value_id: uuid.UUID, *, entity_type: str | None = None) -> None:
+        value = (
+            await self.get_typed(entity_type, value_id)
+            if entity_type is not None
+            else await self.get(value_id)
+        )
         usage = await self._find_usage(value.entity_type, value.id)
         if usage:
             details = ", ".join(f"{k}: {v}" for k, v in usage.items())
