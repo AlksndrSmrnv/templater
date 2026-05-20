@@ -19,6 +19,10 @@ def _ensure_engine() -> None:
             settings.database_url,
             pool_pre_ping=True,
             future=True,
+            # Pin every pooled connection to the dedicated schema. All tables
+            # and queries then resolve inside it without schema-qualifying
+            # anything in the models.
+            connect_args={"server_settings": {"search_path": settings.db_schema}},
         )
         _sessionmaker = async_sessionmaker(
             bind=_engine,

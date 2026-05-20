@@ -24,6 +24,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+asyncpg://template_maker:template_maker@postgres:5432/template_maker
+      DB_SCHEMA: ${DB_SCHEMA:-templater}
       APP_HOST: 0.0.0.0
       APP_PORT: "8000"
       APP_DEBUG: "false"
