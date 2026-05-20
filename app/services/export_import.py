@@ -614,19 +614,37 @@ class ExportImportService:
                     errors.append(f"template {raw.get('name')}: неподдерживаемый формат '{fmt}'")
                     continue
 
-                # Both content and original_content must parse. The latter is
-                # what analyze/regenerate later use as source, so a broken
-                # original_content would manifest as a 500 in unrelated flows.
-                content_err = _validate_template_body(raw.get("name", "?"), fmt, raw["content"])
+                # Parse every required field into a local before touching the
+                # ORM object — a missing key must not leave the row half-updated.
+                new_name = raw["name"]
+                new_content = raw["content"]
+                if not isinstance(new_content, str):
+                    errors.append(f"template {raw.get('name')}: content должен быть строкой")
+                    continue
+
+                # content must parse as the declared format.
+                content_err = _validate_template_body(raw.get("name", "?"), fmt, new_content)
                 if content_err:
                     errors.append(content_err.replace("template", "template content"))
                     continue
-                orig = raw.get("original_content")
-                if orig and orig != raw["content"]:
-                    orig_err = _validate_template_body(raw.get("name", "?"), fmt, orig)
-                    if orig_err:
-                        errors.append(orig_err.replace("template", "template original_content"))
-                        continue
+
+                # Normalize original_content: absent / empty / null → fall back
+                # to content. analyze/regenerate use it as their source, so a
+                # falsy value mustn't reach the DB (null would abort on commit)
+                # and a non-empty value must itself parse as the format.
+                orig_raw = raw.get("original_content")
+                if orig_raw is None or orig_raw == "":
+                    new_original = new_content
+                elif not isinstance(orig_raw, str):
+                    errors.append(f"template {raw.get('name')}: original_content должен быть строкой")
+                    continue
+                else:
+                    if orig_raw != new_content:
+                        orig_err = _validate_template_body(raw.get("name", "?"), fmt, orig_raw)
+                        if orig_err:
+                            errors.append(orig_err.replace("template", "template original_content"))
+                            continue
+                    new_original = orig_raw
 
                 # Validate placeholder structure — a malformed entry would later
                 # crash regenerate/fill on this template.
@@ -636,11 +654,6 @@ class ExportImportService:
                     errors.append(f"template {raw.get('name')}: {vexc.message}")
                     continue
 
-                # Parse every required field into a local before touching the
-                # ORM object — a missing key must not leave the row half-updated.
-                new_name = raw["name"]
-                new_content = raw["content"]
-
                 if existing is None:
                     self.session.add(MessageTemplate(
                         id=tid,
@@ -648,14 +661,13 @@ class ExportImportService:
                         description=raw.get("description", ""),
                         format=fmt,
                         content=new_content,
-                        original_content=raw.get("original_content", new_content),
+                        original_content=new_original,
                         llm_meta=_as_dict(raw.get("llm_meta")),
                         placeholders=placeholders,
                     ))
                     created["templates"] += 1
                 else:
                     new_description = raw.get("description", existing.description)
-                    new_original = raw.get("original_content", existing.original_content)
                     new_llm_meta = _as_dict(raw.get("llm_meta")) or existing.llm_meta
                     # all parsed — apply atomically
                     existing.name = new_name
