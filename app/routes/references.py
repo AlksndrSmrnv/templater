@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import ALL_ATTR_ENTITY_TYPES, REFERENCE_TYPES
 from app.repositories.attribute import AttributeDefinitionRepository
 from app.routes.deps import SessionDep, TemplatesDep
+from app.routes.uow import commit_and_refresh, commit_or_409
 from app.schemas.attribute import AttributeDefinitionRead
 from app.schemas.reference import ReferenceValueCreate, ReferenceValueRead, ReferenceValueUpdate
 from app.services.references import ReferenceService
@@ -33,7 +34,7 @@ def _check_ref_type(entity_type: str) -> None:
 
 
 @router.get("/references")
-async def page_index(request: Request, templates: Jinja2Templates = TemplatesDep):
+async def page_index(request: Request, templates: Jinja2Templates = TemplatesDep) -> Response:
     return templates.TemplateResponse(
         request,
         "references/index.html",
@@ -42,7 +43,9 @@ async def page_index(request: Request, templates: Jinja2Templates = TemplatesDep
 
 
 @router.get("/references/{entity_type}")
-async def page_list(entity_type: str, request: Request, templates: Jinja2Templates = TemplatesDep):
+async def page_list(
+    entity_type: str, request: Request, templates: Jinja2Templates = TemplatesDep
+) -> Response:
     _check_ref_type(entity_type)
     return templates.TemplateResponse(
         request,
@@ -56,7 +59,9 @@ async def page_list(entity_type: str, request: Request, templates: Jinja2Templat
 
 
 @router.get("/references/{entity_type}/new")
-async def page_new(entity_type: str, request: Request, templates: Jinja2Templates = TemplatesDep):
+async def page_new(
+    entity_type: str, request: Request, templates: Jinja2Templates = TemplatesDep
+) -> Response:
     _check_ref_type(entity_type)
     return templates.TemplateResponse(
         request,
@@ -76,7 +81,7 @@ async def page_edit(
     value_id: uuid.UUID,
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
-):
+) -> Response:
     _check_ref_type(entity_type)
     return templates.TemplateResponse(
         request,
@@ -93,25 +98,29 @@ async def page_edit(
 # ---------- JSON ----------
 
 @router.get("/api/references/{entity_type}", response_model=list[ReferenceValueRead])
-async def api_list(entity_type: str, session: AsyncSession = SessionDep):
+async def api_list(entity_type: str, session: AsyncSession = SessionDep) -> list[ReferenceValueRead]:
     _check_ref_type(entity_type)
-    items = await ReferenceService(session).list(entity_type)
+    items = await ReferenceService(session).list_by_type(entity_type)
     return [ReferenceValueRead.model_validate(i, from_attributes=True) for i in items]
 
 
 @router.get("/api/references/{entity_type}/{value_id}", response_model=ReferenceValueRead)
-async def api_get(entity_type: str, value_id: uuid.UUID, session: AsyncSession = SessionDep):
+async def api_get(
+    entity_type: str, value_id: uuid.UUID, session: AsyncSession = SessionDep
+) -> ReferenceValueRead:
     _check_ref_type(entity_type)
     item = await ReferenceService(session).get_typed(entity_type, value_id)
     return ReferenceValueRead.model_validate(item, from_attributes=True)
 
 
 @router.post("/api/references/{entity_type}", response_model=ReferenceValueRead, status_code=201)
-async def api_create(entity_type: str, data: ReferenceValueCreate, session: AsyncSession = SessionDep):
+async def api_create(
+    entity_type: str, data: ReferenceValueCreate, session: AsyncSession = SessionDep
+) -> ReferenceValueRead:
     _check_ref_type(entity_type)
     if data.entity_type != entity_type:
         data = data.model_copy(update={"entity_type": entity_type})
-    item = await ReferenceService(session).create(data)
+    item = await commit_and_refresh(session, await ReferenceService(session).create(data))
     return ReferenceValueRead.model_validate(item, from_attributes=True)
 
 
@@ -121,23 +130,29 @@ async def api_update(
     value_id: uuid.UUID,
     data: ReferenceValueUpdate,
     session: AsyncSession = SessionDep,
-):
+) -> ReferenceValueRead:
     _check_ref_type(entity_type)
-    item = await ReferenceService(session).update(value_id, data, entity_type=entity_type)
+    item = await commit_and_refresh(
+        session,
+        await ReferenceService(session).update(value_id, data, entity_type=entity_type),
+    )
     return ReferenceValueRead.model_validate(item, from_attributes=True)
 
 
 @router.delete("/api/references/{entity_type}/{value_id}", status_code=204)
-async def api_delete(entity_type: str, value_id: uuid.UUID, session: AsyncSession = SessionDep):
+async def api_delete(entity_type: str, value_id: uuid.UUID, session: AsyncSession = SessionDep) -> Response:
     _check_ref_type(entity_type)
     await ReferenceService(session).delete(value_id, entity_type=entity_type)
+    await commit_or_409(session, message="Не удалось удалить запись справочника — есть связанные данные")
     return Response(status_code=204)
 
 
 # ---------- Attribute schema ----------
 
 @router.get("/api/attribute-schema/{entity_type}", response_model=list[AttributeDefinitionRead])
-async def api_schema(entity_type: str, include_deprecated: bool = False, session: AsyncSession = SessionDep):
+async def api_schema(
+    entity_type: str, include_deprecated: bool = False, session: AsyncSession = SessionDep
+) -> list[AttributeDefinitionRead]:
     if entity_type not in ALL_ATTR_ENTITY_TYPES:
         raise NotFoundError("Неизвестный тип сущности")
     repo = AttributeDefinitionRepository(session)

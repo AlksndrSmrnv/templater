@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -22,10 +26,20 @@ from app.routes import (
 )
 from app.utils.errors import DomainError
 
+log = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    try:
+        yield
+    finally:
+        await shutdown_engine()
+
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="Template Maker", debug=settings.app_debug)
+    app = FastAPI(title="Template Maker", debug=settings.app_debug, lifespan=lifespan)
 
     app.mount("/static", StaticFiles(directory=settings.static_dir), name="static")
 
@@ -53,9 +67,21 @@ def create_app() -> FastAPI:
             content={"error": "validation_error", "details": exc.errors()},
         )
 
-    @app.on_event("shutdown")
-    async def _on_shutdown() -> None:
-        await shutdown_engine()
+    @app.exception_handler(Exception)
+    async def _unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        log.exception(
+            "Unhandled exception while handling %s %s",
+            request.method,
+            request.url.path,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "internal_server_error",
+                "message": "Внутренняя ошибка сервера",
+            },
+        )
 
     return app
 

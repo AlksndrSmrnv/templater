@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.export_import import (
     ExportImportService,
@@ -16,31 +19,35 @@ from app.services.export_import import (
 )
 
 
-def test_as_dict_passes_through_dict():
+def _session() -> AsyncSession:
+    return cast(AsyncSession, None)
+
+
+def test_as_dict_passes_through_dict() -> None:
     assert _as_dict({"ref_entity": "currency"}) == {"ref_entity": "currency"}
 
 
-def test_as_dict_coerces_everything_else_to_empty():
+def test_as_dict_coerces_everything_else_to_empty() -> None:
     # Lenient helper: anything that isn't a dict becomes {}.
     for value in (None, "string", '{"a": 1}', [1, 2, 3], 42):
         assert _as_dict(value) == {}
 
 
-def test_as_list_only_passes_lists():
+def test_as_list_only_passes_lists() -> None:
     assert _as_list([1, 2]) == [1, 2]
     assert _as_list(None) == []
     assert _as_list({"a": 1}) == []
     assert _as_list("string") == []
 
 
-def test_safe_label_handles_non_dict_rows():
+def test_safe_label_handles_non_dict_rows() -> None:
     assert _safe_label({"name": "X", "id": "1"}, "name", "id") == "X"
     assert _safe_label({"id": "1"}, "name", "id") == "1"
     assert _safe_label("not a dict", "name") == "<?>"
     assert _safe_label(None, "name") == "<?>"
 
 
-def test_validate_bool_strict():
+def test_validate_bool_strict() -> None:
     # Real bools pass through; absent → default.
     assert _validate_bool(True, False) == (True, None)
     assert _validate_bool(None, True) == (True, None)
@@ -51,7 +58,7 @@ def test_validate_bool_strict():
     assert err is not None
 
 
-def test_validate_required_str():
+def test_validate_required_str() -> None:
     assert _validate_required_str("ok", 128) == ("ok", None)
     assert _validate_required_str(None, 128)[1] is not None
     assert _validate_required_str("", 128)[1] is not None
@@ -60,29 +67,30 @@ def test_validate_required_str():
     assert _validate_required_str("x" * 200, 128)[1] is not None
 
 
-def test_validate_optional_str():
+def test_validate_optional_str() -> None:
     assert _validate_optional_str(None) == (None, None)  # absent
     assert _validate_optional_str("text") == ("text", None)
     assert _validate_optional_str("") == ("", None)  # empty allowed for optional
     assert _validate_optional_str(42)[1] is not None
 
 
-def test_validate_object_field():
+def test_validate_object_field() -> None:
     assert _validate_object_field(None) == ({}, None)  # absent / null → {}
     assert _validate_object_field({"a": 1}) == ({"a": 1}, None)
     # non-object values must error, not silently become {}
-    for bad in ("bad", [], 42, True):
+    bad_values: tuple[Any, ...] = ("bad", [], 42, True)
+    for bad in bad_values:
         obj, err = _validate_object_field(bad)
         assert obj is None
         assert err is not None
 
 
 @pytest.mark.asyncio
-async def test_import_rejects_non_dict_top_level():
+async def test_import_rejects_non_dict_top_level() -> None:
     """A malformed file (top-level JSON array / string) must return an error
     summary, not raise — /api/import would otherwise 500."""
 
-    svc = ExportImportService(session=None)
+    svc = ExportImportService(session=_session())
     for bad in (["a", "b"], "just a string", 42):
         summary = await svc.import_package(bad, policy="skip")
         assert summary.errors, f"expected error for {bad!r}"
@@ -90,44 +98,44 @@ async def test_import_rejects_non_dict_top_level():
         assert all(v == 0 for v in summary.updated.values())
 
 
-def test_validate_tags_accepts_list_of_strings():
+def test_validate_tags_accepts_list_of_strings() -> None:
     tags, err = _validate_tags(["vip", "test"])
     assert err is None
     assert tags == ["vip", "test"]
 
 
-def test_validate_tags_none_means_absent():
+def test_validate_tags_none_means_absent() -> None:
     tags, err = _validate_tags(None)
     assert err is None
     assert tags is None  # caller keeps the existing value
 
 
-def test_validate_tags_rejects_string():
+def test_validate_tags_rejects_string() -> None:
     # list("vip") would explode into ["v","i","p"] — must be rejected instead.
     tags, err = _validate_tags("vip")
     assert tags is None
     assert err is not None
 
 
-def test_validate_tags_rejects_non_string_items():
+def test_validate_tags_rejects_non_string_items() -> None:
     tags, err = _validate_tags(["ok", 123])
     assert tags is None
     assert err is not None
 
 
-def test_validate_attributes_field_absent_is_empty():
+def test_validate_attributes_field_absent_is_empty() -> None:
     attrs, err = _validate_attributes_field(None)
     assert err is None
     assert attrs == {}
 
 
-def test_validate_attributes_field_passes_dict():
+def test_validate_attributes_field_passes_dict() -> None:
     attrs, err = _validate_attributes_field({"fullName": "X"})
     assert err is None
     assert attrs == {"fullName": "X"}
 
 
-def test_validate_attributes_field_rejects_string_and_list():
+def test_validate_attributes_field_rejects_string_and_list() -> None:
     # _as_dict would silently coerce these to {} — losing/wiping attributes.
     for bad in ("oops", [1, 2], 42):
         attrs, err = _validate_attributes_field(bad)
@@ -136,11 +144,11 @@ def test_validate_attributes_field_rejects_string_and_list():
 
 
 @pytest.mark.asyncio
-async def test_import_reports_wrong_shaped_sections():
+async def test_import_reports_wrong_shaped_sections() -> None:
     """A file where a list section is given as an object must surface an
     explicit error rather than looking like a successful empty import."""
 
-    svc = ExportImportService(session=None)
+    svc = ExportImportService(session=_session())
     package = {
         "clients": {"oops": "object instead of list"},
         "templates": "a string",

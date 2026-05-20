@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account, Card, Client
@@ -29,8 +28,8 @@ class ClientService:
         self.repo = ClientRepository(session)
         self.schema = AttributeSchemaService(session)
 
-    async def list(self) -> list[Client]:
-        return await self.repo.list()
+    async def list_all(self) -> list[Client]:
+        return await self.repo.list_all()
 
     async def get(self, client_id: uuid.UUID) -> Client:
         c = await self.repo.get(client_id)
@@ -46,8 +45,6 @@ class ClientService:
             attributes=attrs,
         )
         await self.repo.add(client)
-        await self.session.commit()
-        await self.session.refresh(client)
         return client
 
     async def update(self, client_id: uuid.UUID, data: ClientUpdate) -> Client:
@@ -56,8 +53,6 @@ class ClientService:
         client.tags = list(data.tags)
         client.attributes = await self.schema.validate_attributes("client", data.attributes)
         await self.session.flush()
-        await self.session.commit()
-        await self.session.refresh(client)
         return client
 
     async def delete(self, client_id: uuid.UUID) -> None:
@@ -67,13 +62,8 @@ class ClientService:
             raise IntegrityViolation(
                 f"К клиенту привязано счетов: {n}. Удалите их сначала.",
                 details={"dependent_accounts": n},
-            )
+        )
         await self.repo.delete(client)
-        try:
-            await self.session.commit()
-        except IntegrityError as exc:
-            await self.session.rollback()
-            raise IntegrityViolation("Не удалось удалить клиента — есть связанные данные") from exc
 
 
 class AccountService:
@@ -83,8 +73,8 @@ class AccountService:
         self.clients = ClientRepository(session)
         self.schema = AttributeSchemaService(session)
 
-    async def list(self, *, client_id: uuid.UUID | None = None) -> list[Account]:
-        return await self.repo.list(client_id=client_id)
+    async def list_all(self, *, client_id: uuid.UUID | None = None) -> list[Account]:
+        return await self.repo.list_all(client_id=client_id)
 
     async def get(self, account_id: uuid.UUID) -> Account:
         a = await self.repo.get(account_id)
@@ -104,8 +94,6 @@ class AccountService:
             attributes=attrs,
         )
         await self.repo.add(account)
-        await self.session.commit()
-        await self.session.refresh(account)
         return account
 
     async def update(self, account_id: uuid.UUID, data: AccountUpdate) -> Account:
@@ -118,8 +106,6 @@ class AccountService:
         account.tags = list(data.tags)
         account.attributes = await self.schema.validate_attributes("account", data.attributes)
         await self.session.flush()
-        await self.session.commit()
-        await self.session.refresh(account)
         return account
 
     async def delete(self, account_id: uuid.UUID) -> None:
@@ -129,13 +115,8 @@ class AccountService:
             raise IntegrityViolation(
                 f"К счёту привязано карт: {n}. Удалите их сначала.",
                 details={"dependent_cards": n},
-            )
+        )
         await self.repo.delete(account)
-        try:
-            await self.session.commit()
-        except IntegrityError as exc:
-            await self.session.rollback()
-            raise IntegrityViolation("Не удалось удалить счёт — есть связанные данные") from exc
 
 
 class CardService:
@@ -145,8 +126,8 @@ class CardService:
         self.accounts = AccountRepository(session)
         self.schema = AttributeSchemaService(session)
 
-    async def list(self, *, account_id: uuid.UUID | None = None) -> list[Card]:
-        return await self.repo.list(account_id=account_id)
+    async def list_all(self, *, account_id: uuid.UUID | None = None) -> list[Card]:
+        return await self.repo.list_all(account_id=account_id)
 
     async def get(self, card_id: uuid.UUID) -> Card:
         c = await self.repo.get(card_id)
@@ -166,8 +147,6 @@ class CardService:
             attributes=attrs,
         )
         await self.repo.add(card)
-        await self.session.commit()
-        await self.session.refresh(card)
         return card
 
     async def update(self, card_id: uuid.UUID, data: CardUpdate) -> Card:
@@ -180,11 +159,8 @@ class CardService:
         card.tags = list(data.tags)
         card.attributes = await self.schema.validate_attributes("card", data.attributes)
         await self.session.flush()
-        await self.session.commit()
-        await self.session.refresh(card)
         return card
 
     async def delete(self, card_id: uuid.UUID) -> None:
         card = await self.get(card_id)
         await self.repo.delete(card)
-        await self.session.commit()

@@ -12,7 +12,7 @@ class ReferenceValueRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list(self, entity_type: str) -> list[ReferenceValue]:
+    async def list_by_type(self, entity_type: str) -> list[ReferenceValue]:
         stmt = (
             select(ReferenceValue)
             .where(ReferenceValue.entity_type == entity_type)

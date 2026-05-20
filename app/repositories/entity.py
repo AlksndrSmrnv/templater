@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from typing import Any, cast
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +14,7 @@ class ClientRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list(self) -> list[Client]:
+    async def list_all(self) -> list[Client]:
         stmt = select(Client).order_by(Client.created_at.desc())
         return list((await self.session.execute(stmt)).scalars().all())
 
@@ -43,7 +44,7 @@ class AccountRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list(self, *, client_id: uuid.UUID | None = None) -> list[Account]:
+    async def list_all(self, *, client_id: uuid.UUID | None = None) -> list[Account]:
         stmt = select(Account).order_by(Account.created_at.desc())
         if client_id is not None:
             stmt = stmt.where(Account.client_id == client_id)
@@ -75,7 +76,7 @@ class CardRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list(self, *, account_id: uuid.UUID | None = None) -> list[Card]:
+    async def list_all(self, *, account_id: uuid.UUID | None = None) -> list[Card]:
         stmt = select(Card).order_by(Card.created_at.desc())
         if account_id is not None:
             stmt = stmt.where(Card.account_id == account_id)
@@ -111,10 +112,10 @@ async def find_entities_referencing(
     """
 
     result: dict[str, int] = {}
-    table_map = {"client": Client, "account": Account, "card": Card}
+    table_map: dict[str, Any] = {"client": Client, "account": Account, "card": Card}
     target_str = str(target_id)
     for owner, attrs in attribute_names_by_entity.items():
-        model = table_map.get(owner)
+        model = cast(Any, table_map.get(owner))
         if model is None or not attrs:
             continue
         conditions = [model.attributes[name].astext == target_str for name in attrs]

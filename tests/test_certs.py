@@ -6,7 +6,7 @@ import os
 from app.llm.certs import remove_temp_file, resolve_cert_files
 
 
-def test_resolve_and_remove_round_trip():
+def test_resolve_and_remove_round_trip() -> None:
     cert_text = b"-----BEGIN CERT-----\nFAKE\n-----END CERT-----\n"
     key_text = b"-----BEGIN KEY-----\nFAKEKEY\n-----END KEY-----\n"
     cert_b64 = base64.b64encode(cert_text).decode()

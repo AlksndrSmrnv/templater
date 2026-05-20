@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -233,7 +233,7 @@ class ExportImportService:
 
     async def import_package(
         self,
-        package: dict[str, Any],
+        package: Any,
         *,
         policy: str = "skip",
     ) -> ImportSummary:
@@ -309,16 +309,18 @@ class ExportImportService:
             if not isinstance(raw, dict):
                 errors.append("attribute_schema: запись не является объектом")
                 continue
+            raw = cast(dict[str, Any], raw)
             try:
                 # entity_type + name are needed just to locate the row, so they
                 # are validated up front regardless of policy.
-                entity_type = raw.get("entity_type")
-                name = raw.get("name")
-                if entity_type not in ALL_ATTR_ENTITY_TYPES:
-                    errors.append(f"attribute_schema {name}: неизвестный entity_type '{entity_type}'")
+                entity_type_raw = raw.get("entity_type")
+                raw_name = raw.get("name")
+                if not isinstance(entity_type_raw, str) or entity_type_raw not in ALL_ATTR_ENTITY_TYPES:
+                    errors.append(f"attribute_schema {raw_name}: неизвестный entity_type '{entity_type_raw}'")
                     continue
-                name, name_err = _validate_required_str(name, 128)
-                if name_err:
+                entity_type = entity_type_raw
+                name, name_err = _validate_required_str(raw_name, 128)
+                if name_err or name is None:
                     errors.append(f"attribute_schema {entity_type}: name {name_err}")
                     continue
                 key = (entity_type, name)
@@ -327,11 +329,11 @@ class ExportImportService:
                     continue
                 seen_attr_keys.add(key)
 
-                existing = await self.attrs.get_by_name(entity_type, name)
+                existing_attr = await self.attrs.get_by_name(entity_type, name)
                 # skip/fail on an existing row: leave it untouched, and don't
                 # validate the (write-only) payload fields — a stale file with a
                 # bad data_type shouldn't error for a row we won't write.
-                if existing is not None and conflict("attribute_schema", raw):
+                if existing_attr is not None and conflict("attribute_schema", raw):
                     continue
 
                 # Creating or overwriting — validate the payload now. Every
@@ -344,16 +346,19 @@ class ExportImportService:
                 # already-stored data. Absent on overwrite → keep existing.
                 raw_data_type = raw.get("data_type")
                 if raw_data_type is None:
-                    data_type = existing.data_type if existing is not None else "string"
-                else:
+                    data_type = existing_attr.data_type if existing_attr is not None else "string"
+                elif isinstance(raw_data_type, str):
                     data_type = raw_data_type
+                else:
+                    errors.append(f"attribute_schema {entity_type}/{name}: data_type должен быть строкой")
+                    continue
                 if data_type not in ALLOWED_TYPES:
                     errors.append(f"attribute_schema {entity_type}/{name}: неизвестный тип '{data_type}'")
                     continue
-                if existing is not None and data_type != existing.data_type:
+                if existing_attr is not None and data_type != existing_attr.data_type:
                     errors.append(
                         f"attribute_schema {entity_type}/{name}: data_type нельзя изменить "
-                        f"({existing.data_type} → {data_type})"
+                        f"({existing_attr.data_type} → {data_type})"
                     )
                     continue
 
@@ -369,28 +374,29 @@ class ExportImportService:
 
                 # label: absent → fall back to name (or existing); present → validate.
                 if raw.get("label") is None:
-                    label = existing.label if existing is not None else name
+                    label = existing_attr.label if existing_attr is not None else name
                 else:
-                    label, label_err = _validate_required_str(raw.get("label"), 255)
-                    if label_err:
+                    parsed_label, label_err = _validate_required_str(raw.get("label"), 255)
+                    if label_err or parsed_label is None:
                         errors.append(f"attribute_schema {entity_type}/{name}: label {label_err}")
                         continue
+                    label = parsed_label
 
                 description, desc_err = _validate_optional_str(raw.get("description"))
                 if desc_err:
                     errors.append(f"attribute_schema {entity_type}/{name}: description {desc_err}")
                     continue
                 if description is None:
-                    description = existing.description if existing is not None else ""
+                    description = existing_attr.description if existing_attr is not None else ""
 
                 is_required, ir_err = _validate_bool(
-                    raw.get("is_required"), existing.is_required if existing is not None else False
+                    raw.get("is_required"), existing_attr.is_required if existing_attr is not None else False
                 )
                 if ir_err:
                     errors.append(f"attribute_schema {entity_type}/{name}: is_required {ir_err}")
                     continue
                 is_deprecated, id_err = _validate_bool(
-                    raw.get("is_deprecated"), existing.is_deprecated if existing is not None else False
+                    raw.get("is_deprecated"), existing_attr.is_deprecated if existing_attr is not None else False
                 )
                 if id_err:
                     errors.append(f"attribute_schema {entity_type}/{name}: is_deprecated {id_err}")
@@ -401,7 +407,7 @@ class ExportImportService:
                     f"attribute_schema {entity_type}/{name}: display_order должен быть целым числом"
                 )
                 if raw_display_order is None:
-                    display_order = existing.display_order if existing is not None else 0
+                    display_order = existing_attr.display_order if existing_attr is not None else 0
                 elif isinstance(raw_display_order, bool):
                     # bool is an int subclass — reject it explicitly.
                     errors.append(display_order_err)
@@ -422,7 +428,7 @@ class ExportImportService:
                         errors.append(display_order_err)
                         continue
 
-                if existing is None:
+                if existing_attr is None:
                     self.session.add(AttributeDefinition(
                         entity_type=entity_type,
                         name=name,
@@ -437,12 +443,12 @@ class ExportImportService:
                     created["attribute_schema"] += 1
                 else:
                     # all parsed — apply atomically (data_type unchanged by design)
-                    existing.label = label
-                    existing.is_required = is_required
-                    existing.is_deprecated = is_deprecated
-                    existing.display_order = display_order
-                    existing.description = description
-                    existing.options = options
+                    existing_attr.label = label
+                    existing_attr.is_required = is_required
+                    existing_attr.is_deprecated = is_deprecated
+                    existing_attr.display_order = display_order
+                    existing_attr.description = description
+                    existing_attr.options = options
                     updated["attribute_schema"] += 1
             except Exception as exc:
                 errors.append(f"attribute_schema {raw.get('name')}: {exc}")
@@ -475,6 +481,7 @@ class ExportImportService:
             attrs_raw, attrs_err = _validate_attributes_field(raw.get("attributes"))
             if attrs_err:
                 return None, f"reference {ref_type}/{label}: {attrs_err}"
+            assert attrs_raw is not None
             try:
                 attrs = await schema_svc.validate_attributes(ref_type, attrs_raw)
                 return attrs, None
@@ -489,7 +496,8 @@ class ExportImportService:
         if references_section and not isinstance(references_section, dict):
             errors.append("references: ожидался объект вида {тип: [...]}")
             references_section = {}
-        for ref_type, items in (references_section or {}).items():
+        references_map = cast(dict[str, Any], references_section or {})
+        for ref_type, items in references_map.items():
             if ref_type not in REFERENCE_TYPES:
                 errors.append(f"references: неизвестный тип справочника '{ref_type}'")
                 continue
@@ -502,6 +510,7 @@ class ExportImportService:
                 if not isinstance(raw, dict):
                     errors.append(f"reference {ref_type}: запись не является объектом")
                     continue
+                raw = cast(dict[str, Any], raw)
                 try:
                     # Canonicalize: a file may carry the UUID upper-cased; use
                     # str(parsed) everywhere so dedup / remap / parent lookups
@@ -510,7 +519,7 @@ class ExportImportService:
                     rid_str = str(rid)
                     # code is used for lookup + dedup, so validate it up front.
                     code, code_err = _validate_required_str(raw.get("code"), 128)
-                    if code_err:
+                    if code_err or code is None:
                         errors.append(f"reference {ref_type}: code {code_err}")
                         continue
                     if rid_str in seen_ref_ids or (ref_type, code) in seen_ref_codes:
@@ -519,27 +528,29 @@ class ExportImportService:
                     seen_ref_ids.add(rid_str)
                     seen_ref_codes.add((ref_type, code))
 
-                    existing = await self.refs.get(rid)
-                    if existing is not None and existing.entity_type != ref_type:
+                    existing_ref = await self.refs.get(rid)
+                    if existing_ref is not None and existing_ref.entity_type != ref_type:
                         # The UUID already belongs to a different reference table.
                         # Overwriting would corrupt that row with this type's
                         # payload/schema — reject the cross-type collision.
                         errors.append(
                             f"reference {ref_type}/{code}: UUID {rid_str} уже занят записью "
-                            f"типа '{existing.entity_type}'"
+                            f"типа '{existing_ref.entity_type}'"
                         )
                         continue
-                    code_clash = None if existing is not None else await self.refs.get_by_code(ref_type, code)
+                    code_clash = (
+                        None if existing_ref is not None else await self.refs.get_by_code(ref_type, code)
+                    )
 
-                    if existing is None and code_clash is None:
+                    if existing_ref is None and code_clash is None:
                         # CREATE — validate the payload we're about to write.
                         ref_attrs, err = await _validated_ref_attrs(ref_type, code, raw)
-                        if err:
-                            errors.append(err)
+                        if err or ref_attrs is None:
+                            errors.append(err or f"reference {ref_type}/{code}: attributes отсутствуют")
                             continue
                         ref_name, ref_desc, fld_err = _ref_write_fields(ref_type, code, raw, "")
-                        if fld_err:
-                            errors.append(fld_err)
+                        if fld_err or ref_name is None or ref_desc is None:
+                            errors.append(fld_err or f"reference {ref_type}/{code}: некорректные поля")
                             continue
                         self.session.add(ReferenceValue(
                             id=rid,
@@ -550,7 +561,7 @@ class ExportImportService:
                             attributes=ref_attrs,
                         ))
                         created["references"] += 1
-                    elif existing is None and code_clash is not None:
+                    elif existing_ref is None and code_clash is not None:
                         # Same code under a different local id. Remap the imported
                         # UUID → local UUID UNCONDITIONALLY (even on skip), so the
                         # dependent clients/accounts/cards still resolve.
@@ -558,16 +569,16 @@ class ExportImportService:
                         if conflict("references", raw):
                             continue  # skip/fail: don't touch the local row, don't validate
                         ref_attrs, err = await _validated_ref_attrs(ref_type, code, raw)
-                        if err:
-                            errors.append(err)
+                        if err or ref_attrs is None:
+                            errors.append(err or f"reference {ref_type}/{code}: attributes отсутствуют")
                             continue
                         # Parse every new value before touching the ORM object,
                         # so a missing field can't leave the row half-updated.
                         ref_name, ref_desc, fld_err = _ref_write_fields(
                             ref_type, code, raw, code_clash.description
                         )
-                        if fld_err:
-                            errors.append(fld_err)
+                        if fld_err or ref_name is None or ref_desc is None:
+                            errors.append(fld_err or f"reference {ref_type}/{code}: некорректные поля")
                             continue
                         code_clash.name = ref_name
                         code_clash.description = ref_desc
@@ -577,30 +588,31 @@ class ExportImportService:
                         # Existing by id.
                         if conflict("references", raw):
                             continue  # skip/fail: leave it, no validation needed
+                        assert existing_ref is not None
                         # If the new code would collide with *another* row, surface
                         # it rather than letting UNIQUE blow up on commit.
-                        if existing.code != code:
+                        if existing_ref.code != code:
                             other = await self.refs.get_by_code(ref_type, code)
-                            if other is not None and other.id != existing.id:
+                            if other is not None and other.id != existing_ref.id:
                                 errors.append(
                                     f"reference {ref_type}/{code}: код уже занят другой записью"
                                 )
                                 continue
                         ref_attrs, err = await _validated_ref_attrs(ref_type, code, raw)
-                        if err:
-                            errors.append(err)
+                        if err or ref_attrs is None:
+                            errors.append(err or f"reference {ref_type}/{code}: attributes отсутствуют")
                             continue
                         # Parse every new value before touching the ORM object.
                         ref_name, ref_desc, fld_err = _ref_write_fields(
-                            ref_type, code, raw, existing.description
+                            ref_type, code, raw, existing_ref.description
                         )
-                        if fld_err:
-                            errors.append(fld_err)
+                        if fld_err or ref_name is None or ref_desc is None:
+                            errors.append(fld_err or f"reference {ref_type}/{code}: некорректные поля")
                             continue
-                        existing.code = code
-                        existing.name = ref_name
-                        existing.description = ref_desc
-                        existing.attributes = ref_attrs
+                        existing_ref.code = code
+                        existing_ref.name = ref_name
+                        existing_ref.description = ref_desc
+                        existing_ref.attributes = ref_attrs
                         updated["references"] += 1
                 except Exception as exc:
                     errors.append(f"reference {ref_type}/{_safe_label(raw, 'code', 'id')}: {exc}")
@@ -638,6 +650,7 @@ class ExportImportService:
             attrs_raw, attrs_err = _validate_attributes_field(raw.get("attributes"))
             if attrs_err:
                 return None, f"{kind} {label}: {attrs_err}"
+            assert attrs_raw is not None
             remapped = _remap_ref_attrs(et, attrs_raw)
             try:
                 attrs = await schema_svc.validate_attributes(et, remapped)
@@ -652,15 +665,17 @@ class ExportImportService:
         # flushed), so session.get() can't see them — track them explicitly so
         # an account/card can reference a parent created in the same file.
         imported_new_ids: dict[str, set[str]] = {"clients": set(), "accounts": set()}
-        for kind, model, et in (
+        for kind, model_raw, et in (
             ("clients", Client, "client"),
             ("accounts", Account, "account"),
             ("cards", Card, "card"),
         ):
+            model = cast(Any, model_raw)
             for raw in _as_list(package.get(kind)):
                 if not isinstance(raw, dict):
                     errors.append(f"{kind}: запись не является объектом")
                     continue
+                raw = cast(dict[str, Any], raw)
                 try:
                     # Canonical UUID string (see references loop note above).
                     eid = uuid.UUID(str(raw["id"]))
@@ -670,15 +685,15 @@ class ExportImportService:
                         continue
                     seen_entity_ids[kind].add(eid_str)
 
-                    existing = await self.session.get(model, eid)
+                    existing_entity = await self.session.get(model, eid)
                     # For skip/fail on an existing row we don't write anything,
                     # so validation is deferred until we know we'll create/overwrite.
-                    if existing is not None and conflict(kind, raw):
+                    if existing_entity is not None and conflict(kind, raw):
                         continue
 
                     validated_attrs, err = await _validated_entity_attrs(et, kind, eid_str, raw)
-                    if err:
-                        errors.append(err)
+                    if err or validated_attrs is None:
+                        errors.append(err or f"{kind} {eid_str}: attributes отсутствуют")
                         continue
                     tags, tags_err = _validate_tags(raw.get("tags"))
                     if tags_err:
@@ -699,7 +714,7 @@ class ExportImportService:
                     if kind == "cards" and raw.get("account_id"):
                         new_account_id = uuid.UUID(raw["account_id"])
 
-                    if existing is None:
+                    if existing_entity is None:
                         if kind == "accounts" and new_client_id is None:
                             errors.append(f"accounts {eid_str}: отсутствует client_id")
                             continue
@@ -728,7 +743,7 @@ class ExportImportService:
                             errors.append(f"cards {eid_str}: счёт {account_id_str} не найден")
                             continue
 
-                    if existing is None:
+                    if existing_entity is None:
                         kwargs = {
                             "id": eid,
                             "description": description or "",
@@ -746,14 +761,14 @@ class ExportImportService:
                     else:
                         # All values parsed above — apply atomically.
                         if description is not None:
-                            existing.description = description
+                            existing_entity.description = description
                         if tags is not None:
-                            existing.tags = tags
-                        existing.attributes = validated_attrs
+                            existing_entity.tags = tags
+                        existing_entity.attributes = validated_attrs
                         if new_client_id is not None:
-                            existing.client_id = new_client_id
+                            existing_entity.client_id = new_client_id
                         if new_account_id is not None:
-                            existing.account_id = new_account_id
+                            existing_entity.account_id = new_account_id
                         updated[kind] += 1
                 except Exception as exc:
                     errors.append(f"{kind} {_safe_label(raw, 'id')}: {exc}")
@@ -778,6 +793,7 @@ class ExportImportService:
             if not isinstance(raw, dict):
                 errors.append("templates: запись не является объектом")
                 continue
+            raw = cast(dict[str, Any], raw)
             try:
                 tid = uuid.UUID(str(raw["id"]))
                 tid_str = str(tid)
@@ -788,19 +804,19 @@ class ExportImportService:
 
                 # For skip/fail on an existing template we don't write — defer
                 # the (potentially expensive) content/placeholder validation.
-                existing = await self.session.get(MessageTemplate, tid)
-                if existing is not None and conflict("templates", raw):
+                existing_template = await self.session.get(MessageTemplate, tid)
+                if existing_template is not None and conflict("templates", raw):
                     continue
 
                 fmt = raw.get("format", "json")
-                if fmt not in ("json", "xml"):
+                if not isinstance(fmt, str) or fmt not in ("json", "xml"):
                     errors.append(f"template {raw.get('name')}: неподдерживаемый формат '{fmt}'")
                     continue
 
                 # Parse every required field into a local before touching the
                 # ORM object — a missing key must not leave the row half-updated.
                 new_name, name_err = _validate_required_str(raw.get("name"), 255)
-                if name_err:
+                if name_err or new_name is None:
                     errors.append(f"template {_safe_label(raw, 'id')}: name {name_err}")
                     continue
                 new_content = raw.get("content")
@@ -851,14 +867,15 @@ class ExportImportService:
                 #   non-object    → malformed file → row-level error.
                 llm_meta_raw = raw.get("llm_meta")
                 if llm_meta_raw is None:
-                    new_llm_meta = existing.llm_meta if existing is not None else {}
+                    new_llm_meta = existing_template.llm_meta if existing_template is not None else {}
                 else:
-                    new_llm_meta, meta_err = _validate_object_field(llm_meta_raw)
-                    if meta_err:
+                    parsed_llm_meta, meta_err = _validate_object_field(llm_meta_raw)
+                    if meta_err or parsed_llm_meta is None:
                         errors.append(f"template {new_name}: llm_meta {meta_err}")
                         continue
+                    new_llm_meta = parsed_llm_meta
 
-                if existing is None:
+                if existing_template is None:
                     self.session.add(MessageTemplate(
                         id=tid,
                         name=new_name,
@@ -872,15 +889,15 @@ class ExportImportService:
                     created["templates"] += 1
                 else:
                     # all parsed — apply atomically
-                    existing.name = new_name
-                    existing.description = (
-                        new_description if new_description is not None else existing.description
+                    existing_template.name = new_name
+                    existing_template.description = (
+                        new_description if new_description is not None else existing_template.description
                     )
-                    existing.format = fmt
-                    existing.content = new_content
-                    existing.original_content = new_original
-                    existing.llm_meta = new_llm_meta
-                    existing.placeholders = placeholders
+                    existing_template.format = fmt
+                    existing_template.content = new_content
+                    existing_template.original_content = new_original
+                    existing_template.llm_meta = new_llm_meta
+                    existing_template.placeholders = placeholders
                     updated["templates"] += 1
             except Exception as exc:
                 errors.append(f"template {_safe_label(raw, 'name', 'id')}: {exc}")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.llm.prompts import PromptBuilder
 
 
-def test_build_template_field_mapping_includes_payload_keys():
+def test_build_template_field_mapping_includes_payload_keys() -> None:
     sys_p, user_p = PromptBuilder.build_template_field_mapping(
         content='{"fullName":"X"}',
         fmt="json",
@@ -16,7 +16,7 @@ def test_build_template_field_mapping_includes_payload_keys():
     assert '"sender.fullName"' in user_p
 
 
-def test_build_template_meta_returns_strings():
+def test_build_template_meta_returns_strings() -> None:
     sys_p, user_p = PromptBuilder.build_template_meta(content="<a/>", fmt="xml")
     assert isinstance(sys_p, str) and sys_p
     assert "xml" in user_p

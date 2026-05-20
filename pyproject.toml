@@ -12,6 +12,16 @@ target-version = "py311"
 select = ["E", "F", "I", "W", "UP", "B", "SIM"]
 ignore = ["B008", "SIM108", "SIM105", "UP038", "B904", "E501"]
 
+[tool.mypy]
+strict = true
+files = ["app", "scripts", "tests"]
+plugins = ["pydantic.mypy"]
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["gigachat", "gigachat.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

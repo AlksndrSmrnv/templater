@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
 
-_engine = None
+_engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 
@@ -52,6 +51,7 @@ async def shutdown_engine() -> None:
         _sessionmaker = None
 
 
-def get_engine() -> Any:
+def get_engine() -> AsyncEngine:
     _ensure_engine()
+    assert _engine is not None
     return _engine

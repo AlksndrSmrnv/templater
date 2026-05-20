@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import Any, cast
 
-from app.services.template_render import render_template_html
-
-
-def _tpl(content: str, placeholders: list[dict], fmt: str = "json"):
-    return SimpleNamespace(format=fmt, content=content, placeholders=placeholders)
+from app.db.models import MessageTemplate
+from app.services.template_render import RenderableTemplate, render_template_html
 
 
-def test_render_json_wraps_string_leaf_in_placeholder_span():
+def _tpl(
+    content: str,
+    placeholders: list[dict[str, Any]],
+    fmt: str = "json",
+) -> RenderableTemplate:
+    return cast(RenderableTemplate, SimpleNamespace(format=fmt, content=content, placeholders=placeholders))
+
+
+def test_render_json_wraps_string_leaf_in_placeholder_span() -> None:
     content = json.dumps({"name": "Иванов", "amount": 100})
     placeholders = [
         {"location": "/name", "mode": "literal", "value": "Иванов", "original": "Иванов"},
@@ -23,12 +29,12 @@ def test_render_json_wraps_string_leaf_in_placeholder_span():
     assert "sender.account.balance" not in html  # current value is the rendered span text
 
 
-def test_render_falls_back_for_invalid_json():
+def test_render_falls_back_for_invalid_json() -> None:
     html = render_template_html(_tpl("not a json {", []))
     assert "not a json" in html
 
 
-def test_render_xml_wraps_text_and_attrs():
+def test_render_xml_wraps_text_and_attrs() -> None:
     content = '<msg type="t"><from>A</from></msg>'
     placeholders = [
         {"location": "/msg/@type", "mode": "literal", "value": "t", "original": "t"},
@@ -39,7 +45,7 @@ def test_render_xml_wraps_text_and_attrs():
     assert 'data-idx="1"' in html
 
 
-def test_regenerate_content_skips_stale_paths():
+def test_regenerate_content_skips_stale_paths() -> None:
     """A placeholder whose location no longer exists in the document must be
     skipped, not crash the render."""
 
@@ -54,12 +60,12 @@ def test_regenerate_content_skips_stale_paths():
             {"location": "/does/not/exist", "mode": "mapped", "value": "{{sender.y}}", "original": "?"},
         ],
     )
-    result = TemplateService.regenerate_content(template)
+    result = TemplateService.regenerate_content(cast(MessageTemplate, template))
     parsed = json.loads(result)
     assert parsed["a"] == "{{sender.name}}"
 
 
-def test_regenerate_content_skips_malformed_placeholder():
+def test_regenerate_content_skips_malformed_placeholder() -> None:
     from app.services.templates import TemplateService
 
     template = SimpleNamespace(
@@ -72,5 +78,5 @@ def test_regenerate_content_skips_malformed_placeholder():
             {"location": "/a", "mode": "literal", "value": "Y"},
         ],
     )
-    result = TemplateService.regenerate_content(template)
+    result = TemplateService.regenerate_content(cast(MessageTemplate, template))
     assert json.loads(result)["a"] == "Y"

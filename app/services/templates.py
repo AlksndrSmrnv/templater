@@ -50,8 +50,8 @@ class TemplateService:
         self.repo = TemplateRepository(session)
         self.schema = AttributeSchemaService(session)
 
-    async def list(self) -> list[MessageTemplate]:
-        return await self.repo.list()
+    async def list_all(self) -> list[MessageTemplate]:
+        return await self.repo.list_all()
 
     async def get(self, template_id: uuid.UUID) -> MessageTemplate:
         t = await self.repo.get(template_id)
@@ -80,8 +80,6 @@ class TemplateService:
             placeholders=[],
         )
         await self.repo.add(template)
-        await self.session.commit()
-        await self.session.refresh(template)
         return template
 
     async def update(self, template_id: uuid.UUID, data: TemplateUpdate) -> MessageTemplate:
@@ -115,14 +113,11 @@ class TemplateService:
         if data.placeholders is not None and not content_replaced:
             template.placeholders = normalize_placeholders(data.placeholders)
         await self.session.flush()
-        await self.session.commit()
-        await self.session.refresh(template)
         return template
 
     async def delete(self, template_id: uuid.UUID) -> None:
         template = await self.get(template_id)
         await self.repo.delete(template)
-        await self.session.commit()
 
     @staticmethod
     def _extract_leaves(fmt: str, content: str) -> list[walker.Leaf]:
@@ -213,12 +208,13 @@ class TemplateService:
         template.placeholders = placeholders
         template.llm_meta = llm_meta
         await self.session.flush()
-        await self.session.commit()
-        await self.session.refresh(template)
         return template
 
     @staticmethod
-    def _heuristic_mappings(leaves: list[walker.Leaf], catalog: list[dict[str, str]]) -> dict[str, dict[str, str]]:
+    def _heuristic_mappings(
+        leaves: list[walker.Leaf],
+        catalog: list[dict[str, str]],
+    ) -> dict[str, dict[str, str]]:
         """Match leaf paths to catalog entries by trailing-name similarity."""
 
         out: dict[str, dict[str, str]] = {}
@@ -270,6 +266,4 @@ class TemplateService:
         template.placeholders = normalize_placeholders(placeholders)
         template.content = self.regenerate_content(template)
         await self.session.flush()
-        await self.session.commit()
-        await self.session.refresh(template)
         return template
