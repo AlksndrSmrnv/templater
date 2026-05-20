@@ -50,3 +50,23 @@ async def test_import_rejects_non_dict_top_level():
         assert summary.errors, f"expected error for {bad!r}"
         assert all(v == 0 for v in summary.created.values())
         assert all(v == 0 for v in summary.updated.values())
+
+
+@pytest.mark.asyncio
+async def test_import_reports_wrong_shaped_sections():
+    """A file where a list section is given as an object must surface an
+    explicit error rather than looking like a successful empty import."""
+
+    svc = ExportImportService(session=None)
+    package = {
+        "clients": {"oops": "object instead of list"},
+        "templates": "a string",
+        "attribute_schema": {"also": "wrong"},
+        "references": ["should be an object"],
+    }
+    summary = await svc.import_package(package, policy="skip")
+    joined = " | ".join(summary.errors)
+    assert "clients" in joined
+    assert "templates" in joined
+    assert "attribute_schema" in joined
+    assert "references" in joined

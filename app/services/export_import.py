@@ -155,6 +155,22 @@ class ExportImportService:
             errors.append("Ожидался JSON-объект на верхнем уровне файла импорта")
             return _zeroed_summary()
 
+        # Report every wrong-shaped section explicitly and abort. Otherwise a
+        # file with e.g. ``clients: {...}`` would be silently treated as empty
+        # and look like a successful zero-change import.
+        shape_errors = False
+        for section in ("attribute_schema", "clients", "accounts", "cards", "templates"):
+            value = package.get(section)
+            if value is not None and not isinstance(value, list):
+                errors.append(f"Секция '{section}' должна быть списком")
+                shape_errors = True
+        references_value = package.get("references")
+        if references_value is not None and not isinstance(references_value, dict):
+            errors.append("Секция 'references' должна быть объектом {тип: [...]}")
+            shape_errors = True
+        if shape_errors:
+            return _zeroed_summary()
+
         def conflict(kind: str, raw: dict[str, Any]) -> bool:
             """Record a conflict according to ``policy``. Returns True if caller
             should stop processing this row (skip / fail), False if caller may
@@ -191,6 +207,8 @@ class ExportImportService:
                 errors.append("attribute_schema: запись не является объектом")
                 continue
             try:
+                # entity_type + name are needed just to locate the row, so they
+                # are validated up front regardless of policy.
                 entity_type = raw.get("entity_type")
                 name = raw.get("name")
                 if entity_type not in ALL_ATTR_ENTITY_TYPES:
@@ -199,6 +217,20 @@ class ExportImportService:
                 if not name or not isinstance(name, str):
                     errors.append("attribute_schema: пустое или некорректное имя атрибута")
                     continue
+                key = (entity_type, name)
+                if key in seen_attr_keys:
+                    errors.append(f"attribute_schema {entity_type}/{name}: дубликат в файле")
+                    continue
+                seen_attr_keys.add(key)
+
+                existing = await self.attrs.get_by_name(entity_type, name)
+                # skip/fail on an existing row: leave it untouched, and don't
+                # validate the (write-only) payload fields — a stale file with a
+                # bad data_type shouldn't error for a row we won't write.
+                if existing is not None and conflict("attribute_schema", raw):
+                    continue
+
+                # Creating or overwriting — validate the payload now.
                 data_type = raw.get("data_type", "string")
                 if data_type not in ALLOWED_TYPES:
                     errors.append(f"attribute_schema {entity_type}/{name}: неизвестный тип '{data_type}'")
@@ -212,13 +244,7 @@ class ExportImportService:
                 ):
                     errors.append(f"attribute_schema {entity_type}/{name}: enum без options.values")
                     continue
-                key = (entity_type, name)
-                if key in seen_attr_keys:
-                    errors.append(f"attribute_schema {entity_type}/{name}: дубликат в файле")
-                    continue
-                seen_attr_keys.add(key)
 
-                existing = await self.attrs.get_by_name(entity_type, name)
                 if existing is None:
                     self.session.add(AttributeDefinition(
                         entity_type=entity_type,
@@ -232,7 +258,7 @@ class ExportImportService:
                         options=options,
                     ))
                     created["attribute_schema"] += 1
-                elif not conflict("attribute_schema", raw):
+                else:
                     existing.label = raw.get("label") or existing.label
                     existing.is_required = bool(raw.get("is_required", existing.is_required))
                     existing.is_deprecated = bool(raw.get("is_deprecated", existing.is_deprecated))
@@ -301,6 +327,15 @@ class ExportImportService:
                     seen_ref_codes.add((ref_type, code))
 
                     existing = await self.refs.get(rid)
+                    if existing is not None and existing.entity_type != ref_type:
+                        # The UUID already belongs to a different reference table.
+                        # Overwriting would corrupt that row with this type's
+                        # payload/schema — reject the cross-type collision.
+                        errors.append(
+                            f"reference {ref_type}/{code}: UUID {rid_str} уже занят записью "
+                            f"типа '{existing.entity_type}'"
+                        )
+                        continue
                     code_clash = None if existing is not None else await self.refs.get_by_code(ref_type, code)
 
                     if existing is None and code_clash is None:
