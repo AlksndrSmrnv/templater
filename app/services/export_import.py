@@ -500,6 +500,10 @@ class ExportImportService:
 
         # clients, accounts, cards (in dependency order)
         seen_entity_ids: dict[str, set[str]] = {"clients": set(), "accounts": set(), "cards": set()}
+        # IDs created earlier in *this* import. Such rows are pending (not yet
+        # flushed), so session.get() can't see them — track them explicitly so
+        # an account/card can reference a parent created in the same file.
+        imported_new_ids: dict[str, set[str]] = {"clients": set(), "accounts": set()}
         for kind, model, et in (
             ("clients", Client, "client"),
             ("accounts", Account, "account"),
@@ -549,6 +553,29 @@ class ExportImportService:
                         if kind == "cards" and new_account_id is None:
                             errors.append(f"cards {eid_str}: отсутствует account_id")
                             continue
+
+                    # Verify the referenced parent actually exists — already in
+                    # the DB, or created earlier in this same import. A dangling
+                    # FK would otherwise only surface as an FK error on the final
+                    # commit and roll back the whole import instead of this row.
+                    if new_client_id is not None:
+                        client_id_str = str(new_client_id)
+                        if (
+                            client_id_str not in imported_new_ids["clients"]
+                            and await self.clients.get(new_client_id) is None
+                        ):
+                            errors.append(f"accounts {eid_str}: клиент {client_id_str} не найден")
+                            continue
+                    if new_account_id is not None:
+                        account_id_str = str(new_account_id)
+                        if (
+                            account_id_str not in imported_new_ids["accounts"]
+                            and await self.accounts.get(new_account_id) is None
+                        ):
+                            errors.append(f"cards {eid_str}: счёт {account_id_str} не найден")
+                            continue
+
+                    if existing is None:
                         kwargs = {
                             "id": eid,
                             "description": raw.get("description", ""),
@@ -561,6 +588,8 @@ class ExportImportService:
                             kwargs["account_id"] = new_account_id
                         self.session.add(model(**kwargs))
                         created[kind] += 1
+                        if kind in imported_new_ids:
+                            imported_new_ids[kind].add(eid_str)
                     else:
                         # All values parsed above — apply atomically.
                         existing.description = raw.get("description", existing.description)
