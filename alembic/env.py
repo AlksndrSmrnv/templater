@@ -37,6 +37,11 @@ def run_migrations_offline() -> None:
         compare_type=True,
     )
     with context.begin_transaction():
+        # Emit schema setup into the generated SQL so an offline script
+        # (`alembic upgrade --sql`) targets DB_SCHEMA, not the default schema.
+        # DB_SCHEMA is validated as a plain identifier in Settings.
+        context.execute(f'CREATE SCHEMA IF NOT EXISTS "{DB_SCHEMA}"')
+        context.execute(f'SET search_path TO "{DB_SCHEMA}"')
         context.run_migrations()
 
 

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# A safe, lowercase PostgreSQL identifier — needs no quoting and has no
+# case-folding surprises between CREATE SCHEMA and search_path.
+_DB_SCHEMA_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
 class Settings(BaseSettings):
@@ -36,6 +41,20 @@ class Settings(BaseSettings):
     llm_retry_base_delay: float = 3.0
 
     base_dir: Path = Field(default_factory=lambda: Path(__file__).resolve().parent)
+
+    @field_validator("db_schema")
+    @classmethod
+    def _check_db_schema(cls, value: str) -> str:
+        # db_schema is interpolated into CREATE SCHEMA / search_path — reject
+        # anything that isn't a plain identifier (e.g. "templater,public" or a
+        # value with quotes) before it can reach SQL.
+        if not _DB_SCHEMA_RE.match(value) or len(value) > 63:
+            raise ValueError(
+                "DB_SCHEMA должен быть простым идентификатором PostgreSQL: "
+                "строчные латинские буквы, цифры и подчёркивание, начинается с "
+                "буквы или подчёркивания, не длиннее 63 символов"
+            )
+        return value
 
     @property
     def llm_active(self) -> bool:
