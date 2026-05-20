@@ -54,6 +54,24 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _as_list(value: Any) -> list[Any]:
+    """Return ``value`` if it's a list, else an empty list. Guards against a
+    section of the import file being the wrong JSON shape."""
+
+    return value if isinstance(value, list) else []
+
+
+def _safe_label(raw: Any, *keys: str) -> str:
+    """Best-effort human label for an import row that may not even be a dict."""
+
+    if isinstance(raw, dict):
+        for k in keys:
+            v = raw.get(k)
+            if v:
+                return str(v)
+    return "<?>"
+
+
 class ExportImportService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -131,6 +149,12 @@ class ExportImportService:
                 created=dict(zero), updated=dict(zero), skipped=dict(zero), errors=errors
             )
 
+        # The uploaded file may contain any JSON value. A non-object top level
+        # would crash package.get(...) below — fail with a summary, not a 500.
+        if not isinstance(package, dict):
+            errors.append("Ожидался JSON-объект на верхнем уровне файла импорта")
+            return _zeroed_summary()
+
         def conflict(kind: str, raw: dict[str, Any]) -> bool:
             """Record a conflict according to ``policy``. Returns True if caller
             should stop processing this row (skip / fail), False if caller may
@@ -162,7 +186,10 @@ class ExportImportService:
 
         # ---- attribute_schema (validated, never trusts the file blindly) ----
         seen_attr_keys: set[tuple[str, str]] = set()
-        for raw in package.get("attribute_schema") or []:
+        for raw in _as_list(package.get("attribute_schema")):
+            if not isinstance(raw, dict):
+                errors.append("attribute_schema: запись не является объектом")
+                continue
             try:
                 entity_type = raw.get("entity_type")
                 name = raw.get("name")
@@ -235,14 +262,34 @@ class ExportImportService:
         # ref-typed attributes in the imported clients/accounts/cards.
         ref_id_remap: dict[str, str] = {}
 
+        async def _validated_ref_attrs(
+            ref_type: str, label: str, raw: dict[str, Any]
+        ) -> tuple[dict[str, Any] | None, str | None]:
+            """Validate reference attributes like the CRUD path. Only called when
+            we're actually about to write (create / overwrite)."""
+
+            try:
+                attrs = await schema_svc.validate_attributes(ref_type, _as_dict(raw.get("attributes")))
+                return attrs, None
+            except ValidationFailed as vexc:
+                detail = "; ".join(vexc.details) if isinstance(vexc.details, list) else vexc.message
+                return None, f"reference {ref_type}/{label}: атрибуты не прошли проверку: {detail}"
+
         # references (by id, then by (ref_type, code))
         seen_ref_ids: set[str] = set()
         seen_ref_codes: set[tuple[str, str]] = set()
-        for ref_type, items in (package.get("references") or {}).items():
+        references_section = package.get("references")
+        if references_section and not isinstance(references_section, dict):
+            errors.append("references: ожидался объект вида {тип: [...]}")
+            references_section = {}
+        for ref_type, items in (references_section or {}).items():
             if ref_type not in REFERENCE_TYPES:
                 errors.append(f"references: неизвестный тип справочника '{ref_type}'")
                 continue
-            for raw in items or []:
+            for raw in _as_list(items):
+                if not isinstance(raw, dict):
+                    errors.append(f"reference {ref_type}: запись не является объектом")
+                    continue
                 try:
                     rid_str = str(raw["id"])
                     rid = uuid.UUID(rid_str)
@@ -253,28 +300,15 @@ class ExportImportService:
                     seen_ref_ids.add(rid_str)
                     seen_ref_codes.add((ref_type, code))
 
-                    # Validate reference attributes against the ref-type schema,
-                    # exactly like the CRUD path (ReferenceService.create) does,
-                    # so import can't write reference rows with broken JSONB.
-                    try:
-                        ref_attrs = await schema_svc.validate_attributes(
-                            ref_type, _as_dict(raw.get("attributes"))
-                        )
-                    except ValidationFailed as vexc:
-                        detail = (
-                            "; ".join(vexc.details)
-                            if isinstance(vexc.details, list)
-                            else vexc.message
-                        )
-                        errors.append(
-                            f"reference {ref_type}/{code}: атрибуты не прошли проверку: {detail}"
-                        )
-                        continue
-
                     existing = await self.refs.get(rid)
                     code_clash = None if existing is not None else await self.refs.get_by_code(ref_type, code)
 
                     if existing is None and code_clash is None:
+                        # CREATE — validate the payload we're about to write.
+                        ref_attrs, err = await _validated_ref_attrs(ref_type, code, raw)
+                        if err:
+                            errors.append(err)
+                            continue
                         self.session.add(ReferenceValue(
                             id=rid,
                             entity_type=ref_type,
@@ -285,16 +319,26 @@ class ExportImportService:
                         ))
                         created["references"] += 1
                     elif existing is None and code_clash is not None:
-                        # Same code under a different local id — remap imported uuid → local uuid.
+                        # Same code under a different local id. Remap the imported
+                        # UUID → local UUID UNCONDITIONALLY (even on skip), so the
+                        # dependent clients/accounts/cards still resolve.
                         ref_id_remap[rid_str] = str(code_clash.id)
-                        if not conflict("references", raw):
-                            code_clash.name = raw["name"]
-                            code_clash.description = raw.get("description", code_clash.description)
-                            code_clash.attributes = ref_attrs
-                            updated["references"] += 1
-                    elif not conflict("references", raw):
-                        # Existing by id. If the new code would collide with *another* row,
-                        # surface it as an error rather than letting UNIQUE blow up on commit.
+                        if conflict("references", raw):
+                            continue  # skip/fail: don't touch the local row, don't validate
+                        ref_attrs, err = await _validated_ref_attrs(ref_type, code, raw)
+                        if err:
+                            errors.append(err)
+                            continue
+                        code_clash.name = raw["name"]
+                        code_clash.description = raw.get("description", code_clash.description)
+                        code_clash.attributes = ref_attrs
+                        updated["references"] += 1
+                    else:
+                        # Existing by id.
+                        if conflict("references", raw):
+                            continue  # skip/fail: leave it, no validation needed
+                        # If the new code would collide with *another* row, surface
+                        # it rather than letting UNIQUE blow up on commit.
                         if existing.code != code:
                             other = await self.refs.get_by_code(ref_type, code)
                             if other is not None and other.id != existing.id:
@@ -302,13 +346,17 @@ class ExportImportService:
                                     f"reference {ref_type}/{code}: код уже занят другой записью"
                                 )
                                 continue
-                            existing.code = code
+                        ref_attrs, err = await _validated_ref_attrs(ref_type, code, raw)
+                        if err:
+                            errors.append(err)
+                            continue
+                        existing.code = code
                         existing.name = raw["name"]
                         existing.description = raw.get("description", existing.description)
                         existing.attributes = ref_attrs
                         updated["references"] += 1
                 except Exception as exc:
-                    errors.append(f"reference {ref_type}/{raw.get('code')}: {exc}")
+                    errors.append(f"reference {ref_type}/{_safe_label(raw, 'code', 'id')}: {exc}")
 
         # Flush references so validate_attributes() below can verify ref-typed
         # attributes against rows imported in this same transaction.
@@ -325,6 +373,20 @@ class ExportImportService:
                     out[attr_name] = ref_id_remap[val]
             return out
 
+        async def _validated_entity_attrs(
+            et: str, kind: str, label: str, raw: dict[str, Any]
+        ) -> tuple[dict[str, Any] | None, str | None]:
+            """Remap ref-ids then validate like the CRUD path. Only called when
+            we're actually about to write (create / overwrite)."""
+
+            remapped = _remap_ref_attrs(et, _as_dict(raw.get("attributes")))
+            try:
+                attrs = await schema_svc.validate_attributes(et, remapped)
+                return attrs, None
+            except ValidationFailed as vexc:
+                detail = "; ".join(vexc.details) if isinstance(vexc.details, list) else vexc.message
+                return None, f"{kind} {label}: атрибуты не прошли проверку: {detail}"
+
         # clients, accounts, cards (in dependency order)
         seen_entity_ids: dict[str, set[str]] = {"clients": set(), "accounts": set(), "cards": set()}
         for kind, model, et in (
@@ -332,7 +394,10 @@ class ExportImportService:
             ("accounts", Account, "account"),
             ("cards", Card, "card"),
         ):
-            for raw in package.get(kind) or []:
+            for raw in _as_list(package.get(kind)):
+                if not isinstance(raw, dict):
+                    errors.append(f"{kind}: запись не является объектом")
+                    continue
                 try:
                     eid_str = str(raw["id"])
                     eid = uuid.UUID(eid_str)
@@ -342,19 +407,14 @@ class ExportImportService:
                     seen_entity_ids[kind].add(eid_str)
 
                     existing = await self.session.get(model, eid)
-                    remapped_attrs = _remap_ref_attrs(et, _as_dict(raw.get("attributes")))
-                    # Run imported attributes through the same validation the
-                    # CRUD path uses — checks required fields, casts types and
-                    # verifies ref-ids exist — so import can't write broken JSONB.
-                    try:
-                        validated_attrs = await schema_svc.validate_attributes(et, remapped_attrs)
-                    except ValidationFailed as vexc:
-                        detail = (
-                            "; ".join(vexc.details)
-                            if isinstance(vexc.details, list)
-                            else vexc.message
-                        )
-                        errors.append(f"{kind} {eid_str}: атрибуты не прошли проверку: {detail}")
+                    # For skip/fail on an existing row we don't write anything,
+                    # so validation is deferred until we know we'll create/overwrite.
+                    if existing is not None and conflict(kind, raw):
+                        continue
+
+                    validated_attrs, err = await _validated_entity_attrs(et, kind, eid_str, raw)
+                    if err:
+                        errors.append(err)
                         continue
 
                     if existing is None:
@@ -370,7 +430,7 @@ class ExportImportService:
                             kwargs["account_id"] = uuid.UUID(raw["account_id"])
                         self.session.add(model(**kwargs))
                         created[kind] += 1
-                    elif not conflict(kind, raw):
+                    else:
                         existing.description = raw.get("description", existing.description)
                         existing.tags = list(raw.get("tags", existing.tags))
                         existing.attributes = validated_attrs
@@ -380,7 +440,7 @@ class ExportImportService:
                             existing.account_id = uuid.UUID(raw["account_id"])
                         updated[kind] += 1
                 except Exception as exc:
-                    errors.append(f"{kind} {raw.get('id')}: {exc}")
+                    errors.append(f"{kind} {_safe_label(raw, 'id')}: {exc}")
 
         from app.utils import walker as _walker
 
@@ -398,7 +458,10 @@ class ExportImportService:
 
         # templates
         seen_template_ids: set[str] = set()
-        for raw in package.get("templates") or []:
+        for raw in _as_list(package.get("templates")):
+            if not isinstance(raw, dict):
+                errors.append("templates: запись не является объектом")
+                continue
             try:
                 tid_str = str(raw["id"])
                 tid = uuid.UUID(tid_str)
@@ -406,6 +469,12 @@ class ExportImportService:
                     errors.append(f"template {raw.get('name')}: дубликат id в файле")
                     continue
                 seen_template_ids.add(tid_str)
+
+                # For skip/fail on an existing template we don't write — defer
+                # the (potentially expensive) content/placeholder validation.
+                existing = await self.session.get(MessageTemplate, tid)
+                if existing is not None and conflict("templates", raw):
+                    continue
 
                 fmt = raw.get("format", "json")
                 if fmt not in ("json", "xml"):
@@ -434,7 +503,6 @@ class ExportImportService:
                     errors.append(f"template {raw.get('name')}: {vexc.message}")
                     continue
 
-                existing = await self.session.get(MessageTemplate, tid)
                 if existing is None:
                     self.session.add(MessageTemplate(
                         id=tid,
@@ -447,7 +515,7 @@ class ExportImportService:
                         placeholders=placeholders,
                     ))
                     created["templates"] += 1
-                elif not conflict("templates", raw):
+                else:
                     existing.name = raw["name"]
                     existing.description = raw.get("description", existing.description)
                     existing.format = fmt
@@ -457,7 +525,7 @@ class ExportImportService:
                     existing.placeholders = placeholders
                     updated["templates"] += 1
             except Exception as exc:
-                errors.append(f"template {raw.get('name')}: {exc}")
+                errors.append(f"template {_safe_label(raw, 'name', 'id')}: {exc}")
 
         # If fail-policy collected conflicts/errors, abort the whole transaction.
         if policy == "fail" and errors:
