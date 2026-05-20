@@ -53,15 +53,44 @@ docker-compose up --build
 
 ## Локальный запуск (без Docker)
 
+Приложение запускается локальным процессом, но подключается к **настоящим**
+PostgreSQL и GigaChat — адреса и креды берутся из `.env`. Локальный Postgres
+поднимать не нужно.
+
+**1. Заполнить `.env` реальными значениями:**
+
+```bash
+cp .env.example .env
+```
+
+В `.env` указать:
+- `DATABASE_URL` — адрес и креды вашего PostgreSQL.
+  Пароль со спецсимволами percent-encode (`@`→`%40`, `$`→`%24`, `|`→`%7C`).
+- `DB_SCHEMA` — выделенная схема (по умолчанию `templater`, создаётся автоматически).
+- `GIGACHAT_BASE_URL`, `GIGACHAT_CERT_B64`, `GIGACHAT_KEY_B64` — для GigaChat.
+  Сертификат и ключ кодируются в base64:
+  ```bash
+  base64 -i client.pem | tr -d '\n'   # → GIGACHAT_CERT_B64
+  base64 -i client.key | tr -d '\n'   # → GIGACHAT_KEY_B64
+  ```
+  Если оставить пустыми — LLM-функции отключатся, остальное приложение работает.
+
+**2. Запустить одной командой:**
+
+```bash
+./scripts/run_local.sh
+```
+
+Скрипт создаёт виртуальное окружение, ставит зависимости, применяет миграции
+Alembic, засеивает базовые справочники и поднимает `uvicorn` на
+`http://127.0.0.1:8000`.
+
+**Вручную** (то же самое по шагам):
+
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env  # отредактировать DATABASE_URL
-
-# поднять Postgres локально (например, через docker)
-docker run -d --name tm-pg -e POSTGRES_USER=template_maker -e POSTGRES_PASSWORD=template_maker -e POSTGRES_DB=template_maker -p 5432:5432 postgres:16-alpine
-
 alembic upgrade head
 python -m scripts.seed_reference_data
 uvicorn app.main:app --reload
@@ -69,14 +98,9 @@ uvicorn app.main:app --reload
 
 ## Подключение GigaChat
 
-Заполни переменные окружения в `.env`:
-
-```
-GIGACHAT_BASE_URL=https://gigachat.example/api/v1
-GIGACHAT_CERT_B64=<base64 содержимого client.pem>
-GIGACHAT_KEY_B64=<base64 содержимого client.key>
-GIGACHAT_MODEL=GigaChat-3-Ultra
-```
+LLM включается, когда заданы все три: `GIGACHAT_BASE_URL`, `GIGACHAT_CERT_B64`,
+`GIGACHAT_KEY_B64` (см. выше про base64). `GIGACHAT_MODEL` по умолчанию
+`GigaChat-3-Ultra`. Параметры таймаутов/ретраев — `LLM_*` в `.env`.
 
 Без этих значений LLM-функции автоматически отключаются — анализ шаблонов
 использует эвристический матчинг полей по их именам.
