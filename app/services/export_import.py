@@ -265,7 +265,10 @@ class ExportImportService:
                 if existing is not None and conflict("attribute_schema", raw):
                     continue
 
-                # Creating or overwriting — validate the payload now.
+                # Creating or overwriting — validate the payload now. Every
+                # field is parsed into a local first; only once all of them
+                # succeed do we touch the ORM object. A mid-way parse failure
+                # must not leave a half-updated row dirty for the final commit.
                 data_type = raw.get("data_type", "string")
                 if data_type not in ALLOWED_TYPES:
                     errors.append(f"attribute_schema {entity_type}/{name}: неизвестный тип '{data_type}'")
@@ -279,6 +282,18 @@ class ExportImportService:
                 ):
                     errors.append(f"attribute_schema {entity_type}/{name}: enum без options.values")
                     continue
+                raw_display_order = raw.get("display_order")
+                parsed_display_order: int | None
+                if raw_display_order is None:
+                    parsed_display_order = None
+                else:
+                    try:
+                        parsed_display_order = int(raw_display_order)
+                    except (TypeError, ValueError):
+                        errors.append(
+                            f"attribute_schema {entity_type}/{name}: display_order должен быть числом"
+                        )
+                        continue
 
                 if existing is None:
                     self.session.add(AttributeDefinition(
@@ -288,17 +303,25 @@ class ExportImportService:
                         data_type=data_type,
                         is_required=bool(raw.get("is_required", False)),
                         is_deprecated=bool(raw.get("is_deprecated", False)),
-                        display_order=int(raw.get("display_order", 0) or 0),
+                        display_order=parsed_display_order or 0,
                         description=raw.get("description") or "",
                         options=options,
                     ))
                     created["attribute_schema"] += 1
                 else:
-                    existing.label = raw.get("label") or existing.label
-                    existing.is_required = bool(raw.get("is_required", existing.is_required))
-                    existing.is_deprecated = bool(raw.get("is_deprecated", existing.is_deprecated))
-                    existing.display_order = int(raw.get("display_order", existing.display_order) or 0)
-                    existing.description = raw.get("description", existing.description) or ""
+                    new_label = raw.get("label") or existing.label
+                    new_is_required = bool(raw.get("is_required", existing.is_required))
+                    new_is_deprecated = bool(raw.get("is_deprecated", existing.is_deprecated))
+                    new_display_order = (
+                        parsed_display_order if parsed_display_order is not None else existing.display_order
+                    )
+                    new_description = raw.get("description", existing.description) or ""
+                    # all parsed — apply atomically
+                    existing.label = new_label
+                    existing.is_required = new_is_required
+                    existing.is_deprecated = new_is_deprecated
+                    existing.display_order = new_display_order
+                    existing.description = new_description
                     existing.options = options
                     updated["attribute_schema"] += 1
             except Exception as exc:
@@ -407,8 +430,12 @@ class ExportImportService:
                         if err:
                             errors.append(err)
                             continue
-                        code_clash.name = raw["name"]
-                        code_clash.description = raw.get("description", code_clash.description)
+                        # Parse every new value before touching the ORM object,
+                        # so a missing field can't leave the row half-updated.
+                        new_name = raw["name"]
+                        new_description = raw.get("description", code_clash.description)
+                        code_clash.name = new_name
+                        code_clash.description = new_description
                         code_clash.attributes = ref_attrs
                         updated["references"] += 1
                     else:
@@ -428,9 +455,12 @@ class ExportImportService:
                         if err:
                             errors.append(err)
                             continue
+                        # Parse every new value before touching the ORM object.
+                        new_name = raw["name"]
+                        new_description = raw.get("description", existing.description)
                         existing.code = code
-                        existing.name = raw["name"]
-                        existing.description = raw.get("description", existing.description)
+                        existing.name = new_name
+                        existing.description = new_description
                         existing.attributes = ref_attrs
                         updated["references"] += 1
                 except Exception as exc:
@@ -502,7 +532,23 @@ class ExportImportService:
                         errors.append(f"{kind} {eid_str}: {tags_err}")
                         continue
 
+                    # Parse the parent FK up front so a bad UUID can't leave a
+                    # half-updated row dirty for the final commit. ``None`` means
+                    # the field was absent (required on create, kept on overwrite).
+                    new_client_id: uuid.UUID | None = None
+                    new_account_id: uuid.UUID | None = None
+                    if kind == "accounts" and raw.get("client_id"):
+                        new_client_id = uuid.UUID(raw["client_id"])
+                    if kind == "cards" and raw.get("account_id"):
+                        new_account_id = uuid.UUID(raw["account_id"])
+
                     if existing is None:
+                        if kind == "accounts" and new_client_id is None:
+                            errors.append(f"accounts {eid_str}: отсутствует client_id")
+                            continue
+                        if kind == "cards" and new_account_id is None:
+                            errors.append(f"cards {eid_str}: отсутствует account_id")
+                            continue
                         kwargs = {
                             "id": eid,
                             "description": raw.get("description", ""),
@@ -510,20 +556,21 @@ class ExportImportService:
                             "attributes": validated_attrs,
                         }
                         if kind == "accounts":
-                            kwargs["client_id"] = uuid.UUID(raw["client_id"])
+                            kwargs["client_id"] = new_client_id
                         if kind == "cards":
-                            kwargs["account_id"] = uuid.UUID(raw["account_id"])
+                            kwargs["account_id"] = new_account_id
                         self.session.add(model(**kwargs))
                         created[kind] += 1
                     else:
+                        # All values parsed above — apply atomically.
                         existing.description = raw.get("description", existing.description)
                         if tags is not None:
                             existing.tags = tags
                         existing.attributes = validated_attrs
-                        if kind == "accounts" and raw.get("client_id"):
-                            existing.client_id = uuid.UUID(raw["client_id"])
-                        if kind == "cards" and raw.get("account_id"):
-                            existing.account_id = uuid.UUID(raw["account_id"])
+                        if new_client_id is not None:
+                            existing.client_id = new_client_id
+                        if new_account_id is not None:
+                            existing.account_id = new_account_id
                         updated[kind] += 1
                 except Exception as exc:
                     errors.append(f"{kind} {_safe_label(raw, 'id')}: {exc}")
@@ -589,25 +636,34 @@ class ExportImportService:
                     errors.append(f"template {raw.get('name')}: {vexc.message}")
                     continue
 
+                # Parse every required field into a local before touching the
+                # ORM object — a missing key must not leave the row half-updated.
+                new_name = raw["name"]
+                new_content = raw["content"]
+
                 if existing is None:
                     self.session.add(MessageTemplate(
                         id=tid,
-                        name=raw["name"],
+                        name=new_name,
                         description=raw.get("description", ""),
                         format=fmt,
-                        content=raw["content"],
-                        original_content=raw.get("original_content", raw["content"]),
+                        content=new_content,
+                        original_content=raw.get("original_content", new_content),
                         llm_meta=_as_dict(raw.get("llm_meta")),
                         placeholders=placeholders,
                     ))
                     created["templates"] += 1
                 else:
-                    existing.name = raw["name"]
-                    existing.description = raw.get("description", existing.description)
+                    new_description = raw.get("description", existing.description)
+                    new_original = raw.get("original_content", existing.original_content)
+                    new_llm_meta = _as_dict(raw.get("llm_meta")) or existing.llm_meta
+                    # all parsed — apply atomically
+                    existing.name = new_name
+                    existing.description = new_description
                     existing.format = fmt
-                    existing.content = raw["content"]
-                    existing.original_content = raw.get("original_content", existing.original_content)
-                    existing.llm_meta = _as_dict(raw.get("llm_meta")) or existing.llm_meta
+                    existing.content = new_content
+                    existing.original_content = new_original
+                    existing.llm_meta = new_llm_meta
                     existing.placeholders = placeholders
                     updated["templates"] += 1
             except Exception as exc:
