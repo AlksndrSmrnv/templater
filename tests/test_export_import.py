@@ -8,6 +8,9 @@ from app.services.export_import import (
     _as_list,
     _safe_label,
     _validate_attributes_field,
+    _validate_bool,
+    _validate_optional_str,
+    _validate_required_str,
     _validate_tags,
 )
 
@@ -44,6 +47,33 @@ def test_safe_label_handles_non_dict_rows():
     assert _safe_label({"id": "1"}, "name", "id") == "1"
     assert _safe_label("not a dict", "name") == "<?>"
     assert _safe_label(None, "name") == "<?>"
+
+
+def test_validate_bool_strict():
+    # Real bools pass through; absent → default.
+    assert _validate_bool(True, False) == (True, None)
+    assert _validate_bool(None, True) == (True, None)
+    # The string "false" must NOT become True (bool("false") is True).
+    val, err = _validate_bool("false", False)
+    assert err is not None
+    val, err = _validate_bool(1, False)
+    assert err is not None
+
+
+def test_validate_required_str():
+    assert _validate_required_str("ok", 128) == ("ok", None)
+    assert _validate_required_str(None, 128)[1] is not None
+    assert _validate_required_str("", 128)[1] is not None
+    assert _validate_required_str("   ", 128)[1] is not None
+    assert _validate_required_str(123, 128)[1] is not None
+    assert _validate_required_str("x" * 200, 128)[1] is not None
+
+
+def test_validate_optional_str():
+    assert _validate_optional_str(None) == (None, None)  # absent
+    assert _validate_optional_str("text") == ("text", None)
+    assert _validate_optional_str("") == ("", None)  # empty allowed for optional
+    assert _validate_optional_str(42)[1] is not None
 
 
 @pytest.mark.asyncio

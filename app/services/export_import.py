@@ -107,6 +107,66 @@ def _validate_attributes_field(value: Any) -> tuple[dict[str, Any] | None, str |
     return None, "attributes должен быть объектом"
 
 
+def _validate_bool(value: Any, default: bool) -> tuple[bool, str | None]:
+    """Validate an imported boolean against the strict shape CRUD expects.
+
+    Absent / null → ``default``. A real JSON bool → itself. Anything else
+    (notably the string ``"false"``, which ``bool(...)`` would turn into
+    ``True``) → error.
+    """
+
+    if value is None:
+        return default, None
+    if isinstance(value, bool):
+        return value, None
+    return default, "ожидалось true/false"
+
+
+def _validate_required_str(value: Any, max_length: int) -> tuple[str | None, str | None]:
+    """Validate a required string field (non-empty, length-bounded) — mirrors the
+    Pydantic constraints used on the CRUD path."""
+
+    if value is None:
+        return None, "обязательное поле"
+    if not isinstance(value, str):
+        return None, "должно быть строкой"
+    if not value.strip():
+        return None, "не может быть пустым"
+    if len(value) > max_length:
+        return None, f"длина превышает {max_length}"
+    return value, None
+
+
+def _validate_optional_str(value: Any) -> tuple[str | None, str | None]:
+    """Validate an optional string field. ``(None, None)`` means the field was
+    absent (caller keeps the existing value / default)."""
+
+    if value is None:
+        return None, None
+    if not isinstance(value, str):
+        return None, "должно быть строкой"
+    return value, None
+
+
+def _ref_write_fields(
+    ref_type: str, code: str, raw: dict[str, Any], fallback_description: str
+) -> tuple[str | None, str | None, str | None]:
+    """Validate ``name`` (required) and ``description`` (optional) for a
+    reference write, mirroring the CRUD Pydantic constraints.
+
+    Returns ``(name, description, error)``. ``description`` falls back to
+    ``fallback_description`` when the field is absent.
+    """
+
+    name, name_err = _validate_required_str(raw.get("name"), 255)
+    if name_err:
+        return None, None, f"reference {ref_type}/{code}: name {name_err}"
+    desc, desc_err = _validate_optional_str(raw.get("description"))
+    if desc_err:
+        return None, None, f"reference {ref_type}/{code}: description {desc_err}"
+    return name, (desc if desc is not None else fallback_description), None
+
+
 class ExportImportService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -131,23 +191,30 @@ class ExportImportService:
         for d in all_defs:
             if d.data_type != "ref":
                 continue
-            target = (d.options or {}).get("ref_entity")
-            if target:
+            target = _as_dict(d.options).get("ref_entity")
+            if target in REFERENCE_TYPES:
                 ref_attrs_by_owner.setdefault(d.entity_type, []).append((d.name, target))
 
-        ref_ids: dict[str, set[str]] = {t: set() for t in REFERENCE_TYPES}
+        ref_ids: dict[str, set[uuid.UUID]] = {t: set() for t in REFERENCE_TYPES}
         for entity_type, items in (("client", client_objs), ("account", account_objs), ("card", card_objs)):
             for o in items:
                 for attr_name, target_type in ref_attrs_by_owner.get(entity_type, []):
                     val = (o.attributes or {}).get(attr_name)
-                    if val:
-                        ref_ids[target_type].add(str(val))
+                    if not val:
+                        continue
+                    try:
+                        # A legacy / deprecated attribute may hold a non-UUID
+                        # value (validation preserves unknown keys unchecked).
+                        # Skip it instead of letting uuid.UUID(...) 500 the export.
+                        ref_ids[target_type].add(uuid.UUID(str(val)))
+                    except (ValueError, AttributeError, TypeError):
+                        continue
 
         references: dict[str, list[dict[str, Any]]] = {}
         for t, ids in ref_ids.items():
             if not ids:
                 continue
-            stmt = select(ReferenceValue).where(ReferenceValue.id.in_([uuid.UUID(i) for i in ids]))
+            stmt = select(ReferenceValue).where(ReferenceValue.id.in_(list(ids)))
             rows = list((await self.session.execute(stmt)).scalars().all())
             references[t] = [self._dump_reference(r) for r in rows]
 
@@ -249,8 +316,9 @@ class ExportImportService:
                 if entity_type not in ALL_ATTR_ENTITY_TYPES:
                     errors.append(f"attribute_schema {name}: неизвестный entity_type '{entity_type}'")
                     continue
-                if not name or not isinstance(name, str):
-                    errors.append("attribute_schema: пустое или некорректное имя атрибута")
+                name, name_err = _validate_required_str(name, 128)
+                if name_err:
+                    errors.append(f"attribute_schema {entity_type}: name {name_err}")
                     continue
                 key = (entity_type, name)
                 if key in seen_attr_keys:
@@ -269,10 +337,25 @@ class ExportImportService:
                 # field is parsed into a local first; only once all of them
                 # succeed do we touch the ORM object. A mid-way parse failure
                 # must not leave a half-updated row dirty for the final commit.
-                data_type = raw.get("data_type", "string")
+
+                # data_type is immutable: turning an existing enum/ref attribute
+                # into e.g. a string would orphan its options and break the
+                # already-stored data. Absent on overwrite → keep existing.
+                raw_data_type = raw.get("data_type")
+                if raw_data_type is None:
+                    data_type = existing.data_type if existing is not None else "string"
+                else:
+                    data_type = raw_data_type
                 if data_type not in ALLOWED_TYPES:
                     errors.append(f"attribute_schema {entity_type}/{name}: неизвестный тип '{data_type}'")
                     continue
+                if existing is not None and data_type != existing.data_type:
+                    errors.append(
+                        f"attribute_schema {entity_type}/{name}: data_type нельзя изменить "
+                        f"({existing.data_type} → {data_type})"
+                    )
+                    continue
+
                 options = _as_dict(raw.get("options"))
                 if data_type == "ref" and options.get("ref_entity") not in REFERENCE_TYPES:
                     errors.append(f"attribute_schema {entity_type}/{name}: ref_entity вне справочников")
@@ -282,13 +365,47 @@ class ExportImportService:
                 ):
                     errors.append(f"attribute_schema {entity_type}/{name}: enum без options.values")
                     continue
+
+                # label: absent → fall back to name (or existing); present → validate.
+                if raw.get("label") is None:
+                    label = existing.label if existing is not None else name
+                else:
+                    label, label_err = _validate_required_str(raw.get("label"), 255)
+                    if label_err:
+                        errors.append(f"attribute_schema {entity_type}/{name}: label {label_err}")
+                        continue
+
+                description, desc_err = _validate_optional_str(raw.get("description"))
+                if desc_err:
+                    errors.append(f"attribute_schema {entity_type}/{name}: description {desc_err}")
+                    continue
+                if description is None:
+                    description = existing.description if existing is not None else ""
+
+                is_required, ir_err = _validate_bool(
+                    raw.get("is_required"), existing.is_required if existing is not None else False
+                )
+                if ir_err:
+                    errors.append(f"attribute_schema {entity_type}/{name}: is_required {ir_err}")
+                    continue
+                is_deprecated, id_err = _validate_bool(
+                    raw.get("is_deprecated"), existing.is_deprecated if existing is not None else False
+                )
+                if id_err:
+                    errors.append(f"attribute_schema {entity_type}/{name}: is_deprecated {id_err}")
+                    continue
+
                 raw_display_order = raw.get("display_order")
-                parsed_display_order: int | None
                 if raw_display_order is None:
-                    parsed_display_order = None
+                    display_order = existing.display_order if existing is not None else 0
+                elif isinstance(raw_display_order, bool):
+                    errors.append(
+                        f"attribute_schema {entity_type}/{name}: display_order должен быть числом"
+                    )
+                    continue
                 else:
                     try:
-                        parsed_display_order = int(raw_display_order)
+                        display_order = int(raw_display_order)
                     except (TypeError, ValueError):
                         errors.append(
                             f"attribute_schema {entity_type}/{name}: display_order должен быть числом"
@@ -299,29 +416,22 @@ class ExportImportService:
                     self.session.add(AttributeDefinition(
                         entity_type=entity_type,
                         name=name,
-                        label=raw.get("label") or name,
+                        label=label,
                         data_type=data_type,
-                        is_required=bool(raw.get("is_required", False)),
-                        is_deprecated=bool(raw.get("is_deprecated", False)),
-                        display_order=parsed_display_order or 0,
-                        description=raw.get("description") or "",
+                        is_required=is_required,
+                        is_deprecated=is_deprecated,
+                        display_order=display_order,
+                        description=description,
                         options=options,
                     ))
                     created["attribute_schema"] += 1
                 else:
-                    new_label = raw.get("label") or existing.label
-                    new_is_required = bool(raw.get("is_required", existing.is_required))
-                    new_is_deprecated = bool(raw.get("is_deprecated", existing.is_deprecated))
-                    new_display_order = (
-                        parsed_display_order if parsed_display_order is not None else existing.display_order
-                    )
-                    new_description = raw.get("description", existing.description) or ""
-                    # all parsed — apply atomically
-                    existing.label = new_label
-                    existing.is_required = new_is_required
-                    existing.is_deprecated = new_is_deprecated
-                    existing.display_order = new_display_order
-                    existing.description = new_description
+                    # all parsed — apply atomically (data_type unchanged by design)
+                    existing.label = label
+                    existing.is_required = is_required
+                    existing.is_deprecated = is_deprecated
+                    existing.display_order = display_order
+                    existing.description = description
                     existing.options = options
                     updated["attribute_schema"] += 1
             except Exception as exc:
@@ -385,7 +495,11 @@ class ExportImportService:
                 try:
                     rid_str = str(raw["id"])
                     rid = uuid.UUID(rid_str)
-                    code = raw["code"]
+                    # code is used for lookup + dedup, so validate it up front.
+                    code, code_err = _validate_required_str(raw.get("code"), 128)
+                    if code_err:
+                        errors.append(f"reference {ref_type}: code {code_err}")
+                        continue
                     if rid_str in seen_ref_ids or (ref_type, code) in seen_ref_codes:
                         errors.append(f"reference {ref_type}/{code}: дубликат в файле")
                         continue
@@ -410,12 +524,16 @@ class ExportImportService:
                         if err:
                             errors.append(err)
                             continue
+                        ref_name, ref_desc, fld_err = _ref_write_fields(ref_type, code, raw, "")
+                        if fld_err:
+                            errors.append(fld_err)
+                            continue
                         self.session.add(ReferenceValue(
                             id=rid,
                             entity_type=ref_type,
                             code=code,
-                            name=raw["name"],
-                            description=raw.get("description", ""),
+                            name=ref_name,
+                            description=ref_desc,
                             attributes=ref_attrs,
                         ))
                         created["references"] += 1
@@ -432,10 +550,14 @@ class ExportImportService:
                             continue
                         # Parse every new value before touching the ORM object,
                         # so a missing field can't leave the row half-updated.
-                        new_name = raw["name"]
-                        new_description = raw.get("description", code_clash.description)
-                        code_clash.name = new_name
-                        code_clash.description = new_description
+                        ref_name, ref_desc, fld_err = _ref_write_fields(
+                            ref_type, code, raw, code_clash.description
+                        )
+                        if fld_err:
+                            errors.append(fld_err)
+                            continue
+                        code_clash.name = ref_name
+                        code_clash.description = ref_desc
                         code_clash.attributes = ref_attrs
                         updated["references"] += 1
                     else:
@@ -456,11 +578,15 @@ class ExportImportService:
                             errors.append(err)
                             continue
                         # Parse every new value before touching the ORM object.
-                        new_name = raw["name"]
-                        new_description = raw.get("description", existing.description)
+                        ref_name, ref_desc, fld_err = _ref_write_fields(
+                            ref_type, code, raw, existing.description
+                        )
+                        if fld_err:
+                            errors.append(fld_err)
+                            continue
                         existing.code = code
-                        existing.name = new_name
-                        existing.description = new_description
+                        existing.name = ref_name
+                        existing.description = ref_desc
                         existing.attributes = ref_attrs
                         updated["references"] += 1
                 except Exception as exc:
@@ -535,6 +661,10 @@ class ExportImportService:
                     if tags_err:
                         errors.append(f"{kind} {eid_str}: {tags_err}")
                         continue
+                    description, desc_err = _validate_optional_str(raw.get("description"))
+                    if desc_err:
+                        errors.append(f"{kind} {eid_str}: description {desc_err}")
+                        continue
 
                     # Parse the parent FK up front so a bad UUID can't leave a
                     # half-updated row dirty for the final commit. ``None`` means
@@ -578,7 +708,7 @@ class ExportImportService:
                     if existing is None:
                         kwargs = {
                             "id": eid,
-                            "description": raw.get("description", ""),
+                            "description": description or "",
                             "tags": tags or [],
                             "attributes": validated_attrs,
                         }
@@ -592,7 +722,8 @@ class ExportImportService:
                             imported_new_ids[kind].add(eid_str)
                     else:
                         # All values parsed above — apply atomically.
-                        existing.description = raw.get("description", existing.description)
+                        if description is not None:
+                            existing.description = description
                         if tags is not None:
                             existing.tags = tags
                         existing.attributes = validated_attrs
@@ -645,10 +776,17 @@ class ExportImportService:
 
                 # Parse every required field into a local before touching the
                 # ORM object — a missing key must not leave the row half-updated.
-                new_name = raw["name"]
-                new_content = raw["content"]
-                if not isinstance(new_content, str):
-                    errors.append(f"template {raw.get('name')}: content должен быть строкой")
+                new_name, name_err = _validate_required_str(raw.get("name"), 255)
+                if name_err:
+                    errors.append(f"template {_safe_label(raw, 'id')}: name {name_err}")
+                    continue
+                new_content = raw.get("content")
+                if not isinstance(new_content, str) or not new_content:
+                    errors.append(f"template {new_name}: content должен быть непустой строкой")
+                    continue
+                new_description, desc_err = _validate_optional_str(raw.get("description"))
+                if desc_err:
+                    errors.append(f"template {new_name}: description {desc_err}")
                     continue
 
                 # content must parse as the declared format.
@@ -683,24 +821,34 @@ class ExportImportService:
                     errors.append(f"template {raw.get('name')}: {vexc.message}")
                     continue
 
+                # llm_meta: absent → keep existing (create → {}); a present
+                # value (incl. an explicit {}) replaces it — overwrite must be
+                # able to clear stale metadata.
+                if "llm_meta" in raw:
+                    new_llm_meta = _as_dict(raw.get("llm_meta"))
+                elif existing is not None:
+                    new_llm_meta = existing.llm_meta
+                else:
+                    new_llm_meta = {}
+
                 if existing is None:
                     self.session.add(MessageTemplate(
                         id=tid,
                         name=new_name,
-                        description=raw.get("description", ""),
+                        description=new_description or "",
                         format=fmt,
                         content=new_content,
                         original_content=new_original,
-                        llm_meta=_as_dict(raw.get("llm_meta")),
+                        llm_meta=new_llm_meta,
                         placeholders=placeholders,
                     ))
                     created["templates"] += 1
                 else:
-                    new_description = raw.get("description", existing.description)
-                    new_llm_meta = _as_dict(raw.get("llm_meta")) or existing.llm_meta
                     # all parsed — apply atomically
                     existing.name = new_name
-                    existing.description = new_description
+                    existing.description = (
+                        new_description if new_description is not None else existing.description
+                    )
                     existing.format = fmt
                     existing.content = new_content
                     existing.original_content = new_original
