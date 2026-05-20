@@ -72,6 +72,24 @@ def _safe_label(raw: Any, *keys: str) -> str:
     return "<?>"
 
 
+def _validate_tags(value: Any) -> tuple[list[str] | None, str | None]:
+    """Validate an imported ``tags`` value.
+
+    Returns ``(tags, error)``. ``tags is None`` with no error means the field
+    was absent (caller should keep the existing value). A wrong shape — e.g. the
+    string ``"vip"``, which ``list(...)`` would explode into ``["v","i","p"]`` —
+    yields an error instead of silently corrupting the row.
+    """
+
+    if value is None:
+        return None, None
+    if not isinstance(value, list):
+        return None, "tags должен быть списком строк"
+    if not all(isinstance(t, str) for t in value):
+        return None, "tags должен содержать только строки"
+    return list(value), None
+
+
 class ExportImportService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -312,7 +330,12 @@ class ExportImportService:
             if ref_type not in REFERENCE_TYPES:
                 errors.append(f"references: неизвестный тип справочника '{ref_type}'")
                 continue
-            for raw in _as_list(items):
+            if not isinstance(items, list):
+                # Nested value must itself be a list — otherwise _as_list would
+                # silently drop it and the rows would vanish without an error.
+                errors.append(f"references.{ref_type}: должно быть списком")
+                continue
+            for raw in items:
                 if not isinstance(raw, dict):
                     errors.append(f"reference {ref_type}: запись не является объектом")
                     continue
@@ -451,12 +474,16 @@ class ExportImportService:
                     if err:
                         errors.append(err)
                         continue
+                    tags, tags_err = _validate_tags(raw.get("tags"))
+                    if tags_err:
+                        errors.append(f"{kind} {eid_str}: {tags_err}")
+                        continue
 
                     if existing is None:
                         kwargs = {
                             "id": eid,
                             "description": raw.get("description", ""),
-                            "tags": list(raw.get("tags", [])),
+                            "tags": tags or [],
                             "attributes": validated_attrs,
                         }
                         if kind == "accounts":
@@ -467,7 +494,8 @@ class ExportImportService:
                         created[kind] += 1
                     else:
                         existing.description = raw.get("description", existing.description)
-                        existing.tags = list(raw.get("tags", existing.tags))
+                        if tags is not None:
+                            existing.tags = tags
                         existing.attributes = validated_attrs
                         if kind == "accounts" and raw.get("client_id"):
                             existing.client_id = uuid.UUID(raw["client_id"])

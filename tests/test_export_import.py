@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.export_import import ExportImportService, _as_dict, _as_list, _safe_label
+from app.services.export_import import (
+    ExportImportService,
+    _as_dict,
+    _as_list,
+    _safe_label,
+    _validate_tags,
+)
 
 
 def test_as_dict_passes_through_dict():
@@ -50,6 +56,31 @@ async def test_import_rejects_non_dict_top_level():
         assert summary.errors, f"expected error for {bad!r}"
         assert all(v == 0 for v in summary.created.values())
         assert all(v == 0 for v in summary.updated.values())
+
+
+def test_validate_tags_accepts_list_of_strings():
+    tags, err = _validate_tags(["vip", "test"])
+    assert err is None
+    assert tags == ["vip", "test"]
+
+
+def test_validate_tags_none_means_absent():
+    tags, err = _validate_tags(None)
+    assert err is None
+    assert tags is None  # caller keeps the existing value
+
+
+def test_validate_tags_rejects_string():
+    # list("vip") would explode into ["v","i","p"] — must be rejected instead.
+    tags, err = _validate_tags("vip")
+    assert tags is None
+    assert err is not None
+
+
+def test_validate_tags_rejects_non_string_items():
+    tags, err = _validate_tags(["ok", 123])
+    assert tags is None
+    assert err is not None
 
 
 @pytest.mark.asyncio
