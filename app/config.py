@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     app_debug: bool = False
 
     database_url: str = "postgresql+asyncpg://template_maker:template_maker@localhost:5432/template_maker"
+    # Dedicated PostgreSQL schema the app lives in. Set as the connection
+    # search_path, so every table / query is isolated to it.
+    db_schema: str = "templater"
 
     gigachat_base_url: str = ""
     gigachat_cert_b64: str = ""
