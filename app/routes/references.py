@@ -100,7 +100,7 @@ async def page_edit(
 @router.get("/api/references/{entity_type}", response_model=list[ReferenceValueRead])
 async def api_list(entity_type: str, session: AsyncSession = SessionDep) -> list[ReferenceValueRead]:
     _check_ref_type(entity_type)
-    items = await ReferenceService(session).list(entity_type)
+    items = await ReferenceService(session).list_by_type(entity_type)
     return [ReferenceValueRead.model_validate(i, from_attributes=True) for i in items]
 
 

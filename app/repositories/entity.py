@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from builtins import list as list_type
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -15,14 +14,14 @@ class ClientRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list(self) -> list[Client]:
+    async def list_all(self) -> list[Client]:
         stmt = select(Client).order_by(Client.created_at.desc())
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def get(self, client_id: uuid.UUID) -> Client | None:
         return await self.session.get(Client, client_id)
 
-    async def get_many(self, ids: Sequence[uuid.UUID]) -> list_type[Client]:
+    async def get_many(self, ids: Sequence[uuid.UUID]) -> list[Client]:
         if not ids:
             return []
         stmt = select(Client).where(Client.id.in_(ids))
@@ -45,7 +44,7 @@ class AccountRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list(self, *, client_id: uuid.UUID | None = None) -> list[Account]:
+    async def list_all(self, *, client_id: uuid.UUID | None = None) -> list[Account]:
         stmt = select(Account).order_by(Account.created_at.desc())
         if client_id is not None:
             stmt = stmt.where(Account.client_id == client_id)
@@ -54,7 +53,7 @@ class AccountRepository:
     async def get(self, account_id: uuid.UUID) -> Account | None:
         return await self.session.get(Account, account_id)
 
-    async def get_many(self, ids: Sequence[uuid.UUID]) -> list_type[Account]:
+    async def get_many(self, ids: Sequence[uuid.UUID]) -> list[Account]:
         if not ids:
             return []
         stmt = select(Account).where(Account.id.in_(ids))
@@ -77,7 +76,7 @@ class CardRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list(self, *, account_id: uuid.UUID | None = None) -> list[Card]:
+    async def list_all(self, *, account_id: uuid.UUID | None = None) -> list[Card]:
         stmt = select(Card).order_by(Card.created_at.desc())
         if account_id is not None:
             stmt = stmt.where(Card.account_id == account_id)
@@ -86,7 +85,7 @@ class CardRepository:
     async def get(self, card_id: uuid.UUID) -> Card | None:
         return await self.session.get(Card, card_id)
 
-    async def get_many(self, ids: Sequence[uuid.UUID]) -> list_type[Card]:
+    async def get_many(self, ids: Sequence[uuid.UUID]) -> list[Card]:
         if not ids:
             return []
         stmt = select(Card).where(Card.id.in_(ids))

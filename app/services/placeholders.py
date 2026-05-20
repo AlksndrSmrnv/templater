@@ -72,7 +72,7 @@ class PlaceholderFiller:
             if account is None or account.client_id != client.id:
                 raise ValidationFailed("Счёт не принадлежит выбранному клиенту")
         else:
-            accs = await self.accounts.list(client_id=client.id)
+            accs = await self.accounts.list_all(client_id=client.id)
             account = accs[0] if accs else None
         if account is not None:
             out["account"] = dict(account.attributes or {})
@@ -83,7 +83,7 @@ class PlaceholderFiller:
                 if card is None or card.account_id != account.id:
                     raise ValidationFailed("Карта не принадлежит выбранному счёту")
             else:
-                cards = await self.cards.list(account_id=account.id)
+                cards = await self.cards.list_all(account_id=account.id)
                 card = cards[0] if cards else None
             if card is not None:
                 out["card"] = dict(card.attributes or {})

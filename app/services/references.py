@@ -26,9 +26,9 @@ class ReferenceService:
         if entity_type not in REFERENCE_TYPES:
             raise ValidationFailed(f"Неизвестный тип справочника: {entity_type}")
 
-    async def list(self, entity_type: str) -> list[ReferenceValue]:
+    async def list_by_type(self, entity_type: str) -> list[ReferenceValue]:
         self._check_entity_type(entity_type)
-        return await self.repo.list(entity_type)
+        return await self.repo.list_by_type(entity_type)
 
     async def get(self, value_id: uuid.UUID) -> ReferenceValue:
         value = await self.repo.get(value_id)

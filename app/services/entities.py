@@ -28,8 +28,8 @@ class ClientService:
         self.repo = ClientRepository(session)
         self.schema = AttributeSchemaService(session)
 
-    async def list(self) -> list[Client]:
-        return await self.repo.list()
+    async def list_all(self) -> list[Client]:
+        return await self.repo.list_all()
 
     async def get(self, client_id: uuid.UUID) -> Client:
         c = await self.repo.get(client_id)
@@ -73,8 +73,8 @@ class AccountService:
         self.clients = ClientRepository(session)
         self.schema = AttributeSchemaService(session)
 
-    async def list(self, *, client_id: uuid.UUID | None = None) -> list[Account]:
-        return await self.repo.list(client_id=client_id)
+    async def list_all(self, *, client_id: uuid.UUID | None = None) -> list[Account]:
+        return await self.repo.list_all(client_id=client_id)
 
     async def get(self, account_id: uuid.UUID) -> Account:
         a = await self.repo.get(account_id)
@@ -126,8 +126,8 @@ class CardService:
         self.accounts = AccountRepository(session)
         self.schema = AttributeSchemaService(session)
 
-    async def list(self, *, account_id: uuid.UUID | None = None) -> list[Card]:
-        return await self.repo.list(account_id=account_id)
+    async def list_all(self, *, account_id: uuid.UUID | None = None) -> list[Card]:
+        return await self.repo.list_all(account_id=account_id)
 
     async def get(self, card_id: uuid.UUID) -> Card:
         c = await self.repo.get(card_id)

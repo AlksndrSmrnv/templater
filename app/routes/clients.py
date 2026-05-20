@@ -50,7 +50,7 @@ async def page_edit(
 
 @router.get("/api/clients", response_model=list[ClientRead])
 async def api_list(session: AsyncSession = SessionDep) -> list[ClientRead]:
-    items = await ClientService(session).list()
+    items = await ClientService(session).list_all()
     return [ClientRead.model_validate(i, from_attributes=True) for i in items]
 
 

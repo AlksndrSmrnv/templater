@@ -79,7 +79,7 @@ async def page_fill(
 
 @router.get("/api/templates", response_model=list[TemplateRead])
 async def api_list(session: AsyncSession = SessionDep) -> list[TemplateRead]:
-    items = await TemplateService(session).list()
+    items = await TemplateService(session).list_all()
     return [TemplateRead.model_validate(i, from_attributes=True) for i in items]
 
 

@@ -48,7 +48,7 @@ async def page_edit(
 async def api_list(
     client_id: uuid.UUID | None = None, session: AsyncSession = SessionDep
 ) -> list[AccountRead]:
-    items = await AccountService(session).list(client_id=client_id)
+    items = await AccountService(session).list_all(client_id=client_id)
     return [AccountRead.model_validate(i, from_attributes=True) for i in items]
 
 
