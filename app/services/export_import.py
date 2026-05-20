@@ -31,6 +31,7 @@ from app.repositories.template import TemplateRepository
 from app.schemas.attribute import ALLOWED_TYPES
 from app.schemas.exchange import ExportPackage, ExportRequest, ImportSummary
 from app.services.attribute_schema import AttributeSchemaService
+from app.services.templates import normalize_placeholders
 from app.utils.errors import ValidationFailed
 
 
@@ -252,6 +253,24 @@ class ExportImportService:
                     seen_ref_ids.add(rid_str)
                     seen_ref_codes.add((ref_type, code))
 
+                    # Validate reference attributes against the ref-type schema,
+                    # exactly like the CRUD path (ReferenceService.create) does,
+                    # so import can't write reference rows with broken JSONB.
+                    try:
+                        ref_attrs = await schema_svc.validate_attributes(
+                            ref_type, _as_dict(raw.get("attributes"))
+                        )
+                    except ValidationFailed as vexc:
+                        detail = (
+                            "; ".join(vexc.details)
+                            if isinstance(vexc.details, list)
+                            else vexc.message
+                        )
+                        errors.append(
+                            f"reference {ref_type}/{code}: атрибуты не прошли проверку: {detail}"
+                        )
+                        continue
+
                     existing = await self.refs.get(rid)
                     code_clash = None if existing is not None else await self.refs.get_by_code(ref_type, code)
 
@@ -262,7 +281,7 @@ class ExportImportService:
                             code=code,
                             name=raw["name"],
                             description=raw.get("description", ""),
-                            attributes=_as_dict(raw.get("attributes")),
+                            attributes=ref_attrs,
                         ))
                         created["references"] += 1
                     elif existing is None and code_clash is not None:
@@ -271,7 +290,7 @@ class ExportImportService:
                         if not conflict("references", raw):
                             code_clash.name = raw["name"]
                             code_clash.description = raw.get("description", code_clash.description)
-                            code_clash.attributes = _as_dict(raw.get("attributes")) or code_clash.attributes
+                            code_clash.attributes = ref_attrs
                             updated["references"] += 1
                     elif not conflict("references", raw):
                         # Existing by id. If the new code would collide with *another* row,
@@ -286,7 +305,7 @@ class ExportImportService:
                             existing.code = code
                         existing.name = raw["name"]
                         existing.description = raw.get("description", existing.description)
-                        existing.attributes = _as_dict(raw.get("attributes")) or existing.attributes
+                        existing.attributes = ref_attrs
                         updated["references"] += 1
                 except Exception as exc:
                     errors.append(f"reference {ref_type}/{raw.get('code')}: {exc}")
@@ -407,6 +426,14 @@ class ExportImportService:
                         errors.append(orig_err.replace("template", "template original_content"))
                         continue
 
+                # Validate placeholder structure — a malformed entry would later
+                # crash regenerate/fill on this template.
+                try:
+                    placeholders = normalize_placeholders(raw.get("placeholders"))
+                except ValidationFailed as vexc:
+                    errors.append(f"template {raw.get('name')}: {vexc.message}")
+                    continue
+
                 existing = await self.session.get(MessageTemplate, tid)
                 if existing is None:
                     self.session.add(MessageTemplate(
@@ -417,7 +444,7 @@ class ExportImportService:
                         content=raw["content"],
                         original_content=raw.get("original_content", raw["content"]),
                         llm_meta=_as_dict(raw.get("llm_meta")),
-                        placeholders=raw.get("placeholders") if isinstance(raw.get("placeholders"), list) else [],
+                        placeholders=placeholders,
                     ))
                     created["templates"] += 1
                 elif not conflict("templates", raw):
@@ -427,8 +454,7 @@ class ExportImportService:
                     existing.content = raw["content"]
                     existing.original_content = raw.get("original_content", existing.original_content)
                     existing.llm_meta = _as_dict(raw.get("llm_meta")) or existing.llm_meta
-                    if isinstance(raw.get("placeholders"), list):
-                        existing.placeholders = raw["placeholders"]
+                    existing.placeholders = placeholders
                     updated["templates"] += 1
             except Exception as exc:
                 errors.append(f"template {raw.get('name')}: {exc}")

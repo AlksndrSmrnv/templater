@@ -4,16 +4,44 @@ import re
 import uuid
 from typing import Any
 
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import MessageTemplate
 from app.repositories.template import TemplateRepository
-from app.schemas.template import TemplateCreate, TemplateUpdate
+from app.schemas.template import PlaceholderInfo, TemplateCreate, TemplateUpdate
 from app.services.attribute_schema import AttributeSchemaService
 from app.utils import walker
 from app.utils.errors import NotFoundError, ValidationFailed
 
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}")
+
+
+def normalize_placeholders(raw: Any) -> list[dict[str, Any]]:
+    """Validate a raw placeholders payload and return clean dicts.
+
+    Imported files and the editor API both send placeholders as free-form
+    ``list[dict]``. Without structural checks a malformed entry (missing
+    ``location``/``value``, bad ``mode``) would later crash regenerate /
+    fill. Each item is validated through :class:`PlaceholderInfo`.
+    """
+
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValidationFailed("placeholders должен быть списком")
+    out: list[dict[str, Any]] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValidationFailed(f"placeholders[{idx}]: ожидается объект")
+        try:
+            validated = PlaceholderInfo.model_validate(item)
+        except PydanticValidationError as exc:
+            raise ValidationFailed(
+                f"placeholders[{idx}]: некорректная структура: {exc.errors()}"
+            ) from exc
+        out.append(validated.model_dump())
+    return out
 
 
 class TemplateService:
@@ -83,9 +111,9 @@ class TemplateService:
             template.llm_meta = data.llm_meta
         # Placeholders coming alongside a content replacement are ignored — they
         # belonged to the old body. Anything else (e.g. an editor save without
-        # touching content) is honored.
+        # touching content) is honored after structural validation.
         if data.placeholders is not None and not content_replaced:
-            template.placeholders = data.placeholders
+            template.placeholders = normalize_placeholders(data.placeholders)
         await self.session.flush()
         await self.session.commit()
         await self.session.refresh(template)
@@ -209,15 +237,23 @@ class TemplateService:
 
     @staticmethod
     def regenerate_content(template: MessageTemplate) -> str:
-        """Rebuild ``content`` from ``original_content`` + current ``placeholders``."""
+        """Rebuild ``content`` from ``original_content`` + current ``placeholders``.
+
+        Defensive against malformed placeholder entries: anything missing
+        ``location``/``value`` is skipped rather than raising. ``replace_json`` /
+        ``replace_xml`` themselves tolerate paths that no longer resolve.
+        """
 
         replacements: dict[str, str] = {}
         for ph in template.placeholders or []:
-            if ph.get("mode") == "mapped":
-                replacements[ph["location"]] = ph["value"]
-            elif ph.get("mode") == "literal":
-                # keep original; only override if value differs
-                replacements[ph["location"]] = ph["value"]
+            if not isinstance(ph, dict):
+                continue
+            location = ph.get("location")
+            value = ph.get("value")
+            if not location or value is None:
+                continue
+            if ph.get("mode") in ("mapped", "literal"):
+                replacements[location] = value
         if not replacements:
             return template.original_content or template.content
         source = template.original_content or template.content
@@ -231,7 +267,7 @@ class TemplateService:
         self, template_id: uuid.UUID, placeholders: list[dict[str, Any]]
     ) -> MessageTemplate:
         template = await self.get(template_id)
-        template.placeholders = placeholders
+        template.placeholders = normalize_placeholders(placeholders)
         template.content = self.regenerate_content(template)
         await self.session.flush()
         await self.session.commit()

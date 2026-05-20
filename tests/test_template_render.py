@@ -37,3 +37,40 @@ def test_render_xml_wraps_text_and_attrs():
     html = render_template_html(_tpl(content, placeholders, fmt="xml"))
     assert 'data-idx="0"' in html
     assert 'data-idx="1"' in html
+
+
+def test_regenerate_content_skips_stale_paths():
+    """A placeholder whose location no longer exists in the document must be
+    skipped, not crash the render."""
+
+    from app.services.templates import TemplateService
+
+    template = SimpleNamespace(
+        format="json",
+        content='{"a": "x"}',
+        original_content='{"a": "x"}',
+        placeholders=[
+            {"location": "/a", "mode": "mapped", "value": "{{sender.name}}", "original": "x"},
+            {"location": "/does/not/exist", "mode": "mapped", "value": "{{sender.y}}", "original": "?"},
+        ],
+    )
+    result = TemplateService.regenerate_content(template)
+    parsed = json.loads(result)
+    assert parsed["a"] == "{{sender.name}}"
+
+
+def test_regenerate_content_skips_malformed_placeholder():
+    from app.services.templates import TemplateService
+
+    template = SimpleNamespace(
+        format="json",
+        content='{"a": "x"}',
+        original_content='{"a": "x"}',
+        placeholders=[
+            {"mode": "mapped"},  # no location / value
+            "not-a-dict",
+            {"location": "/a", "mode": "literal", "value": "Y"},
+        ],
+    )
+    result = TemplateService.regenerate_content(template)
+    assert json.loads(result)["a"] == "Y"

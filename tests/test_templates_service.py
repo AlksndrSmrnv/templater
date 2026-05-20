@@ -3,7 +3,42 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from app.services.templates import TemplateService
+import pytest
+
+from app.services.templates import TemplateService, normalize_placeholders
+from app.utils.errors import ValidationFailed
+
+
+def test_normalize_placeholders_accepts_valid_entries():
+    raw = [
+        {"location": "/a", "mode": "mapped", "value": "{{sender.x}}", "original": "X"},
+        {"location": "/b", "mode": "literal", "value": "lit"},  # original defaults to ""
+    ]
+    out = normalize_placeholders(raw)
+    assert out[0]["location"] == "/a"
+    assert out[1]["original"] == ""
+    assert out[1]["mode"] == "literal"
+
+
+def test_normalize_placeholders_rejects_bad_mode():
+    with pytest.raises(ValidationFailed):
+        normalize_placeholders([{"location": "/a", "mode": "weird", "value": "v"}])
+
+
+def test_normalize_placeholders_rejects_missing_location():
+    with pytest.raises(ValidationFailed):
+        normalize_placeholders([{"mode": "literal", "value": "v"}])
+
+
+def test_normalize_placeholders_rejects_non_list_and_non_dict():
+    with pytest.raises(ValidationFailed):
+        normalize_placeholders({"location": "/a"})
+    with pytest.raises(ValidationFailed):
+        normalize_placeholders(["not-a-dict"])
+
+
+def test_normalize_placeholders_none_is_empty():
+    assert normalize_placeholders(None) == []
 
 
 def test_regenerate_content_uses_original_content_as_source():

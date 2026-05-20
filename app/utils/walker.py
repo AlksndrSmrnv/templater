@@ -51,12 +51,17 @@ def walk_json(content: str) -> list[Leaf]:
 def replace_json(content: str, replacements: dict[str, str]) -> str:
     """Return JSON content with values at the given JSON-pointer paths replaced.
 
-    Values that aren't strings in the source are stringified to keep types simple.
+    Paths that no longer resolve in the document are skipped silently — a stale
+    placeholder location must not crash the whole render. Values that aren't
+    strings in the source are stringified to keep types simple.
     """
 
     data = json.loads(content)
     for path, new_value in replacements.items():
-        _set_jsonptr(data, path, new_value)
+        try:
+            _set_jsonptr(data, path, new_value)
+        except (KeyError, IndexError, ValueError, TypeError):
+            continue
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
@@ -111,7 +116,11 @@ def replace_xml(content: str, replacements: dict[str, str]) -> str:
     for path, new_value in replacements.items():
         if not path.startswith(base):
             continue
-        _set_xml(root, path[len(base):].lstrip("/"), new_value)
+        try:
+            _set_xml(root, path[len(base):].lstrip("/"), new_value)
+        except (KeyError, IndexError, ValueError, TypeError):
+            # Stale / malformed placeholder path — skip, don't crash the render.
+            continue
     return ET.tostring(root, encoding="unicode")
 
 
