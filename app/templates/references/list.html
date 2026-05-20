@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Template Maker{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ title }}</h1>
+    <div class="actions">
+        <a class="btn primary" href="/references/{{ entity_type }}/new">Создать</a>
+        <a class="btn" href="/references">Все справочники</a>
+    </div>
+</div>
+<div class="filters">
+    <label>Поиск:
+        <input id="search" type="search" placeholder="по коду / названию">
+    </label>
+</div>
+<div class="table-wrap">
+    <table class="data-table" id="entities-table">
+        <thead><tr id="thead-row"><th></th></tr></thead>
+        <tbody id="entities-body"><tr><td colspan="100" class="muted">Загрузка...</td></tr></tbody>
+    </table>
+</div>
+<script>
+    window.PAGE = { entityType: "{{ entity_type }}", isReference: true };
+</script>
+<script src="/static/js/reference-list.js"></script>
+{% endblock %}

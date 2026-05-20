@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Template Maker{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ title }}</h1>
+    <div class="actions">
+        <a class="btn" href="/{{ entity_type }}s">Назад к списку</a>
+    </div>
+</div>
+
+<form id="entity-form" class="form" autocomplete="off">
+    <div id="form-errors" class="errors" hidden></div>
+    <div id="form-fields" class="form-fields">
+        <div class="muted">Загрузка схемы...</div>
+    </div>
+    <div class="form-section">
+        <label>Теги
+            <input type="text" id="tags-input" placeholder="введите тег и нажмите Enter">
+        </label>
+        <div id="tags-list" class="tags"></div>
+    </div>
+    <div class="form-section">
+        <label>Описание (для языковой модели)
+            <textarea id="description" rows="3"></textarea>
+        </label>
+    </div>
+    <div class="form-actions">
+        <button class="btn primary" type="submit">Сохранить</button>
+        {% if entity_id %}<button class="btn danger" type="button" id="btn-delete">Удалить</button>{% endif %}
+    </div>
+</form>
+
+<script>
+    window.PAGE = { entityType: "{{ entity_type }}", entityId: {{ ('"' + entity_id + '"') if entity_id else 'null' }} };
+</script>
+<script src="/static/js/entity-form.js"></script>
+{% endblock %}

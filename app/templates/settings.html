@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+{% block title %}Настройки — Template Maker{% endblock %}
+{% block content %}
+<h1>Настройки</h1>
+
+<div class="settings-section">
+    <h2>LLM (GigaChat)</h2>
+    <p>
+        Статус:
+        {% if llm_active %}
+            <span class="llm-status on">включена</span>
+        {% else %}
+            <span class="llm-status off">выключена</span>
+        {% endif %}
+    </p>
+    <p class="muted">
+        Модель: <code>{{ llm_model }}</code><br>
+        Управление сертификатами/URL — через переменные окружения
+        (<code>GIGACHAT_BASE_URL</code>, <code>GIGACHAT_CERT_B64</code>, <code>GIGACHAT_KEY_B64</code>, ...).
+        Из UI это не редактируется по соображениям безопасности.
+    </p>
+</div>
+
+<div class="settings-section">
+    <h2>Политика импорта</h2>
+    <label>По умолчанию:
+        <select id="default-policy">
+            <option value="skip">Пропускать существующие</option>
+            <option value="overwrite">Перезаписывать</option>
+            <option value="fail">Падать при ошибке</option>
+        </select>
+    </label>
+    <button class="btn primary" id="save-policy" style="margin-left:8px;">Сохранить</button>
+</div>
+
+<div class="settings-section">
+    <h2>Атрибуты сущностей</h2>
+    <p class="muted">Добавляйте новые атрибуты по мере необходимости. Удалять атрибуты нельзя — только помечать устаревшими (значения в существующих записях сохраняются).</p>
+    <div class="filters">
+        <label>Тип сущности:
+            <select id="entity-filter">
+                <option value="">все</option>
+                {% for t in entity_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+            </select>
+        </label>
+        <button class="btn primary" id="btn-new-attr">Добавить атрибут</button>
+    </div>
+    <div class="table-wrap">
+        <table class="data-table" id="attrs-table">
+            <thead><tr>
+                <th>Сущность</th><th>Имя</th><th>Label</th><th>Тип</th>
+                <th>Required</th><th>Deprecated</th><th>Порядок</th><th>Описание</th><th></th>
+            </tr></thead>
+            <tbody id="attrs-body"><tr><td colspan="9" class="muted">Загрузка...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<dialog id="attr-dialog" style="border:1px solid var(--border); border-radius:8px; padding:0; max-width:520px; width:90%;">
+    <form id="attr-form" class="form" style="border:none; box-shadow:none; padding:18px;">
+        <h2 id="attr-dialog-title">Новый атрибут</h2>
+        <div id="attr-errors" class="errors" hidden></div>
+        <div class="form-section">
+            <label>Тип сущности <span class="required-mark">*</span>
+                <select id="attr-entity" required>
+                    {% for t in entity_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+                </select>
+            </label>
+        </div>
+        <div class="form-section">
+            <label>Имя поля (латиница, точки разрешены) <span class="required-mark">*</span>
+                <input type="text" id="attr-name" required pattern="[a-zA-Z][a-zA-Z0-9_.]*">
+            </label>
+        </div>
+        <div class="form-section">
+            <label>Подпись (label) <span class="required-mark">*</span>
+                <input type="text" id="attr-label" required>
+            </label>
+        </div>
+        <div class="form-section">
+            <label>Тип данных <span class="required-mark">*</span>
+                <select id="attr-type" required>
+                    <option value="string">string</option>
+                    <option value="text">text</option>
+                    <option value="int">int</option>
+                    <option value="number">number</option>
+                    <option value="bool">bool</option>
+                    <option value="date">date</option>
+                    <option value="datetime">datetime</option>
+                    <option value="enum">enum</option>
+                    <option value="ref">ref</option>
+                </select>
+            </label>
+        </div>
+        <div class="form-section" id="enum-block" hidden>
+            <label>Значения enum (через запятую)
+                <input type="text" id="attr-enum-values">
+            </label>
+        </div>
+        <div class="form-section" id="ref-block" hidden>
+            <label>Справочник
+                <select id="attr-ref-entity">
+                    <option value="currency">currency</option>
+                    <option value="account_type">account_type</option>
+                    <option value="card_type">card_type</option>
+                    <option value="bank">bank</option>
+                    <option value="citizenship">citizenship</option>
+                </select>
+            </label>
+        </div>
+        <div class="form-section">
+            <label><input type="checkbox" id="attr-required"> Обязательное</label>
+        </div>
+        <div class="form-section">
+            <label>Порядок отображения
+                <input type="number" id="attr-order" value="0">
+            </label>
+        </div>
+        <div class="form-section">
+            <label>Описание (для LLM)
+                <textarea id="attr-description" rows="2"></textarea>
+            </label>
+        </div>
+        <div class="form-actions">
+            <button class="btn primary" type="submit">Сохранить</button>
+            <button class="btn" type="button" id="attr-cancel">Отмена</button>
+        </div>
+    </form>
+</dialog>
+
+<script>
+(async function () {
+    const tbody = document.getElementById("attrs-body");
+    const filterSel = document.getElementById("entity-filter");
+    const newBtn = document.getElementById("btn-new-attr");
+    const dialog = document.getElementById("attr-dialog");
+    const form = document.getElementById("attr-form");
+    const cancelBtn = document.getElementById("attr-cancel");
+    const typeSel = document.getElementById("attr-type");
+    const enumBlock = document.getElementById("enum-block");
+    const refBlock = document.getElementById("ref-block");
+    const errorsBox = document.getElementById("attr-errors");
+    let items = [];
+    let editing = null;
+
+    typeSel.addEventListener("change", () => {
+        enumBlock.hidden = typeSel.value !== "enum";
+        refBlock.hidden = typeSel.value !== "ref";
+    });
+
+    function render() {
+        const filter = filterSel.value;
+        const filtered = filter ? items.filter(i => i.entity_type === filter) : items;
+        if (filtered.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="9" class="muted" style="text-align:center; padding:24px;">Нет атрибутов</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = filtered.map(a => `
+            <tr>
+                <td>${TM.escapeHtml(a.entity_type)}</td>
+                <td><code>${TM.escapeHtml(a.name)}</code></td>
+                <td>${TM.escapeHtml(a.label)}</td>
+                <td>${TM.escapeHtml(a.data_type)}${a.data_type === "ref" ? " → " + TM.escapeHtml(a.options?.ref_entity || "") : ""}</td>
+                <td>${a.is_required ? "✓" : ""}</td>
+                <td>${a.is_deprecated ? "✓" : ""}</td>
+                <td>${a.display_order}</td>
+                <td>${TM.escapeHtml(a.description || "")}</td>
+                <td class="row-actions">
+                    <button class="btn" data-action="edit" data-id="${a.id}">Изменить</button>
+                    ${!a.is_deprecated ? `<button class="btn danger" data-action="deprecate" data-id="${a.id}">В архив</button>` : ""}
+                </td>
+            </tr>
+        `).join("");
+        tbody.querySelectorAll("button[data-action=edit]").forEach(b => {
+            b.addEventListener("click", () => openEdit(items.find(i => i.id === b.dataset.id)));
+        });
+        tbody.querySelectorAll("button[data-action=deprecate]").forEach(b => {
+            b.addEventListener("click", async () => {
+                if (!TM.confirm("Пометить атрибут как устаревший?")) return;
+                try {
+                    await TM.api("POST", `/api/attributes/${b.dataset.id}/deprecate`);
+                    items = await TM.api("GET", "/api/attributes");
+                    render();
+                } catch (e) { TM.toast(e.message, "error"); }
+            });
+        });
+    }
+
+    function openNew() {
+        editing = null;
+        document.getElementById("attr-dialog-title").textContent = "Новый атрибут";
+        document.getElementById("attr-entity").disabled = false;
+        document.getElementById("attr-name").disabled = false;
+        form.reset();
+        enumBlock.hidden = true; refBlock.hidden = true;
+        errorsBox.hidden = true; errorsBox.innerHTML = "";
+        dialog.showModal();
+    }
+    function openEdit(item) {
+        editing = item;
+        document.getElementById("attr-dialog-title").textContent = "Редактирование атрибута";
+        document.getElementById("attr-entity").value = item.entity_type;
+        document.getElementById("attr-entity").disabled = true;
+        document.getElementById("attr-name").value = item.name;
+        document.getElementById("attr-name").disabled = true;
+        document.getElementById("attr-label").value = item.label;
+        document.getElementById("attr-type").value = item.data_type;
+        document.getElementById("attr-type").dispatchEvent(new Event("change"));
+        document.getElementById("attr-required").checked = item.is_required;
+        document.getElementById("attr-order").value = item.display_order;
+        document.getElementById("attr-description").value = item.description || "";
+        if (item.data_type === "enum") {
+            document.getElementById("attr-enum-values").value = (item.options?.values || []).join(", ");
+        } else if (item.data_type === "ref") {
+            document.getElementById("attr-ref-entity").value = item.options?.ref_entity || "currency";
+        }
+        errorsBox.hidden = true; errorsBox.innerHTML = "";
+        dialog.showModal();
+    }
+
+    form.addEventListener("submit", async e => {
+        e.preventDefault();
+        errorsBox.hidden = true; errorsBox.innerHTML = "";
+        const data_type = typeSel.value;
+        const options = {};
+        if (data_type === "enum") {
+            options.values = document.getElementById("attr-enum-values").value.split(",").map(s => s.trim()).filter(Boolean);
+        } else if (data_type === "ref") {
+            options.ref_entity = document.getElementById("attr-ref-entity").value;
+        }
+        const payload = {
+            entity_type: document.getElementById("attr-entity").value,
+            name: document.getElementById("attr-name").value,
+            label: document.getElementById("attr-label").value,
+            data_type,
+            is_required: document.getElementById("attr-required").checked,
+            display_order: parseInt(document.getElementById("attr-order").value, 10) || 0,
+            description: document.getElementById("attr-description").value,
+            options,
+        };
+        try {
+            if (editing) {
+                await TM.api("PUT", `/api/attributes/${editing.id}`, {
+                    label: payload.label,
+                    is_required: payload.is_required,
+                    display_order: payload.display_order,
+                    description: payload.description,
+                    options: payload.options,
+                });
+            } else {
+                await TM.api("POST", `/api/attributes`, payload);
+            }
+            items = await TM.api("GET", "/api/attributes");
+            render();
+            dialog.close();
+        } catch (err) {
+            errorsBox.hidden = false;
+            errorsBox.innerHTML = `<strong>${TM.escapeHtml(err.message)}</strong>`;
+        }
+    });
+    cancelBtn.addEventListener("click", () => dialog.close());
+    newBtn.addEventListener("click", openNew);
+    filterSel.addEventListener("change", render);
+
+    document.getElementById("save-policy").addEventListener("click", async () => {
+        try {
+            await TM.api("PUT", `/api/settings/import_policy`, { value: document.getElementById("default-policy").value });
+            TM.toast("Сохранено", "success");
+        } catch (e) { TM.toast(e.message, "error"); }
+    });
+
+    try {
+        items = await TM.api("GET", "/api/attributes");
+        render();
+        const cfg = await TM.api("GET", "/api/settings");
+        if (cfg.import_policy) document.getElementById("default-policy").value = cfg.import_policy;
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="9" style="color:var(--danger)">Ошибка: ${TM.escapeHtml(e.message)}</td></tr>`;
+    }
+})();
+</script>
+{% endblock %}

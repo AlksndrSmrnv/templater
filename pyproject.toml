@@ -1,0 +1,20 @@
+[project]
+name = "template-maker"
+version = "0.1.0"
+description = "Web app for preparing test data and JSON/XML message templates"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM"]
+ignore = ["B008", "SIM108", "SIM105", "UP038", "B904", "E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.alembic]
+script_location = "alembic"
