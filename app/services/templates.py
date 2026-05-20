@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from builtins import list as list_type
 from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
@@ -17,7 +18,7 @@ from app.utils.errors import NotFoundError, ValidationFailed
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}")
 
 
-def normalize_placeholders(raw: Any) -> list[dict[str, Any]]:
+def normalize_placeholders(raw: Any) -> list_type[dict[str, Any]]:
     """Validate a raw placeholders payload and return clean dicts.
 
     Imported files and the editor API both send placeholders as free-form
@@ -30,7 +31,7 @@ def normalize_placeholders(raw: Any) -> list[dict[str, Any]]:
         return []
     if not isinstance(raw, list):
         raise ValidationFailed("placeholders должен быть списком")
-    out: list[dict[str, Any]] = []
+    out: list_type[dict[str, Any]] = []
     for idx, item in enumerate(raw):
         if not isinstance(item, dict):
             raise ValidationFailed(f"placeholders[{idx}]: ожидается объект")
@@ -80,8 +81,6 @@ class TemplateService:
             placeholders=[],
         )
         await self.repo.add(template)
-        await self.session.commit()
-        await self.session.refresh(template)
         return template
 
     async def update(self, template_id: uuid.UUID, data: TemplateUpdate) -> MessageTemplate:
@@ -115,31 +114,28 @@ class TemplateService:
         if data.placeholders is not None and not content_replaced:
             template.placeholders = normalize_placeholders(data.placeholders)
         await self.session.flush()
-        await self.session.commit()
-        await self.session.refresh(template)
         return template
 
     async def delete(self, template_id: uuid.UUID) -> None:
         template = await self.get(template_id)
         await self.repo.delete(template)
-        await self.session.commit()
 
     @staticmethod
-    def _extract_leaves(fmt: str, content: str) -> list[walker.Leaf]:
+    def _extract_leaves(fmt: str, content: str) -> list_type[walker.Leaf]:
         if fmt == "json":
             return walker.walk_json(content)
         if fmt == "xml":
             return walker.walk_xml(content)
         return []
 
-    async def build_field_catalog(self) -> list[dict[str, str]]:
+    async def build_field_catalog(self) -> list_type[dict[str, str]]:
         """Return a flat list of placeholder paths available for substitution.
 
         Each entry: {"path": "sender.fullName", "label": "Sender — ФИО"}
         Generated from active attribute_definitions for client/account/card.
         """
 
-        result: list[dict[str, str]] = []
+        result: list_type[dict[str, str]] = []
         for role in ("sender", "receiver"):
             for entity, prefix in (("client", role), ("account", f"{role}.account"), ("card", f"{role}.card")):
                 defs = await self.schema.list_schema(entity, include_deprecated=False)
@@ -182,7 +178,7 @@ class TemplateService:
             mappings = self._heuristic_mappings(leaves, catalog)
             llm_meta = {"summary": "Анализ выполнен без LLM (эвристика по именам полей)."}
 
-        placeholders: list[dict[str, Any]] = []
+        placeholders: list_type[dict[str, Any]] = []
         replacements: dict[str, str] = {}
         for leaf in leaves:
             m = mappings.get(leaf.location, {})
@@ -213,12 +209,13 @@ class TemplateService:
         template.placeholders = placeholders
         template.llm_meta = llm_meta
         await self.session.flush()
-        await self.session.commit()
-        await self.session.refresh(template)
         return template
 
     @staticmethod
-    def _heuristic_mappings(leaves: list[walker.Leaf], catalog: list[dict[str, str]]) -> dict[str, dict[str, str]]:
+    def _heuristic_mappings(
+        leaves: list_type[walker.Leaf],
+        catalog: list_type[dict[str, str]],
+    ) -> dict[str, dict[str, str]]:
         """Match leaf paths to catalog entries by trailing-name similarity."""
 
         out: dict[str, dict[str, str]] = {}
@@ -264,12 +261,10 @@ class TemplateService:
         )
 
     async def update_placeholders(
-        self, template_id: uuid.UUID, placeholders: list[dict[str, Any]]
+        self, template_id: uuid.UUID, placeholders: list_type[dict[str, Any]]
     ) -> MessageTemplate:
         template = await self.get(template_id)
         template.placeholders = normalize_placeholders(placeholders)
         template.content = self.regenerate_content(template)
         await self.session.flush()
-        await self.session.commit()
-        await self.session.refresh(template)
         return template

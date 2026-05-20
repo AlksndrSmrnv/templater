@@ -4,6 +4,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -65,7 +66,13 @@ class AttributeSchemaService:
             description=data.description,
             options=data.options or {},
         )
-        await self.attrs.add(attr)
+        try:
+            await self.attrs.add(attr)
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise IntegrityViolation(
+                f"Атрибут '{data.name}' уже существует для типа '{data.entity_type}'"
+            ) from exc
         return attr
 
     async def update(self, attr_id: uuid.UUID, data: AttributeDefinitionUpdate) -> AttributeDefinition:

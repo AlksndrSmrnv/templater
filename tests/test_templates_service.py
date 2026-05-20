@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
+from app.db.models import MessageTemplate
 from app.services.templates import TemplateService, normalize_placeholders
 from app.utils.errors import ValidationFailed
 
 
-def test_normalize_placeholders_accepts_valid_entries():
+def test_normalize_placeholders_accepts_valid_entries() -> None:
     raw = [
         {"location": "/a", "mode": "mapped", "value": "{{sender.x}}", "original": "X"},
         {"location": "/b", "mode": "literal", "value": "lit"},  # original defaults to ""
@@ -20,28 +22,28 @@ def test_normalize_placeholders_accepts_valid_entries():
     assert out[1]["mode"] == "literal"
 
 
-def test_normalize_placeholders_rejects_bad_mode():
+def test_normalize_placeholders_rejects_bad_mode() -> None:
     with pytest.raises(ValidationFailed):
         normalize_placeholders([{"location": "/a", "mode": "weird", "value": "v"}])
 
 
-def test_normalize_placeholders_rejects_missing_location():
+def test_normalize_placeholders_rejects_missing_location() -> None:
     with pytest.raises(ValidationFailed):
         normalize_placeholders([{"mode": "literal", "value": "v"}])
 
 
-def test_normalize_placeholders_rejects_non_list_and_non_dict():
+def test_normalize_placeholders_rejects_non_list_and_non_dict() -> None:
     with pytest.raises(ValidationFailed):
         normalize_placeholders({"location": "/a"})
     with pytest.raises(ValidationFailed):
         normalize_placeholders(["not-a-dict"])
 
 
-def test_normalize_placeholders_none_is_empty():
+def test_normalize_placeholders_none_is_empty() -> None:
     assert normalize_placeholders(None) == []
 
 
-def test_regenerate_content_uses_original_content_as_source():
+def test_regenerate_content_uses_original_content_as_source() -> None:
     """If original_content drifts out of sync with content, regenerate uses
     the (now stale) original. This documents why update() must keep
     original_content in lockstep with content on PUT."""
@@ -59,22 +61,22 @@ def test_regenerate_content_uses_original_content_as_source():
             }
         ],
     )
-    result = TemplateService.regenerate_content(template)
+    result = TemplateService.regenerate_content(cast(MessageTemplate, template))
     parsed = json.loads(result)
     assert parsed["a"] == "{{sender.name}}"
 
 
-def test_regenerate_content_returns_original_when_no_placeholders():
+def test_regenerate_content_returns_original_when_no_placeholders() -> None:
     template = SimpleNamespace(
         format="json",
         content="will-be-ignored",
         original_content='{"a": 1}',
         placeholders=[],
     )
-    assert TemplateService.regenerate_content(template) == '{"a": 1}'
+    assert TemplateService.regenerate_content(cast(MessageTemplate, template)) == '{"a": 1}'
 
 
-def test_heuristic_mappings_matches_by_tail():
+def test_heuristic_mappings_matches_by_tail() -> None:
     leaves = [
         type("L", (), {"location": "/fullName", "value": "Иванов"})(),
         type("L", (), {"location": "/passport/series", "value": "4510"})(),

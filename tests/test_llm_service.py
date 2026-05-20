@@ -17,7 +17,7 @@ class FakeClient:
 
 
 @pytest.mark.asyncio
-async def test_analyze_template_parses_valid_json():
+async def test_analyze_template_parses_valid_json() -> None:
     client = FakeClient(
         '{"meta": {"summary": "X", "category": "transfer", "scenarios": ["a"]},'
         ' "placeholders": [{"location": "/fullName", "suggestion": "sender.fullName"}]}'
@@ -34,7 +34,7 @@ async def test_analyze_template_parses_valid_json():
 
 
 @pytest.mark.asyncio
-async def test_analyze_template_handles_garbled_response():
+async def test_analyze_template_handles_garbled_response() -> None:
     # LLM returned non-JSON: service should not raise.
     client = FakeClient("это просто текст, не JSON")
     service = LLMService(client)
@@ -45,7 +45,7 @@ async def test_analyze_template_handles_garbled_response():
 
 
 @pytest.mark.asyncio
-async def test_analyze_template_recovers_json_substring():
+async def test_analyze_template_recovers_json_substring() -> None:
     client = FakeClient('Извините, вот мой ответ: {"meta": {"summary": "S"}, "placeholders": []} спасибо!')
     service = LLMService(client)
     result = await service.analyze_template(

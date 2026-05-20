@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import html as html_mod
 import json
-from typing import Any
+from typing import Any, Protocol
 from xml.etree import ElementTree as ET
+
+
+class RenderableTemplate(Protocol):
+    format: str
+    content: str
+    placeholders: list[dict[str, Any]]
 
 
 def _escape_jsonptr(token: str) -> str:
@@ -15,7 +21,8 @@ def _escape_jsonptr(token: str) -> str:
 def _span(idx: int, placeholder: dict[str, Any], text: str, *, quoted: bool = False) -> str:
     mode = placeholder.get("mode", "literal")
     safe = html_mod.escape(text)
-    inner = f'<span class="placeholder {mode}" data-idx="{idx}" title="{html_mod.escape(placeholder.get("location", ""))}">{safe}</span>'
+    location = str(placeholder.get("location", ""))
+    inner = f'<span class="placeholder {mode}" data-idx="{idx}" title="{html_mod.escape(location)}">{safe}</span>'
     if quoted:
         return f'"{inner}"'
     return inner
@@ -128,9 +135,9 @@ def _render_xml(
     buf.append(f"&lt;/{html_mod.escape(elem.tag)}&gt;\n")
 
 
-def render_template_html(template) -> str:
+def render_template_html(template: RenderableTemplate) -> str:
     placeholders = list(template.placeholders or [])
-    ph_by_location = {p["location"]: i for i, p in enumerate(placeholders) if p.get("location")}
+    ph_by_location = {str(p["location"]): i for i, p in enumerate(placeholders) if p.get("location")}
     if template.format == "json":
         try:
             data = json.loads(template.content)
@@ -144,7 +151,7 @@ def render_template_html(template) -> str:
             root = ET.fromstring(template.content)
         except ET.ParseError:
             return html_mod.escape(template.content)
-        buf = []
-        _render_xml(root, f"/{root.tag}", ph_by_location, placeholders, buf, indent=0)
-        return "".join(buf)
+        xml_buf: list[str] = []
+        _render_xml(root, f"/{root.tag}", ph_by_location, placeholders, xml_buf, indent=0)
+        return "".join(xml_buf)
     return html_mod.escape(template.content)

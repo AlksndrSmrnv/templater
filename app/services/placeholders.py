@@ -146,7 +146,7 @@ class PlaceholderFiller:
     def _expand_tokens(self, text: str, context: dict[str, Any]) -> tuple[str, list[str]]:
         unresolved: list[str] = []
 
-        def replace(match: re.Match) -> str:
+        def replace(match: re.Match[str]) -> str:
             path = match.group(1)
             value = self._resolve_path(context, path)
             if value is None:

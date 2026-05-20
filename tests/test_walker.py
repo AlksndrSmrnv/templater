@@ -5,7 +5,7 @@ import json
 from app.utils import walker
 
 
-def test_walk_json_collects_leaves():
+def test_walk_json_collects_leaves() -> None:
     content = json.dumps(
         {
             "fullName": "Иванов",
@@ -22,7 +22,7 @@ def test_walk_json_collects_leaves():
     assert locations["/tags/1"] == "b"
 
 
-def test_replace_json_substitutes_values():
+def test_replace_json_substitutes_values() -> None:
     content = json.dumps({"fullName": "X", "amount": 100})
     new = walker.replace_json(
         content,
@@ -33,7 +33,7 @@ def test_replace_json_substitutes_values():
     assert data["amount"] == "{{sender.account.balance}}"
 
 
-def test_walk_xml_collects_text_and_attrs():
+def test_walk_xml_collects_text_and_attrs() -> None:
     content = """<msg type="payment"><from>Иванов</from><to>Петров</to></msg>"""
     leaves = walker.walk_xml(content)
     locations = {leaf.location: leaf.value for leaf in leaves}
@@ -42,7 +42,7 @@ def test_walk_xml_collects_text_and_attrs():
     assert locations["/msg/to[0]/#text"] == "Петров"
 
 
-def test_replace_xml_substitutes_text_and_attrs():
+def test_replace_xml_substitutes_text_and_attrs() -> None:
     content = """<msg type="payment"><from>A</from><to>B</to></msg>"""
     out = walker.replace_xml(
         content,

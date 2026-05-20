@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from typing import Any
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,7 +25,7 @@ async def page_import(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
-):
+) -> Response:
     saved = await SettingsRepository(session).get("import_policy", "skip")
     default_policy = saved if saved in VALID_POLICIES else "skip"
     return templates.TemplateResponse(
@@ -34,11 +36,11 @@ async def page_import(
 
 
 @router.post("/api/export")
-async def api_export(data: ExportRequest, session: AsyncSession = SessionDep):
+async def api_export(data: ExportRequest, session: AsyncSession = SessionDep) -> StreamingResponse:
     package = await ExportImportService(session).export(data)
     payload = json.dumps(package.model_dump(), ensure_ascii=False, indent=2).encode("utf-8")
 
-    def stream():
+    def stream() -> Iterator[bytes]:
         yield payload
 
     return StreamingResponse(
@@ -53,10 +55,10 @@ async def api_import(
     file: UploadFile = File(...),
     policy: str | None = Form(None),
     session: AsyncSession = SessionDep,
-):
+) -> JSONResponse:
     try:
         raw = await file.read()
-        package = json.loads(raw.decode("utf-8"))
+        package: Any = json.loads(raw.decode("utf-8"))
     except Exception as exc:
         raise ValidationFailed(f"Не удалось прочитать файл: {exc}")
 

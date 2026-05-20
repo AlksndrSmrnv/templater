@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+from builtins import list as list_type
+from collections.abc import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +21,7 @@ class TemplateRepository:
     async def get(self, template_id: uuid.UUID) -> MessageTemplate | None:
         return await self.session.get(MessageTemplate, template_id)
 
-    async def get_many(self, ids: list[uuid.UUID]) -> list[MessageTemplate]:
+    async def get_many(self, ids: Sequence[uuid.UUID]) -> list_type[MessageTemplate]:
         if not ids:
             return []
         stmt = select(MessageTemplate).where(MessageTemplate.id.in_(ids))

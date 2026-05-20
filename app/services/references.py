@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import REFERENCE_TYPES, ReferenceValue
@@ -61,9 +62,13 @@ class ReferenceService:
             description=data.description,
             attributes=attrs,
         )
-        await self.repo.add(value)
-        await self.session.commit()
-        await self.session.refresh(value)
+        try:
+            await self.repo.add(value)
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise IntegrityViolation(
+                f"Код '{data.code}' уже занят в справочнике '{data.entity_type}'"
+            ) from exc
         return value
 
     async def update(
@@ -91,9 +96,16 @@ class ReferenceService:
             value.attributes = await self.schema.validate_attributes(
                 value.entity_type, data.attributes
             )
-        await self.session.flush()
-        await self.session.commit()
-        await self.session.refresh(value)
+        try:
+            await self.session.flush()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            message = (
+                f"Код '{data.code}' уже занят"
+                if data.code is not None
+                else "Запись справочника нарушает уникальное ограничение"
+            )
+            raise IntegrityViolation(message) from exc
         return value
 
     async def delete(self, value_id: uuid.UUID, *, entity_type: str | None = None) -> None:
@@ -109,7 +121,6 @@ class ReferenceService:
                 f"Запись используется в данных ({details}). Удалите или измените зависимые объекты."
             )
         await self.repo.delete(value)
-        await self.session.commit()
 
     async def _find_usage(self, ref_entity_type: str, target_id: uuid.UUID) -> dict[str, int]:
         # Build map of owner_entity_type -> list of attribute names that reference this ref type

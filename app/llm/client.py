@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from types import TracebackType
 from typing import Any
 
 from app.llm.coordinator import LLMCoordinator
@@ -140,10 +141,15 @@ class GigaChatClient:
             try:
                 await asyncio.to_thread(close)
             except Exception:
-                pass
+                log.warning("Failed to close GigaChat client", exc_info=True)
 
     async def __aenter__(self) -> GigaChatClient:
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         await self.close()

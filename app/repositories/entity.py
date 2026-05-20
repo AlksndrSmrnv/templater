@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from builtins import list as list_type
 from collections.abc import Sequence
+from typing import Any, cast
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +22,7 @@ class ClientRepository:
     async def get(self, client_id: uuid.UUID) -> Client | None:
         return await self.session.get(Client, client_id)
 
-    async def get_many(self, ids: Sequence[uuid.UUID]) -> list[Client]:
+    async def get_many(self, ids: Sequence[uuid.UUID]) -> list_type[Client]:
         if not ids:
             return []
         stmt = select(Client).where(Client.id.in_(ids))
@@ -52,7 +54,7 @@ class AccountRepository:
     async def get(self, account_id: uuid.UUID) -> Account | None:
         return await self.session.get(Account, account_id)
 
-    async def get_many(self, ids: Sequence[uuid.UUID]) -> list[Account]:
+    async def get_many(self, ids: Sequence[uuid.UUID]) -> list_type[Account]:
         if not ids:
             return []
         stmt = select(Account).where(Account.id.in_(ids))
@@ -84,7 +86,7 @@ class CardRepository:
     async def get(self, card_id: uuid.UUID) -> Card | None:
         return await self.session.get(Card, card_id)
 
-    async def get_many(self, ids: Sequence[uuid.UUID]) -> list[Card]:
+    async def get_many(self, ids: Sequence[uuid.UUID]) -> list_type[Card]:
         if not ids:
             return []
         stmt = select(Card).where(Card.id.in_(ids))
@@ -111,10 +113,10 @@ async def find_entities_referencing(
     """
 
     result: dict[str, int] = {}
-    table_map = {"client": Client, "account": Account, "card": Card}
+    table_map: dict[str, Any] = {"client": Client, "account": Account, "card": Card}
     target_str = str(target_id)
     for owner, attrs in attribute_names_by_entity.items():
-        model = table_map.get(owner)
+        model = cast(Any, table_map.get(owner))
         if model is None or not attrs:
             continue
         conditions = [model.attributes[name].astext == target_str for name in attrs]
