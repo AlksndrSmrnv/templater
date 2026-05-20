@@ -405,20 +405,29 @@ class ExportImportService:
                     continue
 
                 raw_display_order = raw.get("display_order")
+                display_order_err = (
+                    f"attribute_schema {entity_type}/{name}: display_order должен быть целым числом"
+                )
                 if raw_display_order is None:
                     display_order = existing.display_order if existing is not None else 0
                 elif isinstance(raw_display_order, bool):
-                    errors.append(
-                        f"attribute_schema {entity_type}/{name}: display_order должен быть числом"
-                    )
+                    # bool is an int subclass — reject it explicitly.
+                    errors.append(display_order_err)
                     continue
+                elif isinstance(raw_display_order, int):
+                    display_order = raw_display_order
+                elif isinstance(raw_display_order, float):
+                    # int(1.9) would silently truncate to 1 — reject non-integral.
+                    if not raw_display_order.is_integer():
+                        errors.append(display_order_err)
+                        continue
+                    display_order = int(raw_display_order)
                 else:
+                    # strings / other — accept only a strict integer representation.
                     try:
                         display_order = int(raw_display_order)
                     except (TypeError, ValueError):
-                        errors.append(
-                            f"attribute_schema {entity_type}/{name}: display_order должен быть числом"
-                        )
+                        errors.append(display_order_err)
                         continue
 
                 if existing is None:
@@ -843,19 +852,19 @@ class ExportImportService:
                     errors.append(f"template {raw.get('name')}: {vexc.message}")
                     continue
 
-                # llm_meta: absent → keep existing (create → {}); a present
-                # value (incl. an explicit {}) replaces it — overwrite must be
-                # able to clear stale metadata. A present-but-non-object value
-                # is a malformed file, not a reason to silently wipe metadata.
-                if "llm_meta" in raw:
-                    new_llm_meta, meta_err = _validate_object_field(raw.get("llm_meta"))
+                # llm_meta semantics mirror TemplateUpdate on the CRUD path:
+                #   absent / null → "do not change" (keep existing; create → {});
+                #   explicit {}   → clear;
+                #   {...}         → replace;
+                #   non-object    → malformed file → row-level error.
+                llm_meta_raw = raw.get("llm_meta")
+                if llm_meta_raw is None:
+                    new_llm_meta = existing.llm_meta if existing is not None else {}
+                else:
+                    new_llm_meta, meta_err = _validate_object_field(llm_meta_raw)
                     if meta_err:
                         errors.append(f"template {new_name}: llm_meta {meta_err}")
                         continue
-                elif existing is not None:
-                    new_llm_meta = existing.llm_meta
-                else:
-                    new_llm_meta = {}
 
                 if existing is None:
                     self.session.add(MessageTemplate(
