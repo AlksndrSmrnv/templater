@@ -1,0 +1,13 @@
+# Local dev artifacts must not leak into the image (bloat / broken paths / secrets).
+.venv/
+venv/
+.git/
+.gitignore
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.claude/
+.DS_Store
+*.log
