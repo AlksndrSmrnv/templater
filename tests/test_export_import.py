@@ -9,6 +9,7 @@ from app.services.export_import import (
     _safe_label,
     _validate_attributes_field,
     _validate_bool,
+    _validate_object_field,
     _validate_optional_str,
     _validate_required_str,
     _validate_tags,
@@ -74,6 +75,16 @@ def test_validate_optional_str():
     assert _validate_optional_str("text") == ("text", None)
     assert _validate_optional_str("") == ("", None)  # empty allowed for optional
     assert _validate_optional_str(42)[1] is not None
+
+
+def test_validate_object_field():
+    assert _validate_object_field(None) == ({}, None)  # absent / null → {}
+    assert _validate_object_field({"a": 1}) == ({"a": 1}, None)
+    # non-object values must error, not silently become {}
+    for bad in ("bad", [], 42, True):
+        obj, err = _validate_object_field(bad)
+        assert obj is None
+        assert err is not None
 
 
 @pytest.mark.asyncio

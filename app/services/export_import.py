@@ -90,21 +90,30 @@ def _validate_tags(value: Any) -> tuple[list[str] | None, str | None]:
     return list(value), None
 
 
-def _validate_attributes_field(value: Any) -> tuple[dict[str, Any] | None, str | None]:
-    """Strictly validate an imported ``attributes`` value.
+def _validate_object_field(value: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """Strictly validate an imported JSON-object field.
 
     Unlike :func:`_as_dict` (which tolerates the legacy options-as-JSON-string
-    bug), ``attributes`` must be a real object: an absent field is an empty
-    object, but a string / list is malformed and must error rather than be
-    silently coerced to ``{}`` — that would drop attributes on create and could
-    wipe existing attributes on overwrite.
+    bug), this requires a real object: absent / null → ``{}``, a dict → itself,
+    anything else (string, list, number) → error. Silent coercion to ``{}``
+    would drop data on create and could wipe existing data on overwrite.
     """
 
     if value is None:
         return {}, None
     if isinstance(value, dict):
         return value, None
-    return None, "attributes должен быть объектом"
+    return None, "должно быть объектом"
+
+
+def _validate_attributes_field(value: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """Strict validation of an imported ``attributes`` value (see
+    :func:`_validate_object_field`)."""
+
+    obj, err = _validate_object_field(value)
+    if err:
+        return None, "attributes должен быть объектом"
+    return obj, None
 
 
 def _validate_bool(value: Any, default: bool) -> tuple[bool, str | None]:
@@ -493,8 +502,11 @@ class ExportImportService:
                     errors.append(f"reference {ref_type}: запись не является объектом")
                     continue
                 try:
-                    rid_str = str(raw["id"])
-                    rid = uuid.UUID(rid_str)
+                    # Canonicalize: a file may carry the UUID upper-cased; use
+                    # str(parsed) everywhere so dedup / remap / parent lookups
+                    # all key on the same form.
+                    rid = uuid.UUID(str(raw["id"]))
+                    rid_str = str(rid)
                     # code is used for lookup + dedup, so validate it up front.
                     code, code_err = _validate_required_str(raw.get("code"), 128)
                     if code_err:
@@ -603,8 +615,17 @@ class ExportImportService:
             out = dict(attrs)
             for attr_name, _ref_type in ref_attrs_by_owner.get(entity_type, []):
                 val = out.get(attr_name)
-                if isinstance(val, str) and val in ref_id_remap:
-                    out[attr_name] = ref_id_remap[val]
+                if not isinstance(val, str):
+                    continue
+                # ref_id_remap keys are canonical UUID strings — canonicalize the
+                # imported attribute value before lookup so a differently-cased
+                # UUID still matches.
+                try:
+                    canonical = str(uuid.UUID(val))
+                except ValueError:
+                    continue
+                if canonical in ref_id_remap:
+                    out[attr_name] = ref_id_remap[canonical]
             return out
 
         async def _validated_entity_attrs(
@@ -640,8 +661,9 @@ class ExportImportService:
                     errors.append(f"{kind}: запись не является объектом")
                     continue
                 try:
-                    eid_str = str(raw["id"])
-                    eid = uuid.UUID(eid_str)
+                    # Canonical UUID string (see references loop note above).
+                    eid = uuid.UUID(str(raw["id"]))
+                    eid_str = str(eid)
                     if eid_str in seen_entity_ids[kind]:
                         errors.append(f"{kind} {eid_str}: дубликат в файле")
                         continue
@@ -756,8 +778,8 @@ class ExportImportService:
                 errors.append("templates: запись не является объектом")
                 continue
             try:
-                tid_str = str(raw["id"])
-                tid = uuid.UUID(tid_str)
+                tid = uuid.UUID(str(raw["id"]))
+                tid_str = str(tid)
                 if tid_str in seen_template_ids:
                     errors.append(f"template {raw.get('name')}: дубликат id в файле")
                     continue
@@ -823,9 +845,13 @@ class ExportImportService:
 
                 # llm_meta: absent → keep existing (create → {}); a present
                 # value (incl. an explicit {}) replaces it — overwrite must be
-                # able to clear stale metadata.
+                # able to clear stale metadata. A present-but-non-object value
+                # is a malformed file, not a reason to silently wipe metadata.
                 if "llm_meta" in raw:
-                    new_llm_meta = _as_dict(raw.get("llm_meta"))
+                    new_llm_meta, meta_err = _validate_object_field(raw.get("llm_meta"))
+                    if meta_err:
+                        errors.append(f"template {new_name}: llm_meta {meta_err}")
+                        continue
                 elif existing is not None:
                     new_llm_meta = existing.llm_meta
                 else:
