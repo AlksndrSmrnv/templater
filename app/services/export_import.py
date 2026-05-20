@@ -90,6 +90,23 @@ def _validate_tags(value: Any) -> tuple[list[str] | None, str | None]:
     return list(value), None
 
 
+def _validate_attributes_field(value: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """Strictly validate an imported ``attributes`` value.
+
+    Unlike :func:`_as_dict` (which tolerates the legacy options-as-JSON-string
+    bug), ``attributes`` must be a real object: an absent field is an empty
+    object, but a string / list is malformed and must error rather than be
+    silently coerced to ``{}`` — that would drop attributes on create and could
+    wipe existing attributes on overwrite.
+    """
+
+    if value is None:
+        return {}, None
+    if isinstance(value, dict):
+        return value, None
+    return None, "attributes должен быть объектом"
+
+
 class ExportImportService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -312,8 +329,11 @@ class ExportImportService:
             """Validate reference attributes like the CRUD path. Only called when
             we're actually about to write (create / overwrite)."""
 
+            attrs_raw, attrs_err = _validate_attributes_field(raw.get("attributes"))
+            if attrs_err:
+                return None, f"reference {ref_type}/{label}: {attrs_err}"
             try:
-                attrs = await schema_svc.validate_attributes(ref_type, _as_dict(raw.get("attributes")))
+                attrs = await schema_svc.validate_attributes(ref_type, attrs_raw)
                 return attrs, None
             except ValidationFailed as vexc:
                 detail = "; ".join(vexc.details) if isinstance(vexc.details, list) else vexc.message
@@ -437,7 +457,10 @@ class ExportImportService:
             """Remap ref-ids then validate like the CRUD path. Only called when
             we're actually about to write (create / overwrite)."""
 
-            remapped = _remap_ref_attrs(et, _as_dict(raw.get("attributes")))
+            attrs_raw, attrs_err = _validate_attributes_field(raw.get("attributes"))
+            if attrs_err:
+                return None, f"{kind} {label}: {attrs_err}"
+            remapped = _remap_ref_attrs(et, attrs_raw)
             try:
                 attrs = await schema_svc.validate_attributes(et, remapped)
                 return attrs, None

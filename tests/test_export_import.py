@@ -7,6 +7,7 @@ from app.services.export_import import (
     _as_dict,
     _as_list,
     _safe_label,
+    _validate_attributes_field,
     _validate_tags,
 )
 
@@ -81,6 +82,26 @@ def test_validate_tags_rejects_non_string_items():
     tags, err = _validate_tags(["ok", 123])
     assert tags is None
     assert err is not None
+
+
+def test_validate_attributes_field_absent_is_empty():
+    attrs, err = _validate_attributes_field(None)
+    assert err is None
+    assert attrs == {}
+
+
+def test_validate_attributes_field_passes_dict():
+    attrs, err = _validate_attributes_field({"fullName": "X"})
+    assert err is None
+    assert attrs == {"fullName": "X"}
+
+
+def test_validate_attributes_field_rejects_string_and_list():
+    # _as_dict would silently coerce these to {} — losing/wiping attributes.
+    for bad in ("oops", [1, 2], 42):
+        attrs, err = _validate_attributes_field(bad)
+        assert attrs is None
+        assert err is not None
 
 
 @pytest.mark.asyncio
