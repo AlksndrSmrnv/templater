@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Any
 
@@ -36,22 +35,15 @@ from app.utils.errors import ValidationFailed
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
-    """Coerce an external value to a dict.
+    """Lenient coercion to a dict: a dict passes through, anything else → ``{}``.
 
-    Tolerates the legacy bug where ``options`` was stored as a JSON string.
-    Anything that isn't a dict (or a JSON string encoding one) becomes ``{}``.
+    Used for non-critical object fields (``options``, ``llm_meta`` scanning)
+    where a malformed value should degrade quietly. Fields where a wrong shape
+    must surface an error use :func:`_validate_object_field` /
+    :func:`_validate_attributes_field` instead.
     """
 
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except (json.JSONDecodeError, ValueError):
-            return {}
-        if isinstance(parsed, dict):
-            return parsed
-    return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -93,10 +85,10 @@ def _validate_tags(value: Any) -> tuple[list[str] | None, str | None]:
 def _validate_object_field(value: Any) -> tuple[dict[str, Any] | None, str | None]:
     """Strictly validate an imported JSON-object field.
 
-    Unlike :func:`_as_dict` (which tolerates the legacy options-as-JSON-string
-    bug), this requires a real object: absent / null → ``{}``, a dict → itself,
-    anything else (string, list, number) → error. Silent coercion to ``{}``
-    would drop data on create and could wipe existing data on overwrite.
+    Unlike :func:`_as_dict` (which quietly degrades to ``{}``), this requires a
+    real object: absent / null → ``{}``, a dict → itself, anything else
+    (string, list, number) → error. Silent coercion to ``{}`` would drop data
+    on create and could wipe existing data on overwrite.
     """
 
     if value is None:
