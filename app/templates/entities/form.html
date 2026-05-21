@@ -31,7 +31,7 @@
 </form>
 
 <script>
-    window.PAGE = { entityType: "{{ entity_type }}", entityId: {{ ('"' + entity_id + '"') if entity_id else 'null' }} };
+    window.PAGE = { entityType: {{ entity_type | tojson }}, entityId: {{ entity_id | tojson }} };
 </script>
 <script src="/static/js/entity-form.js"></script>
 {% endblock %}

@@ -22,7 +22,7 @@
 </div>
 
 <script>
-    window.PAGE = { entityType: "{{ entity_type }}", title: "{{ title }}" };
+    window.PAGE = { entityType: {{ entity_type | tojson }}, title: {{ title | tojson }} };
 </script>
 <script src="/static/js/entity-list.js"></script>
 {% endblock %}

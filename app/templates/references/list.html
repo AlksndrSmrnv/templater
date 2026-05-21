@@ -20,7 +20,7 @@
     </table>
 </div>
 <script>
-    window.PAGE = { entityType: "{{ entity_type }}", isReference: true };
+    window.PAGE = { entityType: {{ entity_type | tojson }}, isReference: true };
 </script>
 <script src="/static/js/reference-list.js"></script>
 {% endblock %}
