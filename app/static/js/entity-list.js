@@ -150,6 +150,18 @@
         syncSelectAll();
     }
 
+    function restoreFilterFocus(focusFilter) {
+        if (!focusFilter) return;
+        const input = Array.from(theadRow.querySelectorAll("input[data-filter-key]"))
+            .find(el => el.dataset.filterKey === focusFilter.key);
+        if (!input) return;
+
+        input.focus({ preventScroll: true });
+        if (typeof focusFilter.selectionStart === "number" && typeof focusFilter.selectionEnd === "number") {
+            input.setSelectionRange(focusFilter.selectionStart, focusFilter.selectionEnd);
+        }
+    }
+
     function detailField(label, valueHtml) {
         return `<div class="detail-field">
             <div class="detail-label">${TM.escapeHtml(label)}</div>
@@ -197,7 +209,7 @@
         syncActiveRows();
     }
 
-    function render() {
+    function render(focusFilter) {
         // header
         const active = activeSchema();
         const headers = [
@@ -220,10 +232,15 @@
                     input.type = "search"; input.placeholder = "фильтр";
                     input.style.cssText = "display:block; margin-top:4px; width:100%; padding:2px 6px; font-size:11px;";
                     input.value = state.filters[h.key] || "";
+                    input.dataset.filterKey = h.key;
                     input.addEventListener("click", e => e.stopPropagation());
                     input.addEventListener("input", e => {
                         state.filters[h.key] = e.target.value;
-                        render();
+                        render({
+                            key: h.key,
+                            selectionStart: e.target.selectionStart,
+                            selectionEnd: e.target.selectionEnd,
+                        });
                     });
                     th.appendChild(input);
                 }
@@ -239,6 +256,7 @@
             tbody.innerHTML = `<tr><td colspan="${headers.length}" class="muted" style="text-align:center; padding:24px;">Нет данных</td></tr>`;
             updateMeta();
             syncSelectAll();
+            restoreFilterFocus(focusFilter);
             return;
         }
         tbody.innerHTML = "";
@@ -258,6 +276,7 @@
 
         updateMeta();
         syncSelectAll();
+        restoreFilterFocus(focusFilter);
     }
 
     if (searchInput) searchInput.addEventListener("input", e => { state.search = e.target.value; render(); });
