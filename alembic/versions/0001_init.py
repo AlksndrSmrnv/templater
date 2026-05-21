@@ -24,7 +24,7 @@ depends_on = None
 
 
 # Default attribute schema for the core entities and reference types.
-SEED: list[dict] = [
+SEED: list[dict[str, object]] = [
     # Client
     {"entity_type": "client", "name": "fullName", "label": "ФИО", "data_type": "string", "is_required": True, "display_order": 10, "description": "Полное имя клиента"},
     {"entity_type": "client", "name": "birthDate", "label": "Дата рождения", "data_type": "date", "is_required": False, "display_order": 20, "description": "Дата рождения клиента"},
