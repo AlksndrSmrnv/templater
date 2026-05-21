@@ -84,3 +84,19 @@ def test_list_pages_serialize_string_context_as_json_literals() -> None:
     assert reference_page_line == 'window.PAGE = { entityType: "currency", isReference: true };'
     assert "&#34;" not in entity_page_line
     assert "&#34;" not in reference_page_line
+
+
+def test_entity_list_has_table_meta_and_detail_drawer() -> None:
+    html = render_template(
+        "entities/list.html",
+        {
+            "active": "data",
+            "entity_type": "client",
+            "title": "Клиенты",
+        },
+    )
+
+    assert 'id="table-meta"' in html
+    assert 'id="detail-drawer"' in html
+    assert '<tr id="thead-row"></tr>' in html
+    assert 'id="select-all"' not in html

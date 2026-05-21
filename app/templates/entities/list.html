@@ -14,12 +14,24 @@
         <input id="search" type="search" placeholder="по тегам / значениям">
     </label>
 </div>
+<div class="table-meta" id="table-meta"></div>
 <div class="table-wrap">
     <table class="data-table" id="entities-table">
-        <thead><tr id="thead-row"><th><input type="checkbox" id="select-all"></th></tr></thead>
+        <thead><tr id="thead-row"></tr></thead>
         <tbody id="entities-body"><tr><td colspan="100" class="muted">Загрузка...</td></tr></tbody>
     </table>
 </div>
+<aside class="detail-drawer" id="detail-drawer" aria-hidden="true">
+    <div class="drawer-header">
+        <h2 id="drawer-title">Запись</h2>
+        <button class="drawer-close" id="drawer-close" type="button" aria-label="Закрыть">&times;</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+    <div class="drawer-footer">
+        <a class="btn primary" id="drawer-edit" href="#">Редактировать</a>
+        <button class="btn danger" id="drawer-delete" type="button">Удалить</button>
+    </div>
+</aside>
 
 <script>
     window.PAGE = { entityType: {{ entity_type | tojson }}, title: {{ title | tojson }} };

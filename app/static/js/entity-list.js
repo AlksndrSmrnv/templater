@@ -6,13 +6,23 @@
     const tbody = document.getElementById("entities-body");
     const theadRow = document.getElementById("thead-row");
     const searchInput = document.getElementById("search");
-    const selectAll = document.getElementById("select-all");
     const exportBtn = document.getElementById("btn-export");
+    const tableMeta = document.getElementById("table-meta");
+    const detailDrawer = document.getElementById("detail-drawer");
+    const drawerBody = document.getElementById("drawer-body");
+    const drawerTitle = document.getElementById("drawer-title");
+    const drawerEdit = document.getElementById("drawer-edit");
+    const drawerDelete = document.getElementById("drawer-delete");
+    const drawerClose = document.getElementById("drawer-close");
 
     let schema = [];
     let items = [];
     let refsCache = {};   // ref_entity -> {id: name}
     let state = { sort: { key: "created_at", dir: "desc" }, filters: {}, search: "" };
+    const selectedIds = new Set();
+    let openId = null;
+    let filteredCount = 0;
+    let filteredIds = [];
 
     async function loadSchema() {
         schema = await TM.api("GET", `/api/attribute-schema/${entityType}`);
@@ -91,23 +101,128 @@
         render();
     }
 
-    function render() {
+    function normalizeId(id) {
+        return String(id);
+    }
+
+    function activeSchema() {
+        return schema.filter(d => !d.is_deprecated);
+    }
+
+    function updateMeta() {
+        if (!tableMeta) return;
+        const parts = [`Записей: ${items.length}`];
+        const hasActiveFilters = Boolean(state.search.trim()) ||
+            Object.values(state.filters).some(v => Boolean(String(v || "").trim()));
+        if (hasActiveFilters) parts.push(`Показано: ${filteredCount}`);
+        if (selectedIds.size > 0) parts.push(`Выбрано: ${selectedIds.size}`);
+        tableMeta.textContent = parts.join(" · ");
+    }
+
+    function syncSelectAll() {
+        const selectAll = document.getElementById("select-all");
+        if (!selectAll) return;
+        const checkboxes = Array.from(tbody.querySelectorAll(".row-select"));
+        const checkedCount = checkboxes.filter(cb => selectedIds.has(cb.value)).length;
+        selectAll.checked = checkboxes.length > 0 && checkedCount === checkboxes.length;
+        selectAll.indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
+        selectAll.disabled = checkboxes.length === 0;
+    }
+
+    function syncActiveRows() {
+        tbody.querySelectorAll("tr[data-id]").forEach(tr => {
+            tr.classList.toggle("active", tr.dataset.id === openId);
+        });
+    }
+
+    function toggleRow(id, on, tr) {
+        const rowId = normalizeId(id);
+        if (on) selectedIds.add(rowId);
+        else selectedIds.delete(rowId);
+
+        if (tr) {
+            tr.classList.toggle("selected", on);
+            const checkbox = tr.querySelector(".row-select");
+            if (checkbox) checkbox.checked = on;
+        }
+
+        updateMeta();
+        syncSelectAll();
+    }
+
+    function restoreFilterFocus(focusFilter) {
+        if (!focusFilter) return;
+        const input = Array.from(theadRow.querySelectorAll("input[data-filter-key]"))
+            .find(el => el.dataset.filterKey === focusFilter.key);
+        if (!input) return;
+
+        input.focus({ preventScroll: true });
+        if (typeof focusFilter.selectionStart === "number" && typeof focusFilter.selectionEnd === "number") {
+            input.setSelectionRange(focusFilter.selectionStart, focusFilter.selectionEnd);
+        }
+    }
+
+    function detailField(label, valueHtml) {
+        return `<div class="detail-field">
+            <div class="detail-label">${TM.escapeHtml(label)}</div>
+            <div class="detail-value">${valueHtml || "—"}</div>
+        </div>`;
+    }
+
+    function buildDetailBody(row) {
+        const attrs = row.attributes || {};
+        const fields = activeSchema().map(def => detailField(def.label, fmtAttr(def, attrs[def.name]) || "—"));
+        const description = row.description ? TM.escapeHtml(row.description) : "—";
+        const tags = (row.tags || []).length
+            ? row.tags.map(t => `<span class="tag">${TM.escapeHtml(t)}</span>`).join(" ")
+            : "—";
+        const createdAt = TM.escapeHtml(TM.formatDate(row.created_at)) || "—";
+        const updatedAt = TM.escapeHtml(TM.formatDate(row.updated_at)) || "—";
+
+        fields.push(detailField("Описание", description));
+        fields.push(detailField("Теги", tags));
+        fields.push(detailField("Создано", createdAt));
+        fields.push(detailField("Обновлено", updatedAt));
+        return fields.join("");
+    }
+
+    function openDetail(id) {
+        const rowId = normalizeId(id);
+        const row = items.find(i => normalizeId(i.id) === rowId);
+        if (!row || !detailDrawer || !drawerBody || !drawerEdit) return;
+
+        openId = rowId;
+        if (drawerTitle) drawerTitle.textContent = "Запись";
+        drawerBody.innerHTML = buildDetailBody(row);
+        drawerEdit.href = `/${entityType}s/${encodeURIComponent(rowId)}/edit`;
+        detailDrawer.classList.add("open");
+        detailDrawer.setAttribute("aria-hidden", "false");
+        syncActiveRows();
+    }
+
+    function closeDetail() {
+        openId = null;
+        if (detailDrawer) {
+            detailDrawer.classList.remove("open");
+            detailDrawer.setAttribute("aria-hidden", "true");
+        }
+        syncActiveRows();
+    }
+
+    function render(focusFilter) {
         // header
-        const active = schema.filter(d => !d.is_deprecated);
+        const active = activeSchema();
         const headers = [
             { key: "__select", label: "" },
             ...active.map(d => ({ key: d.name, label: d.label, def: d })),
             { key: "tags", label: "Теги" },
             { key: "created_at", label: "Создано" },
-            { key: "__actions", label: "" },
         ];
         theadRow.innerHTML = "";
         for (const h of headers) {
             const th = document.createElement("th");
             if (h.key === "__select") {
-                th.innerHTML = `<input type="checkbox" id="select-all-inline">`;
-            } else if (h.key === "__actions") {
-                th.textContent = "";
+                th.innerHTML = `<input type="checkbox" id="select-all" aria-label="Выбрать все">`;
             } else {
                 const sortIcon = state.sort.key === h.key ? (state.sort.dir === "asc" ? "▲" : "▼") : "↕";
                 th.innerHTML = `<span>${TM.escapeHtml(h.label)}</span> <span class="sort-icon">${sortIcon}</span>`;
@@ -117,10 +232,15 @@
                     input.type = "search"; input.placeholder = "фильтр";
                     input.style.cssText = "display:block; margin-top:4px; width:100%; padding:2px 6px; font-size:11px;";
                     input.value = state.filters[h.key] || "";
+                    input.dataset.filterKey = h.key;
                     input.addEventListener("click", e => e.stopPropagation());
                     input.addEventListener("input", e => {
                         state.filters[h.key] = e.target.value;
-                        render();
+                        render({
+                            key: h.key,
+                            selectionStart: e.target.selectionStart,
+                            selectionEnd: e.target.selectionEnd,
+                        });
                     });
                     th.appendChild(input);
                 }
@@ -130,46 +250,85 @@
 
         // body
         const filtered = applySort(applyFilters(items));
+        filteredCount = filtered.length;
+        filteredIds = filtered.map(row => normalizeId(row.id));
         if (filtered.length === 0) {
             tbody.innerHTML = `<tr><td colspan="${headers.length}" class="muted" style="text-align:center; padding:24px;">Нет данных</td></tr>`;
+            updateMeta();
+            syncSelectAll();
+            restoreFilterFocus(focusFilter);
             return;
         }
         tbody.innerHTML = "";
         for (const row of filtered) {
+            const rowId = normalizeId(row.id);
+            const isSelected = selectedIds.has(rowId);
             const tr = document.createElement("tr");
-            tr.dataset.id = row.id;
-            tr.innerHTML = `<td><input type="checkbox" class="row-select" value="${row.id}"></td>` +
+            tr.dataset.id = rowId;
+            tr.classList.toggle("selected", isSelected);
+            tr.classList.toggle("active", rowId === openId);
+            tr.innerHTML = `<td><input type="checkbox" class="row-select" value="${TM.escapeHtml(rowId)}" ${isSelected ? "checked" : ""} aria-label="Выбрать запись"></td>` +
                 active.map(d => `<td>${fmtAttr(d, (row.attributes || {})[d.name])}</td>`).join("") +
                 `<td>${(row.tags || []).map(t => `<span class="tag">${TM.escapeHtml(t)}</span>`).join(" ")}</td>` +
-                `<td>${TM.formatDate(row.created_at)}</td>` +
-                `<td class="row-actions">
-                    <a class="btn" href="/${entityType}s/${row.id}/edit">Редактировать</a>
-                    <button class="btn danger" data-action="delete" data-id="${row.id}">Удалить</button>
-                </td>`;
+                `<td>${TM.escapeHtml(TM.formatDate(row.created_at))}</td>`;
             tbody.appendChild(tr);
         }
 
-        tbody.querySelectorAll("[data-action=delete]").forEach(b => {
-            b.addEventListener("click", async () => {
-                if (!TM.confirm("Удалить запись?")) return;
-                try {
-                    await TM.api("DELETE", `/api/${entityType}s/${b.dataset.id}`);
-                    items = items.filter(i => i.id !== b.dataset.id);
-                    render();
-                    TM.toast("Удалено", "success");
-                } catch (e) {
-                    TM.toast(e.message, "error");
-                }
-            });
-        });
+        updateMeta();
+        syncSelectAll();
+        restoreFilterFocus(focusFilter);
     }
 
     if (searchInput) searchInput.addEventListener("input", e => { state.search = e.target.value; render(); });
-    if (selectAll) selectAll.addEventListener("change", e => {
-        document.querySelectorAll(".row-select").forEach(cb => { cb.checked = e.target.checked; });
+    tbody.addEventListener("click", e => {
+        if (!(e.target instanceof Element)) return;
+        const checkbox = e.target.closest(".row-select");
+        if (checkbox) {
+            e.stopPropagation();
+            toggleRow(checkbox.value, checkbox.checked, checkbox.closest("tr"));
+            return;
+        }
+
+        const tr = e.target.closest("tr[data-id]");
+        if (tr && tbody.contains(tr)) openDetail(tr.dataset.id);
+    });
+    theadRow.addEventListener("change", e => {
+        if (!(e.target instanceof HTMLInputElement) || e.target.id !== "select-all") return;
+        const on = e.target.checked;
+        filteredIds.forEach(id => {
+            if (on) selectedIds.add(id);
+            else selectedIds.delete(id);
+        });
+        tbody.querySelectorAll("tr[data-id]").forEach(tr => {
+            const selected = selectedIds.has(tr.dataset.id);
+            tr.classList.toggle("selected", selected);
+            const checkbox = tr.querySelector(".row-select");
+            if (checkbox) checkbox.checked = selected;
+        });
+        updateMeta();
+        syncSelectAll();
+    });
+    if (drawerClose) drawerClose.addEventListener("click", closeDetail);
+    document.addEventListener("keydown", e => {
+        if (e.key === "Escape" && openId) closeDetail();
+    });
+    if (drawerDelete) drawerDelete.addEventListener("click", async () => {
+        if (!openId) return;
+        if (!TM.confirm("Удалить запись?")) return;
+        const deleteId = openId;
+        try {
+            await TM.api("DELETE", `/api/${entityType}s/${encodeURIComponent(deleteId)}`);
+            items = items.filter(i => normalizeId(i.id) !== deleteId);
+            selectedIds.delete(deleteId);
+            closeDetail();
+            render();
+            TM.toast("Удалено", "success");
+        } catch (e) {
+            TM.toast(e.message, "error");
+        }
     });
     if (exportBtn) exportBtn.addEventListener("click", async () => {
-        const ids = Array.from(document.querySelectorAll(".row-select:checked")).map(cb => cb.value);
+        const ids = Array.from(selectedIds);
         if (ids.length === 0) { TM.toast("Выберите хотя бы одну запись", "error"); return; }
         const payload = { [entityType + "s"]: ids };
         const res = await fetch("/api/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
