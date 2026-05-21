@@ -24,7 +24,7 @@ def test_fill_content_replaces_tokens_in_json() -> None:
         ' "to": "{{receiver.fullName}}", "toCard": "{{receiver.card.number}}",'
         ' "note": "{{sender.unknown.path}}"}'
     )
-    rendered, unresolved = filler.fill_content(content, "json", ctx)
+    rendered, unresolved, changed = filler.fill_content(content, "json", ctx)
     # Result must still parse as JSON
     parsed = json.loads(rendered)
     assert parsed["from"] == "Иванов"
@@ -33,6 +33,8 @@ def test_fill_content_replaces_tokens_in_json() -> None:
     assert parsed["toCard"] == "4276-...-0001"
     assert parsed["note"] == "{{sender.unknown.path}}"  # not resolved — kept verbatim
     assert unresolved == ["sender.unknown.path"]
+    assert set(changed) == {"/from", "/fromAccount", "/to", "/toCard"}
+    assert "/note" not in changed
 
 
 def test_fill_content_escapes_special_chars_in_json() -> None:
@@ -41,7 +43,7 @@ def test_fill_content_escapes_special_chars_in_json() -> None:
     filler = PlaceholderFiller(session=_session())
     ctx = {"sender": {"fullName": 'John "The Boss" \\Doe'}}
     content = '{"name": "{{sender.fullName}}"}'
-    rendered, unresolved = filler.fill_content(content, "json", ctx)
+    rendered, unresolved, _ = filler.fill_content(content, "json", ctx)
     parsed = json.loads(rendered)
     assert parsed["name"] == 'John "The Boss" \\Doe'
     assert unresolved == []
@@ -53,7 +55,7 @@ def test_fill_content_escapes_special_chars_in_xml() -> None:
     filler = PlaceholderFiller(session=_session())
     ctx = {"sender": {"fullName": "John & <Mary>"}}
     content = "<msg><name>{{sender.fullName}}</name></msg>"
-    rendered, _ = filler.fill_content(content, "xml", ctx)
+    rendered, _, _ = filler.fill_content(content, "xml", ctx)
     root = ET.fromstring(rendered)
     name = root.find("name")
     assert name is not None
@@ -62,7 +64,7 @@ def test_fill_content_escapes_special_chars_in_xml() -> None:
 
 def test_fill_content_preserves_unresolved_tokens() -> None:
     filler = PlaceholderFiller(session=_session())
-    rendered, unresolved = filler.fill_content('{"a": "{{nope.x}}"}', "json", {})
+    rendered, unresolved, _ = filler.fill_content('{"a": "{{nope.x}}"}', "json", {})
     parsed = json.loads(rendered)
     assert parsed["a"] == "{{nope.x}}"
     assert unresolved == ["nope.x"]
