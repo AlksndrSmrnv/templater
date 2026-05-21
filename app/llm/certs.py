@@ -4,6 +4,7 @@ import base64
 import binascii
 import logging
 import os
+import ssl
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -40,6 +41,24 @@ def _decode_to_file(b64: str, suffix: str, *, env_var: str, label: str) -> str:
     return path
 
 
+def _validate_cert_chain(cert_path: str, key_path: str) -> None:
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    try:
+        context.load_cert_chain(certfile=cert_path, keyfile=key_path)
+    except ssl.SSLError as exc:
+        raise LLMUnavailable(
+            "GIGACHAT_CERT_B64/GIGACHAT_KEY_B64 — PEM читается, но OpenSSL "
+            "не может загрузить пару сертификат/ключ. Проверьте, что private key "
+            "не зашифрован, соответствует сертификату и оба PEM-файла не повреждены. "
+            f"Исходная ошибка: {exc}"
+        ) from exc
+    except OSError as exc:
+        raise LLMUnavailable(
+            "GIGACHAT_CERT_B64/GIGACHAT_KEY_B64 — не удалось прочитать временные "
+            f"PEM-файлы сертификата и ключа: {exc}"
+        ) from exc
+
+
 def resolve_cert_files(cert_b64: str, key_b64: str) -> tuple[str, str]:
     """Decode base64-encoded PEM cert/key into temp files and return their paths."""
 
@@ -58,6 +77,12 @@ def resolve_cert_files(cert_b64: str, key_b64: str) -> tuple[str, str]:
         )
     except Exception:
         remove_temp_file(cert_path)
+        raise
+    try:
+        _validate_cert_chain(cert_path, key_path)
+    except Exception:
+        remove_temp_file(cert_path)
+        remove_temp_file(key_path)
         raise
     return cert_path, key_path
 
