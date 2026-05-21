@@ -31,7 +31,7 @@
     </div>
 </form>
 <script>
-    window.PAGE = { entityType: "{{ entity_type }}", valueId: {{ ('"' + value_id + '"') if value_id else 'null' }} };
+    window.PAGE = { entityType: {{ entity_type | tojson }}, valueId: {{ value_id | tojson }} };
 </script>
 <script src="/static/js/reference-form.js"></script>
 {% endblock %}
