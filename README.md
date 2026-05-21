@@ -115,6 +115,28 @@ echo "$GIGACHAT_CERT_B64" | base64 -d | head -c 30
 Корректный сертификат начинается с `-----BEGIN CERTIFICATE-----`. Если виден
 мусор или команда падает, переменная содержит не PEM в base64.
 
+Маркер `-----BEGIN` проверяет только контейнер. Если приложение всё равно
+получает ошибку OpenSSL (`[SSL] PEM lib`), сохраните пару во временные файлы и
+проверьте, что ключ читается без пароля и соответствует сертификату:
+
+```bash
+printf '%s' "$GIGACHAT_CERT_B64" | base64 -d > /tmp/gigachat-cert.pem
+printf '%s' "$GIGACHAT_KEY_B64" | base64 -d > /tmp/gigachat-key.pem
+
+openssl x509 -in /tmp/gigachat-cert.pem -noout -subject -issuer
+openssl rsa -in /tmp/gigachat-key.pem -check -noout
+
+openssl x509 -noout -modulus -in /tmp/gigachat-cert.pem | openssl md5
+openssl rsa -noout -modulus -in /tmp/gigachat-key.pem | openssl md5
+```
+
+Два последних хеша должны совпасть. Если `openssl rsa` просит пароль, ключ
+зашифрован; приложению нужен ключ без passphrase:
+
+```bash
+openssl rsa -in client.key -out client.unencrypted.key
+```
+
 Конвертация PKCS#12 (`.pfx` / `.p12`) в PEM:
 
 ```bash
