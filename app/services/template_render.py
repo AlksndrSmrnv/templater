@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import html as html_mod
 import json
+from collections.abc import Iterable
+from types import SimpleNamespace
 from typing import Any, Protocol
 from xml.etree import ElementTree as ET
 
@@ -155,3 +157,10 @@ def render_template_html(template: RenderableTemplate) -> str:
         _render_xml(root, f"/{root.tag}", ph_by_location, placeholders, xml_buf, indent=0)
         return "".join(xml_buf)
     return html_mod.escape(template.content)
+
+
+def render_filled_html(fmt: str, content: str, changed_locations: Iterable[str]) -> str:
+    placeholders = [{"location": loc, "mode": "filled"} for loc in changed_locations]
+    return render_template_html(
+        SimpleNamespace(format=fmt, content=content, placeholders=placeholders)
+    )

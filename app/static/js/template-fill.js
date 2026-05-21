@@ -58,7 +58,11 @@
         };
         try {
             lastResult = await TM.api("POST", `/api/templates/${T.id}/fill`, body);
-            result.textContent = lastResult.content;
+            if (lastResult.html) {
+                result.innerHTML = lastResult.html;
+            } else {
+                result.textContent = lastResult.content;
+            }
             btnDownload.disabled = false;
             if (lastResult.unresolved && lastResult.unresolved.length) {
                 unresolved.hidden = false;

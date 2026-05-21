@@ -22,7 +22,7 @@ from app.schemas.template import (
     TemplateUpdate,
 )
 from app.services.placeholders import PlaceholderFiller
-from app.services.template_render import render_template_html
+from app.services.template_render import render_filled_html, render_template_html
 from app.services.templates import TemplateService, normalize_placeholders
 from app.utils.errors import LLMUnavailable, ValidationFailed
 
@@ -270,7 +270,7 @@ async def api_fill(
 ) -> dict[str, Any]:
     template = await TemplateService(session).get(template_id)
     filler = PlaceholderFiller(session)
-    rendered, unresolved = await filler.fill_template(
+    rendered, unresolved, changed = await filler.fill_template(
         template,
         sender_client_id=data.sender_client_id,
         sender_account_id=data.sender_account_id,
@@ -279,4 +279,5 @@ async def api_fill(
         receiver_account_id=data.receiver_account_id,
         receiver_card_id=data.receiver_card_id,
     )
-    return {"content": rendered, "format": template.format, "unresolved": unresolved}
+    html = render_filled_html(template.format, rendered, changed)
+    return {"content": rendered, "html": html, "format": template.format, "unresolved": unresolved}

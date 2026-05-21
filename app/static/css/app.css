@@ -163,6 +163,7 @@ h3 { font-size: 15px; margin: 0 0 6px; }
 .template-code .placeholder { background: rgba(255, 200, 0, 0.18); color: #ffd866; border-bottom: 1px dashed #ffd866; cursor: pointer; padding: 1px 2px; border-radius: 3px; }
 .template-code .placeholder.mapped { background: rgba(80, 200, 120, 0.22); color: #8aef9f; border-bottom-color: #8aef9f; }
 .template-code .placeholder.literal { background: rgba(255, 200, 0, 0.14); }
+.template-code .placeholder.filled { background: rgba(80, 200, 120, 0.30); color: #8aef9f; border-bottom-color: #8aef9f; cursor: default; }
 
 .upload-zone {
     border: 2px dashed var(--border); border-radius: 8px; padding: 32px;

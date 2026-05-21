@@ -91,7 +91,7 @@ class PlaceholderFiller:
 
     def fill_content(
         self, content: str, fmt: str, context: dict[str, Any]
-    ) -> tuple[str, list[str]]:
+    ) -> tuple[str, list[str], list[str]]:
         """Walk the parsed document and replace ``{{...}}`` tokens at the AST level.
 
         Working at the AST keeps user-supplied values from breaking the document
@@ -121,7 +121,7 @@ class PlaceholderFiller:
         context: dict[str, Any],
         *,
         fmt: str,
-    ) -> tuple[str, list[str]]:
+    ) -> tuple[str, list[str], list[str]]:
         replacements: dict[str, str] = {}
         unresolved: list[str] = []
         for leaf in leaves:
@@ -131,17 +131,18 @@ class PlaceholderFiller:
             unresolved.extend(missing)
             if new_value != leaf.value:
                 replacements[leaf.location] = new_value
+        changed = list(replacements.keys())
         if not replacements:
-            return content, unresolved
+            return content, unresolved, changed
         if fmt == "json":
-            return walker.replace_json(content, replacements), unresolved
-        return walker.replace_xml(content, replacements), unresolved
+            return walker.replace_json(content, replacements), unresolved, changed
+        return walker.replace_xml(content, replacements), unresolved, changed
 
-    def _textual_fill(self, content: str, context: dict[str, Any]) -> tuple[str, list[str]]:
+    def _textual_fill(self, content: str, context: dict[str, Any]) -> tuple[str, list[str], list[str]]:
         """Last-resort text substitution. Use only when structural parse fails."""
 
         rendered, unresolved = self._expand_tokens(content, context)
-        return rendered, unresolved
+        return rendered, unresolved, []
 
     def _expand_tokens(self, text: str, context: dict[str, Any]) -> tuple[str, list[str]]:
         unresolved: list[str] = []
@@ -177,7 +178,7 @@ class PlaceholderFiller:
         receiver_client_id: uuid.UUID | None,
         receiver_account_id: uuid.UUID | None,
         receiver_card_id: uuid.UUID | None,
-    ) -> tuple[str, list[str]]:
+    ) -> tuple[str, list[str], list[str]]:
         ctx = await self.build_context(
             sender_client_id=sender_client_id,
             sender_account_id=sender_account_id,

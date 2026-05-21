@@ -5,7 +5,11 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 from app.db.models import MessageTemplate
-from app.services.template_render import RenderableTemplate, render_template_html
+from app.services.template_render import (
+    RenderableTemplate,
+    render_filled_html,
+    render_template_html,
+)
 
 
 def _tpl(
@@ -43,6 +47,24 @@ def test_render_xml_wraps_text_and_attrs() -> None:
     html = render_template_html(_tpl(content, placeholders, fmt="xml"))
     assert 'data-idx="0"' in html
     assert 'data-idx="1"' in html
+
+
+def test_render_filled_html_marks_changed_json_leaves() -> None:
+    content = json.dumps({"from": "Иванов", "note": "{{sender.unknown.path}}"}, ensure_ascii=False)
+    html = render_filled_html("json", content, ["/from"])
+    assert 'class="placeholder filled"' in html
+    assert ">Иванов</span>" in html
+    assert "{{sender.unknown.path}}" in html
+    assert "{{sender.unknown.path}}</span>" not in html
+
+
+def test_render_filled_html_marks_changed_xml_leaves() -> None:
+    content = "<msg><from>Иванов</from><note>{{sender.unknown.path}}</note></msg>"
+    html = render_filled_html("xml", content, ["/msg/from[0]/#text"])
+    assert 'class="placeholder filled"' in html
+    assert ">Иванов</span>" in html
+    assert "{{sender.unknown.path}}" in html
+    assert "{{sender.unknown.path}}</span>" not in html
 
 
 def test_regenerate_content_skips_stale_paths() -> None:
