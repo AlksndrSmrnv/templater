@@ -75,8 +75,8 @@ class GigaChatClient:
             except ssl.SSLError as exc:
                 log.error("Non-retriable GigaChat SSL error: %s", exc)
                 raise
-            except OSError as exc:
-                log.error("Non-retriable GigaChat OS error: %s", exc)
+            except FileNotFoundError as exc:
+                log.error("Non-retriable GigaChat certificate file error: %s", exc)
                 raise
             except Exception as exc:
                 status = self._status_from(exc)
