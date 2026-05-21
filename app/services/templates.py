@@ -161,13 +161,33 @@ class TemplateService:
         """
 
         source = template.original_content or template.content
-        leaves = self._extract_leaves(template.format, source)
+        result = await self.analyze_content(
+            fmt=template.format,
+            original_content=source,
+            llm_service=llm_service,
+        )
+        template.content = result["content"]
+        template.placeholders = result["placeholders"]
+        template.llm_meta = result["llm_meta"]
+        await self.session.flush()
+        return template
+
+    async def analyze_content(
+        self,
+        *,
+        fmt: str,
+        original_content: str,
+        llm_service: Any | None = None,
+    ) -> dict[str, Any]:
+        """Analyze raw template content without creating or mutating a DB row."""
+
+        leaves = self._extract_leaves(fmt, original_content)
         catalog = await self.build_field_catalog()
 
         if llm_service is not None:
             result = await llm_service.analyze_template(
-                content=source,
-                fmt=template.format,
+                content=original_content,
+                fmt=fmt,
                 leaves=[{"location": leaf.location, "value": leaf.value} for leaf in leaves],
                 catalog=catalog,
             )
@@ -196,19 +216,19 @@ class TemplateService:
             if suggestion:
                 replacements[leaf.location] = current
 
-        new_content = source
+        new_content = original_content
         if replacements:
             new_content = (
-                walker.replace_json(source, replacements)
-                if template.format == "json"
-                else walker.replace_xml(source, replacements)
+                walker.replace_json(original_content, replacements)
+                if fmt == "json"
+                else walker.replace_xml(original_content, replacements)
             )
 
-        template.content = new_content
-        template.placeholders = placeholders
-        template.llm_meta = llm_meta
-        await self.session.flush()
-        return template
+        return {
+            "content": new_content,
+            "placeholders": placeholders,
+            "llm_meta": llm_meta,
+        }
 
     @staticmethod
     def _heuristic_mappings(

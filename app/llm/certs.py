@@ -1,17 +1,31 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import logging
 import os
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+from app.utils.errors import LLMUnavailable
+
 log = logging.getLogger(__name__)
 
 
-def _decode_to_file(b64: str, suffix: str) -> str:
-    data = base64.b64decode(b64)
+def _decode_to_file(b64: str, suffix: str, *, env_var: str, label: str) -> str:
+    try:
+        data = base64.b64decode(b64.strip(), validate=True)
+    except binascii.Error as exc:
+        raise LLMUnavailable(f"{env_var} — не корректный base64 ({label}).") from exc
+
+    if b"-----BEGIN" not in data:
+        raise LLMUnavailable(
+            f"{env_var} — декодированные байты не похожи на PEM ({label}): "
+            "нет маркера -----BEGIN. Вероятно, файл в формате DER/PKCS#12 "
+            "или в переменную попал не base64 от PEM-файла; сконвертируйте его в PEM и перекодируйте."
+        )
+
     fd, path = tempfile.mkstemp(suffix=suffix)
     try:
         with os.fdopen(fd, "wb") as f:
@@ -29,9 +43,19 @@ def _decode_to_file(b64: str, suffix: str) -> str:
 def resolve_cert_files(cert_b64: str, key_b64: str) -> tuple[str, str]:
     """Decode base64-encoded PEM cert/key into temp files and return their paths."""
 
-    cert_path = _decode_to_file(cert_b64, suffix=".pem")
+    cert_path = _decode_to_file(
+        cert_b64,
+        suffix=".pem",
+        env_var="GIGACHAT_CERT_B64",
+        label="сертификат",
+    )
     try:
-        key_path = _decode_to_file(key_b64, suffix=".pem")
+        key_path = _decode_to_file(
+            key_b64,
+            suffix=".pem",
+            env_var="GIGACHAT_KEY_B64",
+            label="ключ",
+        )
     except Exception:
         remove_temp_file(cert_path)
         raise

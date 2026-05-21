@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import ssl
 from types import TracebackType
 from typing import Any
 
@@ -71,6 +72,12 @@ class GigaChatClient:
             try:
                 response = await asyncio.to_thread(self._client.chat, payload)
                 return self._parse_response(response)
+            except ssl.SSLError as exc:
+                log.error("Non-retriable GigaChat SSL error: %s", exc)
+                raise
+            except OSError as exc:
+                log.error("Non-retriable GigaChat OS error: %s", exc)
+                raise
             except Exception as exc:
                 status = self._status_from(exc)
                 retry_after = self._retry_after_from(exc)
@@ -140,8 +147,8 @@ class GigaChatClient:
         if close is not None:
             try:
                 await asyncio.to_thread(close)
-            except Exception:
-                log.warning("Failed to close GigaChat client", exc_info=True)
+            except Exception as exc:
+                log.debug("Failed to close GigaChat client: %s", exc, exc_info=True)
 
     async def __aenter__(self) -> GigaChatClient:
         return self

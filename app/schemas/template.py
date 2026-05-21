@@ -16,6 +16,8 @@ class TemplateBase(BaseModel):
 
 class TemplateCreate(TemplateBase):
     analyze_with_llm: bool = True
+    placeholders: list[dict[str, Any]] | None = None
+    llm_meta: dict[str, Any] | None = None
 
 
 class TemplateUpdate(BaseModel):

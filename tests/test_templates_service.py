@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -90,3 +90,24 @@ def test_heuristic_mappings_matches_by_tail() -> None:
     assert out["/fullName"]["suggestion"] == "sender.fullName"
     assert out["/passport/series"]["suggestion"] == "sender.account.series"
     assert "/notes" not in out
+
+
+@pytest.mark.asyncio
+async def test_analyze_content_returns_preview_without_mutating_model() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+
+    async def fake_catalog() -> list[dict[str, str]]:
+        return [{"path": "sender.fullName", "label": "Sender — ФИО", "data_type": "string"}]
+
+    svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
+
+    result = await svc.analyze_content(
+        fmt="json",
+        original_content='{"fullName": "Иванов", "note": "x"}',
+        llm_service=None,
+    )
+
+    assert json.loads(result["content"])["fullName"] == "{{sender.fullName}}"
+    assert result["placeholders"][0]["location"] == "/fullName"
+    assert result["placeholders"][0]["mode"] == "mapped"
+    assert result["llm_meta"]["summary"].startswith("Анализ выполнен без LLM")
