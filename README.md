@@ -105,6 +105,38 @@ LLM включается, когда заданы все три: `GIGACHAT_BASE_
 Без этих значений LLM-функции автоматически отключаются — анализ шаблонов
 использует эвристический матчинг полей по их именам.
 
+`GIGACHAT_CERT_B64` и `GIGACHAT_KEY_B64` должны содержать base64 именно от
+PEM-файлов. Быстрая проверка:
+
+```bash
+echo "$GIGACHAT_CERT_B64" | base64 -d | head -c 30
+```
+
+Корректный сертификат начинается с `-----BEGIN CERTIFICATE-----`. Если виден
+мусор или команда падает, переменная содержит не PEM в base64.
+
+Конвертация PKCS#12 (`.pfx` / `.p12`) в PEM:
+
+```bash
+openssl pkcs12 -in client.pfx -clcerts -nokeys -out client.pem
+openssl pkcs12 -in client.pfx -nocerts -nodes -out client.key
+```
+
+Конвертация DER (`.cer` / `.crt`) в PEM:
+
+```bash
+openssl x509 -inform der -in client.cer -out client.pem
+```
+
+Перекодирование PEM в base64:
+
+```bash
+base64 -i client.pem | tr -d '\n'   # macOS
+base64 -i client.key | tr -d '\n'   # macOS
+base64 -w0 client.pem               # Linux
+base64 -w0 client.key               # Linux
+```
+
 ## Раскладка кода
 
 ```

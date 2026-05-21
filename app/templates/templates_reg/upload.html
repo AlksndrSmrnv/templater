@@ -38,26 +38,121 @@
         <textarea id="content" rows="14" style="font-family: ui-monospace, Menlo, monospace; font-size: 13px; margin-top:8px;"></textarea>
     </div>
     <div class="form-section">
-        <label><input type="checkbox" id="use-llm" {% if llm_active %}checked{% endif %} {% if not llm_active %}disabled{% endif %}>
-            Запросить подсказки у LLM при сохранении
-            {% if not llm_active %}<span class="muted">(LLM не настроена)</span>{% endif %}
-        </label>
+        <p class="muted" style="margin:0;">
+            {% if llm_active %}
+                Перед сохранением шаблон будет обработан LLM.
+            {% else %}
+                LLM не настроена, будет использована эвристика по именам полей.
+            {% endif %}
+        </p>
     </div>
     <div class="form-actions">
-        <button class="btn primary" type="submit">Сохранить</button>
+        <button class="btn primary" id="btn-preview" type="submit">Обработать LLM</button>
     </div>
 </form>
 
+<section id="review-stage" class="template-editor" hidden>
+    <div id="review-errors" class="errors" hidden></div>
+    <div style="display:flex; gap:24px; margin-bottom:14px; flex-wrap: wrap;">
+        <div style="flex:1; min-width:260px;">
+            <h3>Метаинформация LLM</h3>
+            <div id="review-meta" class="muted" style="font-size:12px;"></div>
+        </div>
+        <div style="flex:1; min-width:260px;">
+            <h3>Статус обработки</h3>
+            <div id="review-status" class="muted" style="font-size:12px;"></div>
+            <div id="llm-error" class="errors" style="margin-top:10px;" hidden></div>
+        </div>
+    </div>
+
+    <h3>Содержимое</h3>
+    <pre class="template-code" id="preview-code"></pre>
+
+    <div class="form-actions" style="margin-top:14px;">
+        <button class="btn primary" id="btn-save-reviewed" type="button">Сохранить</button>
+        <button class="btn" id="btn-back-edit" type="button">Назад к редактированию</button>
+    </div>
+</section>
+
+<script src="/static/js/placeholder-editor.js"></script>
 <script>
 const zone = document.getElementById("upload-zone");
 const fileInput = document.getElementById("file-input");
 const contentArea = document.getElementById("content");
 const formatSel = document.getElementById("format");
+const uploadForm = document.getElementById("upload-form");
+const previewBtn = document.getElementById("btn-preview");
+const reviewStage = document.getElementById("review-stage");
+const reviewCode = document.getElementById("preview-code");
+const saveReviewedBtn = document.getElementById("btn-save-reviewed");
+const backBtn = document.getElementById("btn-back-edit");
+const catalogPromise = TM.api("GET", "/api/templates/catalog").catch(e => {
+    TM.toast("Не удалось загрузить каталог полей: " + e.message, "error");
+    return [];
+});
+let previewState = null;
+let reviewEditor = null;
 
 function detectFormat(text) {
     const trimmed = (text || "").trim();
     if (trimmed.startsWith("<")) return "xml";
     return "json";
+}
+
+function collectFormData() {
+    return {
+        name: document.getElementById("name").value.trim(),
+        description: document.getElementById("description").value,
+        format: formatSel.value,
+        content: contentArea.value,
+    };
+}
+
+function showErrors(target, err) {
+    target.hidden = false;
+    const detailLines = Array.isArray(err.details) ? "<br>" + err.details.map(TM.escapeHtml).join("<br>") : "";
+    target.innerHTML = `<strong>${TM.escapeHtml(err.message)}</strong>${detailLines}`;
+}
+
+function renderMeta(meta) {
+    const parts = [];
+    if (meta && meta.summary) parts.push(`<strong>Резюме:</strong> ${TM.escapeHtml(meta.summary)}<br>`);
+    if (meta && meta.category) parts.push(`<strong>Категория:</strong> ${TM.escapeHtml(meta.category)}<br>`);
+    if (meta && Array.isArray(meta.scenarios) && meta.scenarios.length) {
+        const items = meta.scenarios.map(s => `<li>${TM.escapeHtml(s)}</li>`).join("");
+        parts.push(`<strong>Сценарии:</strong><ul style="margin:4px 0 0 18px;">${items}</ul>`);
+    }
+    return parts.join("") || "Метаинформация не получена.";
+}
+
+async function showReview(data) {
+    previewState = data;
+    const catalog = await catalogPromise;
+    document.getElementById("review-meta").innerHTML = renderMeta(data.llm_meta || {});
+    document.getElementById("review-status").textContent = data.llm_used
+        ? "Шаблон обработан LLM."
+        : "Шаблон обработан эвристикой.";
+    const llmError = document.getElementById("llm-error");
+    if (data.llm_error) {
+        llmError.hidden = false;
+        llmError.textContent = data.llm_error;
+    } else {
+        llmError.hidden = true;
+        llmError.textContent = "";
+    }
+    reviewCode.innerHTML = data.rendered_html;
+    if (reviewEditor) {
+        reviewEditor.setCatalog(catalog);
+        reviewEditor.setPlaceholders(data.placeholders || []);
+    } else {
+        reviewEditor = TM.mountPlaceholderEditor({
+            codeEl: reviewCode,
+            placeholders: data.placeholders || [],
+            catalog,
+        });
+    }
+    uploadForm.hidden = true;
+    reviewStage.hidden = false;
 }
 
 zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("dragover"); });
@@ -82,24 +177,51 @@ contentArea.addEventListener("paste", () => {
     setTimeout(() => { formatSel.value = detectFormat(contentArea.value); }, 10);
 });
 
-document.getElementById("upload-form").addEventListener("submit", async e => {
+uploadForm.addEventListener("submit", async e => {
     e.preventDefault();
     const errors = document.getElementById("form-errors");
     errors.hidden = true; errors.innerHTML = "";
-    const data = {
-        name: document.getElementById("name").value.trim(),
-        description: document.getElementById("description").value,
-        format: formatSel.value,
-        content: contentArea.value,
-        analyze_with_llm: document.getElementById("use-llm").checked,
-    };
+    previewBtn.disabled = true;
+    previewBtn.innerHTML = '<span class="spinner"></span> Обработка...';
     try {
-        const created = await TM.api("POST", "/api/templates", data);
+        const data = await TM.api("POST", "/api/templates/preview", collectFormData());
+        await showReview(data);
+    } catch (err) {
+        showErrors(errors, err);
+    } finally {
+        previewBtn.disabled = false;
+        previewBtn.textContent = "Обработать LLM";
+    }
+});
+
+backBtn.addEventListener("click", () => {
+    reviewStage.hidden = true;
+    uploadForm.hidden = false;
+});
+
+saveReviewedBtn.addEventListener("click", async () => {
+    const errors = document.getElementById("review-errors");
+    errors.hidden = true; errors.innerHTML = "";
+    if (!previewState || !reviewEditor) return;
+    saveReviewedBtn.disabled = true;
+    saveReviewedBtn.innerHTML = '<span class="spinner"></span> Сохранение...';
+    const formData = collectFormData();
+    try {
+        const created = await TM.api("POST", "/api/templates", {
+            name: formData.name,
+            description: formData.description,
+            format: previewState.format,
+            content: previewState.original_content,
+            analyze_with_llm: false,
+            placeholders: reviewEditor.getPlaceholders(),
+            llm_meta: previewState.llm_meta || {},
+        });
         window.location.href = `/templates/${created.id}`;
     } catch (err) {
-        errors.hidden = false;
-        const detailLines = Array.isArray(err.details) ? "<br>" + err.details.map(TM.escapeHtml).join("<br>") : "";
-        errors.innerHTML = `<strong>${TM.escapeHtml(err.message)}</strong>${detailLines}`;
+        showErrors(errors, err);
+    } finally {
+        saveReviewedBtn.disabled = false;
+        saveReviewedBtn.textContent = "Сохранить";
     }
 });
 </script>
