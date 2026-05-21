@@ -121,6 +121,7 @@ h3 { font-size: 15px; margin: 0 0 6px; }
 .data-table tbody tr.selected { background: #e7f0ff; }
 .data-table tbody tr.selected:hover { background: #dde9ff; }
 .data-table tbody tr.active { box-shadow: inset 3px 0 0 var(--primary); }
+.data-table .row-actions { display: flex; gap: 6px; }
 
 .table-meta { margin: 8px 0; font-size: 13px; color: var(--muted); }
 
