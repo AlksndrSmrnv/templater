@@ -102,6 +102,11 @@ async def api_list(session: AsyncSession = SessionDep) -> list[TemplateRead]:
     return [TemplateRead.model_validate(i, from_attributes=True) for i in items]
 
 
+@router.get("/api/templates/catalog")
+async def api_catalog(session: AsyncSession = SessionDep) -> list[dict[str, str]]:
+    return await TemplateService(session).build_field_catalog()
+
+
 @router.get("/api/templates/{template_id}", response_model=TemplateRead)
 async def api_get(template_id: uuid.UUID, session: AsyncSession = SessionDep) -> TemplateRead:
     t = await TemplateService(session).get(template_id)
@@ -255,11 +260,6 @@ async def api_render(template_id: uuid.UUID, session: AsyncSession = SessionDep)
         "placeholders": template.placeholders,
         "format": template.format,
     }
-
-
-@router.get("/api/templates/catalog")
-async def api_catalog(session: AsyncSession = SessionDep) -> list[dict[str, str]]:
-    return await TemplateService(session).build_field_catalog()
 
 
 @router.post("/api/templates/{template_id}/fill")
