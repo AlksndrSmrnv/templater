@@ -124,6 +124,10 @@ h3 { font-size: 15px; margin: 0 0 6px; }
 .data-table tbody tr.active { box-shadow: inset 3px 0 0 var(--primary); }
 .data-table .row-actions { display: flex; gap: 6px; }
 .col-description { width: 320px; }
+.col-relation {
+    width: 1%;
+    white-space: nowrap;
+}
 .description-text {
     display: block;
     max-width: 320px;
@@ -131,6 +135,10 @@ h3 { font-size: 15px; margin: 0 0 6px; }
     overflow-wrap: anywhere;
 }
 .relation-links { display: flex; flex-wrap: wrap; gap: 4px; }
+.col-relation .relation-links {
+    flex-wrap: nowrap;
+    width: max-content;
+}
 .entity-link {
     display: inline-flex;
     align-items: center;

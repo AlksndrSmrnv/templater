@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import uuid
 from types import SimpleNamespace
+from typing import Any, cast
 
+import pytest
+
+from app.routes import templates_reg
 from app.routes.deps import get_templates
 
 
@@ -121,3 +126,42 @@ def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
     assert 'id="role-panels"' in html
     assert "hasAccountOwner: true" in html
     assert 'id="sender-client"' not in html
+
+
+@pytest.mark.asyncio
+async def test_page_fill_prefers_persisted_account_owner_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    template_id = uuid.uuid4()
+    template = SimpleNamespace(
+        id=template_id,
+        name="Persisted flag",
+        format="json",
+        llm_meta={"has_account_owner": False},
+        placeholders=[{"suggestion": "accountOwner.ownerName", "value": "{{accountOwner.ownerName}}"}],
+    )
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            assert requested_id == template_id
+            return template
+
+    class FakeTemplates:
+        def TemplateResponse(self, request: object, name: str, context: dict[str, object]) -> Any:
+            return SimpleNamespace(name=name, context=context)
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+
+    response = cast(
+        Any,
+        await templates_reg.page_fill(
+            template_id,
+            request=cast(Any, SimpleNamespace()),
+            templates=cast(Any, FakeTemplates()),
+            session=cast(Any, SimpleNamespace()),
+        ),
+    )
+
+    assert response.name == "templates_reg/fill.html"
+    assert response.context["has_account_owner"] is False
