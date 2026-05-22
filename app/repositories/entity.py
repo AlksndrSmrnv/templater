@@ -76,8 +76,15 @@ class CardRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_all(self, *, account_id: uuid.UUID | None = None) -> list[Card]:
+    async def list_all(
+        self,
+        *,
+        account_id: uuid.UUID | None = None,
+        client_id: uuid.UUID | None = None,
+    ) -> list[Card]:
         stmt = select(Card).order_by(Card.created_at.desc())
+        if client_id is not None:
+            stmt = stmt.join(Account, Card.account_id == Account.id).where(Account.client_id == client_id)
         if account_id is not None:
             stmt = stmt.where(Card.account_id == account_id)
         return list((await self.session.execute(stmt)).scalars().all())

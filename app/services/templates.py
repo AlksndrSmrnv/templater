@@ -135,7 +135,7 @@ class TemplateService:
         """
 
         result: list[dict[str, str]] = []
-        for role in ("sender", "receiver"):
+        for role in ("sender", "receiver", "accountOwner"):
             for entity, prefix in (("client", role), ("account", f"{role}.account"), ("card", f"{role}.card")):
                 defs = await self.schema.list_schema(entity, include_deprecated=False)
                 for d in defs:
@@ -238,7 +238,9 @@ class TemplateService:
         """Match leaf paths to catalog entries by trailing-name similarity."""
 
         out: dict[str, dict[str, str]] = {}
-        catalog_by_tail = {entry["path"].split(".")[-1].lower(): entry for entry in catalog}
+        catalog_by_tail: dict[str, list[dict[str, str]]] = {}
+        for entry in catalog:
+            catalog_by_tail.setdefault(entry["path"].split(".")[-1].lower(), []).append(entry)
         for leaf in leaves:
             # tail token of the JSON pointer / XML path
             tail = leaf.location.rstrip("/").split("/")[-1]
@@ -246,10 +248,35 @@ class TemplateService:
             if "[" in tail:
                 tail = tail.split("[", 1)[0]
             key = tail.lower()
-            match = catalog_by_tail.get(key)
+            matches = catalog_by_tail.get(key, [])
+            match = TemplateService._choose_catalog_match(leaf, matches)
             if match:
                 out[leaf.location] = {"suggestion": match["path"]}
         return out
+
+    @staticmethod
+    def _choose_catalog_match(
+        leaf: walker.Leaf,
+        matches: list[dict[str, str]],
+    ) -> dict[str, str] | None:
+        if not matches:
+            return None
+        haystack = f"{leaf.location} {leaf.value}".lower()
+        owner_markers = (
+            "owner",
+            "accountowner",
+            "account_owner",
+            "accountholder",
+            "account_holder",
+            "владелец",
+            "держатель",
+        )
+        if any(marker in haystack for marker in owner_markers):
+            for match in matches:
+                if match["path"].startswith("accountOwner."):
+                    return match
+        non_owner = [match for match in matches if not match["path"].startswith("accountOwner.")]
+        return non_owner[-1] if non_owner else matches[-1]
 
     @staticmethod
     def regenerate_content(template: MessageTemplate) -> str:

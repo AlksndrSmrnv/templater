@@ -52,6 +52,9 @@ class TemplateFillRequest(BaseModel):
     receiver_client_id: uuid.UUID | None = None
     receiver_account_id: uuid.UUID | None = None
     receiver_card_id: uuid.UUID | None = None
+    account_owner_client_id: uuid.UUID | None = None
+    account_owner_account_id: uuid.UUID | None = None
+    account_owner_card_id: uuid.UUID | None = None
 
 
 class TemplateFillResult(BaseModel):

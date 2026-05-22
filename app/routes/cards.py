@@ -46,9 +46,11 @@ async def page_edit(
 
 @router.get("/api/cards", response_model=list[CardRead])
 async def api_list(
-    account_id: uuid.UUID | None = None, session: AsyncSession = SessionDep
+    account_id: uuid.UUID | None = None,
+    client_id: uuid.UUID | None = None,
+    session: AsyncSession = SessionDep,
 ) -> list[CardRead]:
-    items = await CardService(session).list_all(account_id=account_id)
+    items = await CardService(session).list_all(account_id=account_id, client_id=client_id)
     return [CardRead.model_validate(i, from_attributes=True) for i in items]
 
 

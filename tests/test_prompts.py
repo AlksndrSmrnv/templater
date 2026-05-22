@@ -12,6 +12,8 @@ def test_build_template_field_mapping_includes_payload_keys() -> None:
     )
     assert "JSON" in sys_p
     assert "placeholders" in sys_p
+    assert "accountOwner.*" in sys_p
+    assert "ownerName" in sys_p
     assert '"fullName": "X"' in user_p or 'fullName' in user_p
     assert '"sender.fullName"' in user_p
 

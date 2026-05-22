@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import uuid
+from collections.abc import Callable
+from types import SimpleNamespace
 from typing import cast
 from xml.etree import ElementTree as ET
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.placeholders import PlaceholderFiller
@@ -85,10 +89,98 @@ def test_fill_content_refuses_unparsable_json() -> None:
 
 
 def test_fill_content_refuses_unparsable_xml() -> None:
-    import pytest
-
     from app.utils.errors import ValidationFailed
 
     filler = PlaceholderFiller(session=_session())
     with pytest.raises(ValidationFailed):
         filler.fill_content("<broken {{sender.x}}", "xml", {"sender": {"x": "v"}})
+
+
+@pytest.mark.asyncio
+async def test_build_context_includes_account_owner_role() -> None:
+    filler = PlaceholderFiller(session=_session())
+    owner_client_id = uuid.uuid4()
+
+    async def fake_role_context(
+        *,
+        client_id: uuid.UUID | None,
+        account_id: uuid.UUID | None,
+        card_id: uuid.UUID | None,
+    ) -> dict[str, str | None]:
+        return {
+            "client_id": str(client_id) if client_id else None,
+            "account_id": str(account_id) if account_id else None,
+            "card_id": str(card_id) if card_id else None,
+        }
+
+    filler._role_context = fake_role_context  # type: ignore[method-assign]
+
+    ctx = await filler.build_context(
+        sender_client_id=None,
+        sender_account_id=None,
+        sender_card_id=None,
+        receiver_client_id=None,
+        receiver_account_id=None,
+        receiver_card_id=None,
+        account_owner_client_id=owner_client_id,
+        account_owner_account_id=None,
+        account_owner_card_id=None,
+    )
+
+    assert ctx["accountOwner"]["client_id"] == str(owner_client_id)
+
+
+class _FakeRepo:
+    def __init__(
+        self,
+        by_id: dict[uuid.UUID, SimpleNamespace],
+        list_factory: Callable[..., list[SimpleNamespace]] | None = None,
+    ) -> None:
+        self.by_id = by_id
+        self.list_factory = list_factory or (lambda **_: [])
+        self.list_calls: list[dict[str, object]] = []
+
+    async def get(self, item_id: uuid.UUID) -> SimpleNamespace | None:
+        return self.by_id.get(item_id)
+
+    async def list_all(self, **kwargs: object) -> list[SimpleNamespace]:
+        self.list_calls.append(kwargs)
+        return self.list_factory(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_role_context_uses_card_account_when_account_id_is_omitted() -> None:
+    client_id = uuid.uuid4()
+    first_account_id = uuid.uuid4()
+    card_account_id = uuid.uuid4()
+    card_id = uuid.uuid4()
+    client = SimpleNamespace(id=client_id, attributes={"fullName": "Owner"})
+    first_account = SimpleNamespace(
+        id=first_account_id,
+        client_id=client_id,
+        attributes={"number": "first-account"},
+    )
+    card_account = SimpleNamespace(
+        id=card_account_id,
+        client_id=client_id,
+        attributes={"number": "card-account"},
+    )
+    card = SimpleNamespace(id=card_id, account_id=card_account_id, attributes={"number": "card-001"})
+
+    filler = PlaceholderFiller(session=_session())
+    filler.clients = _FakeRepo({client_id: client})  # type: ignore[assignment]
+    filler.accounts = _FakeRepo(
+        {first_account_id: first_account, card_account_id: card_account},
+        lambda **_: [first_account],
+    )  # type: ignore[assignment]
+    filler.cards = _FakeRepo({card_id: card})  # type: ignore[assignment]
+
+    ctx = await filler._role_context(
+        client_id=client_id,
+        account_id=None,
+        card_id=card_id,
+    )
+
+    assert ctx["account"]["number"] == "card-account"
+    assert ctx["card"]["number"] == "card-001"
+    assert filler.cards.list_calls == []
