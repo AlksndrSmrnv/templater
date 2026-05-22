@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from fastapi.routing import APIRoute
 from starlette.routing import Match
 
 from app.routes.templates_reg import router
@@ -18,6 +19,7 @@ def first_full_match_path(path: str, method: str = "GET") -> str:
     for route in router.routes:
         match, _ = route.matches(scope)
         if match is Match.FULL:
+            assert isinstance(route, APIRoute)
             return route.path
 
     raise AssertionError(f"No full route match for {method} {path}")
