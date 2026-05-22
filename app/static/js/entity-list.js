@@ -151,8 +151,8 @@
     function relationColumns() {
         if (entityType === "client") {
             return [
-                { key: "__rel_accounts", label: "Счета", noSort: true },
-                { key: "__rel_cards", label: "Карты", noSort: true },
+                { key: "__rel_accounts", label: "Счета", noSort: true, className: "col-relation" },
+                { key: "__rel_cards", label: "Карты", noSort: true, className: "col-relation" },
             ];
         }
         if (entityType === "account") {
@@ -317,6 +317,7 @@
         theadRow.innerHTML = "";
         for (const h of headers) {
             const th = document.createElement("th");
+            if (h.className) th.className = h.className;
             if (h.key === "__select") {
                 th.classList.add("no-sort");
                 th.innerHTML = `<input type="checkbox" id="select-all" aria-label="Выбрать все">`;
@@ -373,7 +374,10 @@
             tr.innerHTML = `<td><input type="checkbox" class="row-select" value="${TM.escapeHtml(rowId)}" ${isSelected ? "checked" : ""} aria-label="Выбрать запись"></td>` +
                 `<td class="col-description"><span class="description-text">${TM.escapeHtml(row.description || "")}</span></td>` +
                 active.map(d => `<td>${fmtAttr(d, (row.attributes || {})[d.name])}</td>`).join("") +
-                relationColumns().map(column => `<td>${relationCell(row, column.key)}</td>`).join("") +
+                relationColumns().map(column => {
+                    const classAttr = column.className ? ` class="${column.className}"` : "";
+                    return `<td${classAttr}>${relationCell(row, column.key)}</td>`;
+                }).join("") +
                 `<td>${(row.tags || []).map(t => `<span class="tag">${TM.escapeHtml(t)}</span>`).join(" ")}</td>` +
                 `<td>${TM.escapeHtml(TM.formatDate(row.created_at))}</td>`;
             tbody.appendChild(tr);
