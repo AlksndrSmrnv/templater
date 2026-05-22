@@ -258,11 +258,16 @@ h3 { font-size: 15px; margin: 0 0 6px; }
 }
 
 .picker-list {
-    max-height: 520px;
+    --picker-row-height: 42px;
+    max-height: calc(var(--picker-row-height) * 10);
     overflow-y: auto;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--surface);
+}
+
+.picker-list--stacked {
+    --picker-row-height: 58px;
 }
 
 .picker-row {

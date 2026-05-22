@@ -169,20 +169,29 @@
                            value="${TM.escapeHtml(rs.clientQuery)}"
                            data-action="search-clients"
                            data-role="${role.key}">
-                    <div class="picker-list" role="listbox" aria-label="${TM.escapeHtml(role.title)}: клиенты">
+                    <div class="picker-list picker-list--compact"
+                         role="listbox"
+                         aria-label="${TM.escapeHtml(role.title)}: клиенты"
+                         data-list-id="${role.key}:clients">
                         ${renderClientList(role)}
                     </div>
                 </div>
                 <div class="role-panel__choices">
                     <div class="picker-group">
                         <label>Счета</label>
-                        <div class="picker-list" role="listbox" aria-label="${TM.escapeHtml(role.title)}: счета">
+                        <div class="picker-list picker-list--stacked"
+                             role="listbox"
+                             aria-label="${TM.escapeHtml(role.title)}: счета"
+                             data-list-id="${role.key}:accounts">
                             ${renderAccountList(role)}
                         </div>
                     </div>
                     <div class="picker-group">
                         <label>Карты</label>
-                        <div class="picker-list" role="listbox" aria-label="${TM.escapeHtml(role.title)}: карты">
+                        <div class="picker-list picker-list--stacked"
+                             role="listbox"
+                             aria-label="${TM.escapeHtml(role.title)}: карты"
+                             data-list-id="${role.key}:cards">
                             ${renderCardList(role)}
                         </div>
                     </div>
@@ -191,8 +200,60 @@
         `;
     }
 
+    function findInteractiveElement(focusState) {
+        if (!focusState) return null;
+        if (focusState.id) {
+            return document.getElementById(focusState.id);
+        }
+        return Array.from(rolePanels.querySelectorAll("[data-action][data-role]")).find(element => (
+            element.dataset.action === focusState.action
+            && element.dataset.role === focusState.role
+            && element.dataset.id === focusState.idValue
+        ));
+    }
+
+    function captureRenderState() {
+        const active = document.activeElement;
+        let focus = null;
+        if (active instanceof HTMLElement && rolePanels.contains(active)) {
+            focus = {
+                id: active.id || null,
+                action: active.dataset.action || null,
+                role: active.dataset.role || null,
+                idValue: active.dataset.id || null,
+                selectionStart: active instanceof HTMLInputElement ? active.selectionStart : null,
+                selectionEnd: active instanceof HTMLInputElement ? active.selectionEnd : null,
+            };
+        }
+        const scroll = new Map();
+        for (const list of rolePanels.querySelectorAll(".picker-list[data-list-id]")) {
+            scroll.set(list.dataset.listId, list.scrollTop);
+        }
+        return { focus, scroll };
+    }
+
+    function restoreRenderState(snapshot) {
+        for (const list of rolePanels.querySelectorAll(".picker-list[data-list-id]")) {
+            if (snapshot.scroll.has(list.dataset.listId)) {
+                list.scrollTop = snapshot.scroll.get(list.dataset.listId);
+            }
+        }
+        const target = findInteractiveElement(snapshot.focus);
+        if (!target) return;
+        target.focus();
+        if (
+            target instanceof HTMLInputElement
+            && snapshot.focus.selectionStart !== null
+            && snapshot.focus.selectionEnd !== null
+        ) {
+            target.setSelectionRange(snapshot.focus.selectionStart, snapshot.focus.selectionEnd);
+        }
+    }
+
     function renderAll() {
+        const snapshot = captureRenderState();
         rolePanels.innerHTML = roles.map(renderRole).join("");
+        restoreRenderState(snapshot);
     }
 
     async function loadRoleEntities(role) {
@@ -277,11 +338,6 @@
         const rs = roleState(target.dataset.role);
         rs.clientQuery = target.value;
         renderAll();
-        const nextInput = document.getElementById(`${target.dataset.role}-client-search`);
-        if (nextInput) {
-            nextInput.focus();
-            nextInput.setSelectionRange(target.value.length, target.value.length);
-        }
     });
 
     rolePanels.addEventListener("click", event => {
