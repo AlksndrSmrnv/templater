@@ -20,11 +20,13 @@ def test_normalize_placeholders_accepts_valid_entries() -> None:
     raw = [
         {"location": "/a", "mode": "mapped", "value": "{{sender.x}}", "original": "X"},
         {"location": "/b", "mode": "literal", "value": "lit"},  # original defaults to ""
+        {"location": "/c", "mode": "dynamic", "value": "{{rqUID}}", "original": "old"},
     ]
     out = normalize_placeholders(raw)
     assert out[0]["location"] == "/a"
     assert out[1]["original"] == ""
     assert out[1]["mode"] == "literal"
+    assert out[2]["mode"] == "dynamic"
 
 
 def test_normalize_placeholders_rejects_bad_mode() -> None:
@@ -94,6 +96,27 @@ def test_regenerate_content_returns_original_when_no_placeholders() -> None:
         placeholders=[],
     )
     assert TemplateService.regenerate_content(cast(MessageTemplate, template)) == '{"a": 1}'
+
+
+def test_regenerate_content_preserves_dynamic_placeholders() -> None:
+    template = SimpleNamespace(
+        format="json",
+        content='{"rqUID": "old"}',
+        original_content='{"rqUID": "old"}',
+        placeholders=[
+            {
+                "location": "/rqUID",
+                "mode": "dynamic",
+                "value": "{{rqUID}}",
+                "original": "old",
+                "suggestion": "rqUID",
+            }
+        ],
+    )
+
+    result = TemplateService.regenerate_content(cast(MessageTemplate, template))
+
+    assert json.loads(result)["rqUID"] == "{{rqUID}}"
 
 
 def test_heuristic_mappings_matches_by_tail() -> None:
@@ -212,13 +235,49 @@ async def test_analyze_content_leaves_unmatched_field_without_path_role_literal(
 
     result = await svc.analyze_content(
         fmt="json",
-        original_content='{"operuid": "service-id"}',
+        original_content='{"messageId": "service-id"}',
         llm_service=None,
     )
 
-    assert json.loads(result["content"])["operuid"] == "service-id"
+    assert json.loads(result["content"])["messageId"] == "service-id"
     assert result["placeholders"][0]["mode"] == "literal"
     assert result["placeholders"][0]["suggestion"] is None
+
+
+@pytest.mark.asyncio
+async def test_analyze_content_marks_dynamic_system_fields_before_role_mapping() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+
+    async def fake_catalog() -> list[dict[str, str]]:
+        return [{"path": "sender.rqUID", "label": "Sender — rqUID", "data_type": "string"}]
+
+    svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
+
+    result = await svc.analyze_content(
+        fmt="json",
+        original_content=(
+            '{"sender": {"RqUID": "old-rq"}, "oper_uid": "old-oper",'
+            ' "rqTm": "2025-01-01T00:00:00Z", "channel_date_time": "2025-01-01T00:00:01Z"}'
+        ),
+        llm_service=None,
+    )
+
+    parsed = json.loads(result["content"])
+    by_location = {item["location"]: item for item in result["placeholders"]}
+
+    assert parsed["sender"]["RqUID"] == "{{rqUID}}"
+    assert parsed["oper_uid"] == "{{operUID}}"
+    assert parsed["rqTm"] == "{{rqTm}}"
+    assert parsed["channel_date_time"] == "{{channelDateTime}}"
+    assert by_location["/sender/RqUID"] == {
+        "location": "/sender/RqUID",
+        "original": "old-rq",
+        "mode": "dynamic",
+        "value": "{{rqUID}}",
+        "suggestion": "rqUID",
+    }
+    assert by_location["/oper_uid"]["mode"] == "dynamic"
+    assert by_location["/oper_uid"]["suggestion"] == "operUID"
 
 
 @pytest.mark.asyncio

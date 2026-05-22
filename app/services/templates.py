@@ -11,6 +11,7 @@ from app.db.models import MessageTemplate
 from app.repositories.template import TemplateRepository
 from app.schemas.template import PlaceholderInfo, TemplateCreate, TemplateUpdate
 from app.services.attribute_schema import AttributeSchemaService
+from app.services.dynamic_fields import resolve_dynamic_token
 from app.services.role_resolver import resolve_role_from_path
 from app.utils import walker
 from app.utils.errors import NotFoundError, ValidationFailed
@@ -219,6 +220,21 @@ class TemplateService:
         placeholders: list[dict[str, Any]] = []
         replacements: dict[str, str] = {}
         for leaf in leaves:
+            dynamic_token = resolve_dynamic_token(leaf.location)
+            if dynamic_token is not None:
+                token_value = f"{{{{{dynamic_token}}}}}"
+                placeholders.append(
+                    {
+                        "location": leaf.location,
+                        "original": leaf.value,
+                        "mode": "dynamic",
+                        "value": token_value,
+                        "suggestion": dynamic_token,
+                    }
+                )
+                replacements[leaf.location] = token_value
+                continue
+
             llm_suggestion = llm_mappings.get(leaf.location, {}).get("suggestion")
             heuristic_suggestion = heuristic_mappings.get(leaf.location, {}).get("suggestion")
             suggestion = self._resolve_suggestion(
@@ -348,7 +364,7 @@ class TemplateService:
             value = ph.get("value")
             if not location or value is None:
                 continue
-            if ph.get("mode") in ("mapped", "literal"):
+            if ph.get("mode") in ("mapped", "literal", "dynamic"):
                 replacements[location] = value
         if not replacements:
             return template.original_content or template.content

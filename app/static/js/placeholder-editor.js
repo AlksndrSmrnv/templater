@@ -13,10 +13,10 @@
                 const idx = parseInt(span.dataset.idx, 10);
                 const ph = currentPlaceholders[idx];
                 if (!ph) return;
-                const value = ph.mode === "mapped" ? ph.value : ph.original;
+                const value = ph.mode === "literal" ? ph.original : ph.value;
                 span.textContent = value;
                 span.title = ph.location || "";
-                span.classList.remove("mapped", "literal");
+                span.classList.remove("mapped", "literal", "dynamic");
                 span.classList.add(ph.mode);
             });
         }
@@ -72,6 +72,7 @@
             const idx = parseInt(span.dataset.idx, 10);
             const ph = currentPlaceholders[idx];
             if (!ph) return;
+            if (ph.mode === "dynamic") return;
             dropdown = document.createElement("div");
             dropdown.className = "dropdown";
             const rect = span.getBoundingClientRect();

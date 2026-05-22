@@ -74,6 +74,15 @@ def test_fill_content_preserves_unresolved_tokens() -> None:
     assert unresolved == ["nope.x"]
 
 
+def test_fill_content_preserves_dynamic_tokens_without_unresolved() -> None:
+    filler = PlaceholderFiller(session=_session())
+    rendered, unresolved, changed = filler.fill_content('{"rqUID": "{{rqUID}}"}', "json", {})
+    parsed = json.loads(rendered)
+    assert parsed["rqUID"] == "{{rqUID}}"
+    assert unresolved == []
+    assert changed == []
+
+
 def test_fill_content_refuses_unparsable_json() -> None:
     """When the template doesn't parse as declared format, we must NOT silently
     fall back to raw-text substitution — that would re-introduce the escaping
@@ -173,7 +182,8 @@ async def test_role_context_uses_card_account_when_account_id_is_omitted() -> No
         {first_account_id: first_account, card_account_id: card_account},
         lambda **_: [first_account],
     )  # type: ignore[assignment]
-    filler.cards = _FakeRepo({card_id: card})  # type: ignore[assignment]
+    fake_cards = _FakeRepo({card_id: card})
+    filler.cards = fake_cards  # type: ignore[assignment]
 
     ctx = await filler._role_context(
         client_id=client_id,
@@ -183,4 +193,4 @@ async def test_role_context_uses_card_account_when_account_id_is_omitted() -> No
 
     assert ctx["account"]["number"] == "card-account"
     assert ctx["card"]["number"] == "card-001"
-    assert filler.cards.list_calls == []
+    assert fake_cards.list_calls == []
