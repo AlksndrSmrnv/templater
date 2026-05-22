@@ -114,6 +114,7 @@ h3 { font-size: 15px; margin: 0 0 6px; }
     background: var(--surface-2); position: sticky; top: 0;
     font-weight: 600; cursor: pointer; user-select: none; white-space: nowrap;
 }
+.data-table th.no-sort { cursor: default; }
 .data-table th .sort-icon { color: var(--muted); margin-left: 4px; font-size: 11px; }
 .data-table tbody tr { cursor: pointer; }
 .data-table tbody tr:nth-child(even) { background: var(--surface-2); }
@@ -122,6 +123,33 @@ h3 { font-size: 15px; margin: 0 0 6px; }
 .data-table tbody tr.selected:hover { background: #dde9ff; }
 .data-table tbody tr.active { box-shadow: inset 3px 0 0 var(--primary); }
 .data-table .row-actions { display: flex; gap: 6px; }
+.col-description { width: 320px; }
+.description-text {
+    display: block;
+    max-width: 320px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.relation-links { display: flex; flex-wrap: wrap; gap: 4px; }
+.entity-link {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(47, 111, 235, 0.10);
+    color: var(--primary);
+    line-height: 1.4;
+    word-break: break-word;
+}
+.entity-link:hover {
+    background: rgba(47, 111, 235, 0.18);
+    text-decoration: none;
+}
+.entity-link:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
 
 .table-meta { margin: 8px 0; font-size: 13px; color: var(--muted); }
 
@@ -155,6 +183,20 @@ h3 { font-size: 15px; margin: 0 0 6px; }
 
 .form { max-width: 760px; background: var(--surface); padding: 20px; border: 1px solid var(--border); border-radius: 8px; }
 .form .form-section { margin-bottom: 14px; }
+.form .form-section--primary {
+    padding: 14px;
+    border: 1px solid rgba(47, 111, 235, 0.22);
+    border-radius: 8px;
+    background: rgba(47, 111, 235, 0.06);
+}
+.form .form-section--primary label {
+    color: var(--text);
+    font-weight: 600;
+}
+.form .form-section--primary .muted {
+    margin: -2px 0 8px;
+    font-size: 12px;
+}
 .form label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
 .form input[type="text"], .form input[type="number"], .form input[type="date"],
 .form input[type="datetime-local"], .form input[type="email"], .form input[type="search"],

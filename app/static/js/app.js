@@ -49,4 +49,26 @@ TM.formatDate = function (iso) {
     return d.toLocaleString("ru-RU");
 };
 
+TM.entityLabel = function (entityType, row) {
+    if (!row) return "";
+    const attrs = row.attributes || {};
+    const id = row.id === null || row.id === undefined ? "" : String(row.id);
+    const shortId = id ? id.slice(0, 8) : "";
+
+    if (entityType === "client") {
+        return attrs.fullName || attrs.name || attrs.shortName || attrs.inn || row.description || shortId;
+    }
+
+    if (entityType === "account" || entityType === "card") {
+        return attrs.number || row.description || shortId;
+    }
+
+    return row.description || shortId;
+};
+
+TM.entityLink = function (entityType, id, label) {
+    const text = label || id;
+    return `<a class="entity-link" href="/${encodeURIComponent(entityType)}s?open=${encodeURIComponent(id)}">${TM.escapeHtml(text)}</a>`;
+};
+
 TM.confirm = function (msg) { return window.confirm(msg); };
