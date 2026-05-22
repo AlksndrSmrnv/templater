@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, datetime
 from typing import Any
@@ -21,6 +22,8 @@ from app.schemas.attribute import (
 )
 from app.utils.errors import IntegrityViolation, NotFoundError, ValidationFailed
 
+_ATTRIBUTE_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
 
 class AttributeSchemaService:
     def __init__(self, session: AsyncSession) -> None:
@@ -37,6 +40,7 @@ class AttributeSchemaService:
 
     async def create(self, data: AttributeDefinitionCreate) -> AttributeDefinition:
         self._check_entity_type(data.entity_type)
+        self._check_attribute_name(data.name)
         if data.data_type not in ALLOWED_TYPES:
             raise ValidationFailed(f"Неизвестный тип атрибута: {data.data_type}")
         if data.data_type == "ref":
@@ -101,6 +105,15 @@ class AttributeSchemaService:
     def _check_entity_type(entity_type: str) -> None:
         if entity_type not in ALL_ATTR_ENTITY_TYPES:
             raise ValidationFailed(f"Неизвестный тип сущности: {entity_type}")
+
+    @staticmethod
+    def _check_attribute_name(name: str) -> None:
+        if not _ATTRIBUTE_NAME_RE.fullmatch(name):
+            raise ValidationFailed(
+                "Имя атрибута должно начинаться с латинской буквы и содержать "
+                "только латинские буквы, цифры и подчёркивание; точки и другие "
+                "разделители запрещены"
+            )
 
     async def validate_attributes(
         self,
