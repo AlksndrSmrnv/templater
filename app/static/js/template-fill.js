@@ -169,7 +169,7 @@
                            value="${TM.escapeHtml(rs.clientQuery)}"
                            data-action="search-clients"
                            data-role="${role.key}">
-                    <div class="picker-list picker-list--compact"
+                    <div class="picker-list"
                          role="listbox"
                          aria-label="${TM.escapeHtml(role.title)}: клиенты"
                          data-list-id="${role.key}:clients">
@@ -240,7 +240,11 @@
         }
         const target = findInteractiveElement(snapshot.focus);
         if (!target) return;
-        target.focus();
+        try {
+            target.focus({ preventScroll: true });
+        } catch {
+            target.focus();
+        }
         if (
             target instanceof HTMLInputElement
             && snapshot.focus.selectionStart !== null
