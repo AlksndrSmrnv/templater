@@ -10,6 +10,11 @@
 
 <form id="entity-form" class="form" autocomplete="off">
     <div id="form-errors" class="errors" hidden></div>
+    <div class="form-section form-section--primary">
+        <label for="description">Описание (основное поле для языковой модели)</label>
+        <div class="muted">Кратко опишите, кто этот клиент или что означает этот счёт/карта.</div>
+        <textarea id="description" rows="6"></textarea>
+    </div>
     <div id="form-fields" class="form-fields">
         <div class="muted">Загрузка схемы...</div>
     </div>
@@ -18,11 +23,6 @@
             <input type="text" id="tags-input" placeholder="введите тег и нажмите Enter">
         </label>
         <div id="tags-list" class="tags"></div>
-    </div>
-    <div class="form-section">
-        <label>Описание (для языковой модели)
-            <textarea id="description" rows="3"></textarea>
-        </label>
     </div>
     <div class="form-actions">
         <button class="btn primary" type="submit">Сохранить</button>

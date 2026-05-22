@@ -18,6 +18,11 @@
     let schema = [];
     let items = [];
     let refsCache = {};   // ref_entity -> {id: name}
+    let clientsById = {};
+    let accountsById = {};
+    let cardsById = {};
+    let accountsByClient = {};
+    let cardsByAccount = {};
     let state = { sort: { key: "created_at", dir: "desc" }, filters: {}, search: "" };
     const selectedIds = new Set();
     let openId = null;
@@ -44,6 +49,20 @@
     async function loadItems() {
         const url = `/api/${entityType}s`;
         items = await TM.api("GET", url);
+    }
+
+    async function loadRelations() {
+        const [clients, accounts, cards] = await Promise.all([
+            entityType === "client" ? Promise.resolve(items) : TM.api("GET", "/api/clients"),
+            entityType === "account" ? Promise.resolve(items) : TM.api("GET", "/api/accounts"),
+            entityType === "card" ? Promise.resolve(items) : TM.api("GET", "/api/cards"),
+        ]);
+
+        clientsById = indexById(clients);
+        accountsById = indexById(accounts);
+        cardsById = indexById(cards);
+        accountsByClient = groupBy(accounts, "client_id");
+        cardsByAccount = groupBy(cards, "account_id");
     }
 
     function fmtAttr(def, value) {
@@ -105,8 +124,82 @@
         return String(id);
     }
 
+    function indexById(rows) {
+        const map = {};
+        for (const row of rows || []) {
+            if (row.id !== null && row.id !== undefined) map[normalizeId(row.id)] = row;
+        }
+        return map;
+    }
+
+    function groupBy(rows, key) {
+        const map = {};
+        for (const row of rows || []) {
+            const value = row[key];
+            if (value === null || value === undefined) continue;
+            const groupKey = normalizeId(value);
+            if (!map[groupKey]) map[groupKey] = [];
+            map[groupKey].push(row);
+        }
+        return map;
+    }
+
     function activeSchema() {
         return schema.filter(d => !d.is_deprecated);
+    }
+
+    function relationColumns() {
+        if (entityType === "client") {
+            return [
+                { key: "__rel_accounts", label: "Счета", noSort: true },
+                { key: "__rel_cards", label: "Карты", noSort: true },
+            ];
+        }
+        if (entityType === "account") {
+            return [
+                { key: "__rel_client", label: "Клиент", noSort: true },
+                { key: "__rel_cards", label: "Карты", noSort: true },
+            ];
+        }
+        if (entityType === "card") {
+            return [
+                { key: "__rel_client", label: "Клиент", noSort: true },
+                { key: "__rel_account", label: "Счёт", noSort: true },
+            ];
+        }
+        return [];
+    }
+
+    function relationLinks(type, rows) {
+        const list = (rows || []).filter(Boolean);
+        if (!list.length) return "—";
+        const links = list.map(row => TM.entityLink(type, row.id, TM.entityLabel(type, row)));
+        return `<div class="relation-links">${links.join("")}</div>`;
+    }
+
+    function relationCell(row, key) {
+        const rowId = normalizeId(row.id);
+        if (key === "__rel_accounts") {
+            return relationLinks("account", accountsByClient[rowId]);
+        }
+        if (key === "__rel_cards" && entityType === "client") {
+            const accounts = accountsByClient[rowId] || [];
+            const cards = accounts.flatMap(account => cardsByAccount[normalizeId(account.id)] || []);
+            return relationLinks("card", cards);
+        }
+        if (key === "__rel_cards") {
+            return relationLinks("card", cardsByAccount[rowId]);
+        }
+        if (key === "__rel_client") {
+            const clientId = entityType === "card"
+                ? accountsById[normalizeId(row.account_id)]?.client_id
+                : row.client_id;
+            return relationLinks("client", [clientsById[normalizeId(clientId)]]);
+        }
+        if (key === "__rel_account") {
+            return relationLinks("account", [accountsById[normalizeId(row.account_id)]]);
+        }
+        return "—";
     }
 
     function updateMeta() {
@@ -173,13 +266,14 @@
         const attrs = row.attributes || {};
         const fields = activeSchema().map(def => detailField(def.label, fmtAttr(def, attrs[def.name]) || "—"));
         const description = row.description ? TM.escapeHtml(row.description) : "—";
+        const relationFields = relationColumns().map(column => detailField(column.label, relationCell(row, column.key)));
         const tags = (row.tags || []).length
             ? row.tags.map(t => `<span class="tag">${TM.escapeHtml(t)}</span>`).join(" ")
             : "—";
         const createdAt = TM.escapeHtml(TM.formatDate(row.created_at)) || "—";
         const updatedAt = TM.escapeHtml(TM.formatDate(row.updated_at)) || "—";
 
-        fields.push(detailField("Описание", description));
+        fields.unshift(detailField("Описание", description), ...relationFields);
         fields.push(detailField("Теги", tags));
         fields.push(detailField("Создано", createdAt));
         fields.push(detailField("Обновлено", updatedAt));
@@ -214,7 +308,9 @@
         const active = activeSchema();
         const headers = [
             { key: "__select", label: "" },
+            { key: "description", label: "Описание" },
             ...active.map(d => ({ key: d.name, label: d.label, def: d })),
+            ...relationColumns(),
             { key: "tags", label: "Теги" },
             { key: "created_at", label: "Создано" },
         ];
@@ -222,11 +318,18 @@
         for (const h of headers) {
             const th = document.createElement("th");
             if (h.key === "__select") {
+                th.classList.add("no-sort");
                 th.innerHTML = `<input type="checkbox" id="select-all" aria-label="Выбрать все">`;
             } else {
-                const sortIcon = state.sort.key === h.key ? (state.sort.dir === "asc" ? "▲" : "▼") : "↕";
-                th.innerHTML = `<span>${TM.escapeHtml(h.label)}</span> <span class="sort-icon">${sortIcon}</span>`;
-                th.addEventListener("click", () => setSort(h.key));
+                const sortable = !h.noSort;
+                if (sortable) {
+                    const sortIcon = state.sort.key === h.key ? (state.sort.dir === "asc" ? "▲" : "▼") : "↕";
+                    th.innerHTML = `<span>${TM.escapeHtml(h.label)}</span> <span class="sort-icon">${sortIcon}</span>`;
+                    th.addEventListener("click", () => setSort(h.key));
+                } else {
+                    th.classList.add("no-sort");
+                    th.innerHTML = `<span>${TM.escapeHtml(h.label)}</span>`;
+                }
                 if (h.def) {
                     const input = document.createElement("input");
                     input.type = "search"; input.placeholder = "фильтр";
@@ -268,7 +371,9 @@
             tr.classList.toggle("selected", isSelected);
             tr.classList.toggle("active", rowId === openId);
             tr.innerHTML = `<td><input type="checkbox" class="row-select" value="${TM.escapeHtml(rowId)}" ${isSelected ? "checked" : ""} aria-label="Выбрать запись"></td>` +
+                `<td class="col-description"><span class="description-text">${TM.escapeHtml(row.description || "")}</span></td>` +
                 active.map(d => `<td>${fmtAttr(d, (row.attributes || {})[d.name])}</td>`).join("") +
+                relationColumns().map(column => `<td>${relationCell(row, column.key)}</td>`).join("") +
                 `<td>${(row.tags || []).map(t => `<span class="tag">${TM.escapeHtml(t)}</span>`).join(" ")}</td>` +
                 `<td>${TM.escapeHtml(TM.formatDate(row.created_at))}</td>`;
             tbody.appendChild(tr);
@@ -282,6 +387,7 @@
     if (searchInput) searchInput.addEventListener("input", e => { state.search = e.target.value; render(); });
     tbody.addEventListener("click", e => {
         if (!(e.target instanceof Element)) return;
+        if (e.target.closest("a")) return;
         const checkbox = e.target.closest(".row-select");
         if (checkbox) {
             e.stopPropagation();
@@ -344,7 +450,10 @@
         await loadSchema();
         await loadRefs();
         await loadItems();
+        await loadRelations();
         render();
+        const initialOpenId = new URLSearchParams(window.location.search).get("open");
+        if (initialOpenId) openDetail(initialOpenId);
     } catch (e) {
         tbody.innerHTML = `<tr><td colspan="20" style="color:var(--danger); padding:14px;">Ошибка: ${TM.escapeHtml(e.message)}</td></tr>`;
     }
