@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Настройки — Template Maker{% endblock %}
 {% block content %}
-<h1>Настройки</h1>
+<h1>⚙️ Настройки</h1>
 
 <div class="settings-section">
-    <h2>LLM (GigaChat)</h2>
+    <h2>🤖 LLM (GigaChat)</h2>
     <p>
         Статус:
         {% if llm_active %}
@@ -22,7 +22,7 @@
 </div>
 
 <div class="settings-section">
-    <h2>Политика импорта</h2>
+    <h2>📥 Политика импорта</h2>
     <label>По умолчанию:
         <select id="default-policy">
             <option value="skip">Пропускать существующие</option>
@@ -34,7 +34,7 @@
 </div>
 
 <div class="settings-section">
-    <h2>Атрибуты сущностей</h2>
+    <h2>🧩 Атрибуты сущностей</h2>
     <p class="muted">Добавляйте новые атрибуты по мере необходимости. Удалять атрибуты нельзя — только помечать устаревшими (значения в существующих записях сохраняются).</p>
     <div class="filters">
         <label>Тип сущности:
@@ -56,7 +56,7 @@
     </div>
 </div>
 
-<dialog id="attr-dialog" style="border:1px solid var(--border); border-radius:8px; padding:0; max-width:520px; width:90%;">
+<dialog id="attr-dialog" style="border:1px solid var(--border); border-radius:14px; padding:0; max-width:520px; width:90%;">
     <form id="attr-form" class="form" style="border:none; box-shadow:none; padding:18px;">
         <h2 id="attr-dialog-title">Новый атрибут</h2>
         <div id="attr-errors" class="errors" hidden></div>

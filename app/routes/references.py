@@ -20,11 +20,11 @@ router = APIRouter()
 
 
 REFERENCE_TITLES = {
-    "currency": "Валюты",
-    "account_type": "Типы счетов",
-    "card_type": "Типы карт",
-    "bank": "Банки",
-    "citizenship": "Гражданство",
+    "currency": "💱 Валюты",
+    "account_type": "🏷️ Типы счетов",
+    "card_type": "💳 Типы карт",
+    "bank": "🏦 Банки",
+    "citizenship": "🪪 Гражданство",
 }
 
 
