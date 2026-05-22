@@ -11,6 +11,7 @@ from app.db.models import MessageTemplate
 from app.repositories.template import TemplateRepository
 from app.schemas.template import PlaceholderInfo, TemplateCreate, TemplateUpdate
 from app.services.attribute_schema import AttributeSchemaService
+from app.services.role_resolver import resolve_role_from_path
 from app.utils import walker
 from app.utils.errors import NotFoundError, ValidationFailed
 
@@ -199,6 +200,8 @@ class TemplateService:
 
         leaves = self._extract_leaves(fmt, original_content)
         catalog = await self.build_field_catalog()
+        heuristic_mappings = self._heuristic_mappings(leaves, catalog)
+        catalog_by_lower = {entry["path"].lower(): entry["path"] for entry in catalog}
 
         if llm_service is not None:
             result = await llm_service.analyze_template(
@@ -207,17 +210,25 @@ class TemplateService:
                 leaves=[{"location": leaf.location, "value": leaf.value} for leaf in leaves],
                 catalog=catalog,
             )
-            mappings = {item["location"]: item for item in result.get("placeholders", [])}
+            llm_mappings = {item["location"]: item for item in result.get("placeholders", [])}
             llm_meta = result.get("meta") or {}
         else:
-            mappings = self._heuristic_mappings(leaves, catalog)
+            llm_mappings = {}
             llm_meta = {"summary": "Анализ выполнен без LLM (эвристика по именам полей)."}
 
         placeholders: list[dict[str, Any]] = []
         replacements: dict[str, str] = {}
         for leaf in leaves:
-            m = mappings.get(leaf.location, {})
-            suggestion = m.get("suggestion")
+            llm_suggestion = llm_mappings.get(leaf.location, {}).get("suggestion")
+            heuristic_suggestion = heuristic_mappings.get(leaf.location, {}).get("suggestion")
+            suggestion = self._resolve_suggestion(
+                leaf=leaf,
+                llm_suggestion=llm_suggestion if isinstance(llm_suggestion, str) else None,
+                heuristic_suggestion=heuristic_suggestion
+                if isinstance(heuristic_suggestion, str)
+                else None,
+                catalog_by_lower=catalog_by_lower,
+            )
             mode = "mapped" if suggestion else "literal"
             current = f"{{{{{suggestion}}}}}" if suggestion else leaf.value
             placeholders.append(
@@ -248,6 +259,29 @@ class TemplateService:
                 "has_account_owner": placeholders_have_account_owner(placeholders),
             },
         }
+
+    @staticmethod
+    def _resolve_suggestion(
+        *,
+        leaf: walker.Leaf,
+        llm_suggestion: str | None,
+        heuristic_suggestion: str | None,
+        catalog_by_lower: dict[str, str],
+    ) -> str | None:
+        path_role = resolve_role_from_path(leaf.location)
+        if path_role is not None:
+            source = llm_suggestion or heuristic_suggestion
+            if source is None or "." not in source:
+                return None
+            attr = source.split(".", 1)[1]
+            return catalog_by_lower.get(f"{path_role}.{attr}".lower())
+
+        for suggestion in (llm_suggestion, heuristic_suggestion):
+            if suggestion:
+                canonical = catalog_by_lower.get(suggestion.lower())
+                if canonical:
+                    return canonical
+        return None
 
     @staticmethod
     def _heuristic_mappings(
