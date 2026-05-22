@@ -257,6 +257,39 @@ async def test_analyze_content_uses_path_role_with_llm_attribute() -> None:
 
 
 @pytest.mark.asyncio
+async def test_analyze_content_resolves_llm_suggestion_case_insensitively() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+
+    async def fake_catalog() -> list[dict[str, str]]:
+        return [{"path": "receiver.firstName", "label": "Receiver — Имя", "data_type": "string"}]
+
+    class FakeLlm:
+        async def analyze_template(
+            self,
+            *,
+            content: str,
+            fmt: str,
+            leaves: list[dict[str, str]],
+            catalog: list[dict[str, str]],
+        ) -> dict[str, Any]:
+            return {
+                "meta": {"summary": "llm"},
+                "placeholders": [{"location": "/recipient/firstName", "suggestion": "RECEIVER.FirstName"}],
+            }
+
+    svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
+
+    result = await svc.analyze_content(
+        fmt="json",
+        original_content='{"recipient": {"firstName": "Иван"}}',
+        llm_service=FakeLlm(),
+    )
+
+    assert result["placeholders"][0]["suggestion"] == "receiver.firstName"
+    assert json.loads(result["content"])["recipient"]["firstName"] == "{{receiver.firstName}}"
+
+
+@pytest.mark.asyncio
 async def test_analyze_content_keeps_account_owner_role_for_llm_ucp_id_attribute() -> None:
     svc = TemplateService(cast(Any, SimpleNamespace()))
 

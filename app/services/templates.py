@@ -201,7 +201,7 @@ class TemplateService:
         leaves = self._extract_leaves(fmt, original_content)
         catalog = await self.build_field_catalog()
         heuristic_mappings = self._heuristic_mappings(leaves, catalog)
-        catalog_paths = {entry["path"] for entry in catalog}
+        catalog_by_lower = {entry["path"].lower(): entry["path"] for entry in catalog}
 
         if llm_service is not None:
             result = await llm_service.analyze_template(
@@ -227,7 +227,7 @@ class TemplateService:
                 heuristic_suggestion=heuristic_suggestion
                 if isinstance(heuristic_suggestion, str)
                 else None,
-                catalog_paths=catalog_paths,
+                catalog_by_lower=catalog_by_lower,
             )
             mode = "mapped" if suggestion else "literal"
             current = f"{{{{{suggestion}}}}}" if suggestion else leaf.value
@@ -266,7 +266,7 @@ class TemplateService:
         leaf: walker.Leaf,
         llm_suggestion: str | None,
         heuristic_suggestion: str | None,
-        catalog_paths: set[str],
+        catalog_by_lower: dict[str, str],
     ) -> str | None:
         path_role = resolve_role_from_path(leaf.location)
         if path_role is not None:
@@ -274,12 +274,13 @@ class TemplateService:
             if source is None or "." not in source:
                 return None
             attr = source.split(".", 1)[1]
-            candidate = f"{path_role}.{attr}"
-            return candidate if candidate in catalog_paths else None
+            return catalog_by_lower.get(f"{path_role}.{attr}".lower())
 
         for suggestion in (llm_suggestion, heuristic_suggestion):
-            if suggestion in catalog_paths:
-                return suggestion
+            if suggestion:
+                canonical = catalog_by_lower.get(suggestion.lower())
+                if canonical:
+                    return canonical
         return None
 
     @staticmethod
