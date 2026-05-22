@@ -44,12 +44,33 @@ def test_build_template_field_mapping_skips_service_identifiers() -> None:
         catalog=[{"path": "sender.ucp_id", "label": "Sender UCP ID", "data_type": "string"}],
     )
 
-    assert "operuid" in sys_p
-    assert "rquid" in sys_p
-    assert "служебные идентификаторы" in sys_p
+    assert "rqUID" in sys_p
+    assert "operUID" in sys_p
+    assert "rqTm" in sys_p
+    assert "channelDateTime" in sys_p
+    assert "{{rqUID}}" in sys_p
+    assert "динамические" in sys_p
+
+
+def test_build_template_field_mapping_requests_precise_transfer_summary() -> None:
+    sys_p, _ = PromptBuilder.build_template_field_mapping(
+        content='{"productId":"another_int"}',
+        fmt="json",
+        leaves=[{"location": "/productId", "value": "another_int"}],
+        catalog=[],
+    )
+
+    assert "2–4 предложения" in sys_p
+    assert "productId" in sys_p
+    assert "another_int" in sys_p
+    assert "another_ext" in sys_p
+    assert "Подразделение-источник" in sys_p
+    assert "Комиссию" in sys_p
 
 
 def test_build_template_meta_returns_strings() -> None:
     sys_p, user_p = PromptBuilder.build_template_meta(content="<a/>", fmt="xml")
     assert isinstance(sys_p, str) and sys_p
+    assert "productId" in sys_p
+    assert "another_ext" in sys_p
     assert "xml" in user_p

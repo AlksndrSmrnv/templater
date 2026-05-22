@@ -30,7 +30,7 @@ class TemplateUpdate(BaseModel):
 
 class PlaceholderInfo(BaseModel):
     location: str = Field(min_length=1)  # JSONPath-like path or XPath
-    mode: Literal["mapped", "literal"] = "literal"
+    mode: Literal["mapped", "literal", "dynamic"] = "literal"
     value: str  # current value (with {{...}} placeholder or original literal)
     original: str = ""  # original raw value from uploaded template
     suggestion: str | None = None  # LLM-suggested placeholder path

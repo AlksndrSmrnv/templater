@@ -19,6 +19,7 @@ from app.repositories.entity import (
     CardRepository,
     ClientRepository,
 )
+from app.services.dynamic_fields import DYNAMIC_TOKENS
 from app.utils import walker
 from app.utils.errors import NotFoundError, ValidationFailed
 
@@ -166,6 +167,8 @@ class PlaceholderFiller:
             path = match.group(1)
             value = self._resolve_path(context, path)
             if value is None:
+                if path in DYNAMIC_TOKENS:
+                    return match.group(0)
                 unresolved.append(path)
                 return match.group(0)
             return str(value)
