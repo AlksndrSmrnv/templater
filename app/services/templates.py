@@ -15,6 +15,22 @@ from app.utils import walker
 from app.utils.errors import NotFoundError, ValidationFailed
 
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}")
+ACCOUNT_OWNER_TOKEN_RE = re.compile(r"\{\{\s*accountOwner\.")
+
+
+def placeholders_have_account_owner(placeholders: list[dict[str, Any]]) -> bool:
+    for item in placeholders:
+        if not isinstance(item, dict):
+            continue
+        suggestion = item.get("suggestion")
+        if isinstance(suggestion, str) and suggestion.startswith("accountOwner."):
+            return True
+        value = item.get("value")
+        if isinstance(value, str) and (
+            value.startswith("accountOwner.") or ACCOUNT_OWNER_TOKEN_RE.search(value)
+        ):
+            return True
+    return False
 
 
 def normalize_placeholders(raw: Any) -> list[dict[str, Any]]:
@@ -227,7 +243,10 @@ class TemplateService:
         return {
             "content": new_content,
             "placeholders": placeholders,
-            "llm_meta": llm_meta,
+            "llm_meta": {
+                **llm_meta,
+                "has_account_owner": placeholders_have_account_owner(placeholders),
+            },
         }
 
     @staticmethod
@@ -311,6 +330,10 @@ class TemplateService:
     ) -> MessageTemplate:
         template = await self.get(template_id)
         template.placeholders = normalize_placeholders(placeholders)
+        template.llm_meta = {
+            **(template.llm_meta or {}),
+            "has_account_owner": placeholders_have_account_owner(template.placeholders),
+        }
         template.content = self.regenerate_content(template)
         await self.session.flush()
         return template

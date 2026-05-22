@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import ssl
 import uuid
 from types import SimpleNamespace
@@ -24,12 +23,15 @@ from app.schemas.template import (
 )
 from app.services.placeholders import PlaceholderFiller
 from app.services.template_render import render_filled_html, render_template_html
-from app.services.templates import TemplateService, normalize_placeholders
+from app.services.templates import (
+    TemplateService,
+    normalize_placeholders,
+    placeholders_have_account_owner,
+)
 from app.utils.errors import LLMUnavailable, ValidationFailed
 
 router = APIRouter()
 log = logging.getLogger(__name__)
-ACCOUNT_OWNER_TOKEN_RE = re.compile(r"\{\{\s*accountOwner\.")
 
 
 def _llm_ssl_message(exc: BaseException) -> str:
@@ -47,19 +49,6 @@ def _validate_preview_source(data: TemplateCreate) -> None:
         TemplateService._extract_leaves(data.format, data.content)
     except Exception as exc:
         raise ValidationFailed(f"Шаблон не парсится как {data.format}: {exc}") from exc
-
-
-def _has_account_owner_placeholders(placeholders: list[dict[str, Any]]) -> bool:
-    for item in placeholders:
-        suggestion = item.get("suggestion")
-        if isinstance(suggestion, str) and suggestion.startswith("accountOwner."):
-            return True
-        value = item.get("value")
-        if isinstance(value, str) and (
-            value.startswith("accountOwner.") or ACCOUNT_OWNER_TOKEN_RE.search(value)
-        ):
-            return True
-    return False
 
 
 # ---------- HTML pages ----------
@@ -102,7 +91,10 @@ async def page_fill(
     session: AsyncSession = SessionDep,
 ) -> Response:
     template = await TemplateService(session).get(template_id)
-    has_account_owner = _has_account_owner_placeholders(template.placeholders or [])
+    meta = template.llm_meta or {}
+    has_account_owner = meta.get("has_account_owner")
+    if has_account_owner is None:
+        has_account_owner = placeholders_have_account_owner(template.placeholders or [])
     return templates.TemplateResponse(
         request,
         "templates_reg/fill.html",
@@ -135,7 +127,10 @@ async def api_create(data: TemplateCreate, session: AsyncSession = SessionDep) -
     template = await svc.create(data)
     if data.placeholders is not None:
         template.placeholders = normalize_placeholders(data.placeholders)
-        template.llm_meta = data.llm_meta or {}
+        template.llm_meta = {
+            **(data.llm_meta or {}),
+            "has_account_owner": placeholders_have_account_owner(template.placeholders),
+        }
         template.content = svc.regenerate_content(template)
         template = await commit_and_refresh(session, template)
         return TemplateRead.model_validate(template, from_attributes=True)

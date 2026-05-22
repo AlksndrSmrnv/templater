@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import uuid
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
 from app.db.models import MessageTemplate
-from app.services.templates import TemplateService, normalize_placeholders
+from app.services.templates import (
+    TemplateService,
+    normalize_placeholders,
+    placeholders_have_account_owner,
+)
 from app.utils.errors import ValidationFailed
 
 
@@ -41,6 +46,21 @@ def test_normalize_placeholders_rejects_non_list_and_non_dict() -> None:
 
 def test_normalize_placeholders_none_is_empty() -> None:
     assert normalize_placeholders(None) == []
+
+
+def test_placeholders_have_account_owner_detects_suggestions_and_values() -> None:
+    assert placeholders_have_account_owner(
+        [{"location": "/ownerName", "suggestion": "accountOwner.ownerName", "value": ""}]
+    )
+    assert placeholders_have_account_owner(
+        [{"location": "/account", "value": "{{ accountOwner.account.number }}"}]
+    )
+    assert placeholders_have_account_owner(
+        [{"location": "/card", "value": "accountOwner.card.number"}]
+    )
+    assert not placeholders_have_account_owner(
+        [{"location": "/fullName", "suggestion": "sender.fullName", "value": "{{sender.fullName}}"}]
+    )
 
 
 def test_regenerate_content_uses_original_content_as_source() -> None:
@@ -114,6 +134,52 @@ async def test_analyze_content_returns_preview_without_mutating_model() -> None:
 
 
 @pytest.mark.asyncio
+async def test_analyze_content_sets_account_owner_meta_when_placeholder_detected() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+
+    async def fake_catalog() -> list[dict[str, str]]:
+        return [
+            {"path": "sender.ownerName", "label": "Sender — Владелец", "data_type": "string"},
+            {
+                "path": "accountOwner.ownerName",
+                "label": "Owner — Владелец",
+                "data_type": "string",
+            },
+        ]
+
+    svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
+
+    result = await svc.analyze_content(
+        fmt="json",
+        original_content='{"ownerName": "Иванов"}',
+        llm_service=None,
+    )
+
+    assert json.loads(result["content"])["ownerName"] == "{{accountOwner.ownerName}}"
+    assert result["placeholders"][0]["suggestion"] == "accountOwner.ownerName"
+    assert result["llm_meta"]["has_account_owner"] is True
+
+
+@pytest.mark.asyncio
+async def test_analyze_content_sets_account_owner_meta_false_without_placeholder() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+
+    async def fake_catalog() -> list[dict[str, str]]:
+        return [{"path": "sender.fullName", "label": "Sender — ФИО", "data_type": "string"}]
+
+    svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
+
+    result = await svc.analyze_content(
+        fmt="json",
+        original_content='{"fullName": "Иванов"}',
+        llm_service=None,
+    )
+
+    assert result["placeholders"][0]["suggestion"] == "sender.fullName"
+    assert result["llm_meta"]["has_account_owner"] is False
+
+
+@pytest.mark.asyncio
 async def test_build_field_catalog_includes_account_owner_paths() -> None:
     svc = TemplateService(cast(Any, SimpleNamespace()))
     definitions = {
@@ -140,3 +206,47 @@ async def test_build_field_catalog_includes_account_owner_paths() -> None:
     assert "accountOwner.fullName" in paths
     assert "accountOwner.account.number" in paths
     assert "accountOwner.card.number" in paths
+
+
+@pytest.mark.asyncio
+async def test_update_placeholders_recalculates_account_owner_meta() -> None:
+    class FakeSession:
+        flushed = False
+
+        async def flush(self) -> None:
+            self.flushed = True
+
+    template_id = uuid.uuid4()
+    template = SimpleNamespace(
+        id=template_id,
+        format="json",
+        content='{"ownerName": "Иванов"}',
+        original_content='{"ownerName": "Иванов"}',
+        placeholders=[],
+        llm_meta={"summary": "manual", "has_account_owner": False},
+    )
+    session = FakeSession()
+    svc = TemplateService(cast(Any, session))
+
+    async def fake_get(requested_id: uuid.UUID) -> Any:
+        assert requested_id == template_id
+        return template
+
+    svc.get = fake_get  # type: ignore[assignment, method-assign]
+
+    updated = await svc.update_placeholders(
+        template_id,
+        [
+            {
+                "location": "/ownerName",
+                "mode": "mapped",
+                "value": "{{accountOwner.ownerName}}",
+                "original": "Иванов",
+                "suggestion": "accountOwner.ownerName",
+            }
+        ],
+    )
+
+    assert json.loads(updated.content)["ownerName"] == "{{accountOwner.ownerName}}"
+    assert updated.llm_meta == {"summary": "manual", "has_account_owner": True}
+    assert session.flushed is True
