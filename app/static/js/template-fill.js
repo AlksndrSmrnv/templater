@@ -1,63 +1,311 @@
 (async function () {
     const T = window.TEMPLATE;
-    const selSenderClient = document.getElementById("sender-client");
-    const selSenderAccount = document.getElementById("sender-account");
-    const selSenderCard = document.getElementById("sender-card");
-    const selReceiverClient = document.getElementById("receiver-client");
-    const selReceiverAccount = document.getElementById("receiver-account");
-    const selReceiverCard = document.getElementById("receiver-card");
+    const rolePanels = document.getElementById("role-panels");
     const btnRender = document.getElementById("btn-render");
     const btnDownload = document.getElementById("btn-download");
     const result = document.getElementById("result-code");
     const unresolved = document.getElementById("unresolved-box");
 
+    const roles = [
+        { key: "sender", title: "Отправитель", requestPrefix: "sender" },
+        { key: "receiver", title: "Получатель", requestPrefix: "receiver" },
+    ];
+    if (T.hasAccountOwner) {
+        roles.push({
+            key: "accountOwner",
+            title: "Владелец счёта",
+            requestPrefix: "account_owner",
+        });
+    }
+
+    const roleByKey = new Map(roles.map(role => [role.key, role]));
+    const state = new Map(roles.map(role => [
+        role.key,
+        {
+            clientId: null,
+            accountId: null,
+            cardId: null,
+            clientQuery: "",
+            accounts: [],
+            cards: [],
+            loading: false,
+            loadToken: null,
+        },
+    ]));
+
     let clients = [];
+    let clientsLoading = true;
     let lastResult = null;
 
-    function clientLabel(c) {
-        return (c.attributes?.fullName || c.id) + " (" + c.id.slice(0, 8) + "…)";
+    function roleState(roleKey) {
+        return state.get(roleKey);
     }
 
-    function fillClients(sel) {
-        sel.innerHTML = `<option value="">— выбрать —</option>` + clients.map(c => `<option value="${c.id}">${TM.escapeHtml(clientLabel(c))}</option>`).join("");
+    function clientLabel(client) {
+        const attrs = client.attributes || {};
+        return attrs.fullName || attrs.name || attrs.shortName || attrs.inn || client.description || client.id;
     }
 
-    async function loadAccounts(clientId, accSel, cardSel) {
-        accSel.innerHTML = `<option value="">— первый —</option>`;
-        cardSel.innerHTML = `<option value="">— первая —</option>`;
-        if (!clientId) return;
+    function entityNumber(entity) {
+        return entity.attributes?.number || entity.id;
+    }
+
+    function entityDescription(entity) {
+        return entity.description || "Без описания";
+    }
+
+    function accountNumberById(roleKey) {
+        return new Map(roleState(roleKey).accounts.map(account => [account.id, entityNumber(account)]));
+    }
+
+    function filteredClients(roleKey) {
+        const query = roleState(roleKey).clientQuery.trim().toLowerCase();
+        if (!query) return clients;
+        return clients.filter(client => {
+            const attrs = client.attributes || {};
+            const text = [
+                clientLabel(client),
+                client.description,
+                client.id,
+                attrs.fullName,
+                attrs.name,
+                attrs.shortName,
+                attrs.inn,
+            ].filter(Boolean).join(" ").toLowerCase();
+            return text.includes(query);
+        });
+    }
+
+    function selectedClass(isSelected) {
+        return isSelected ? " selected" : "";
+    }
+
+    function renderClientList(role) {
+        const rs = roleState(role.key);
+        if (clientsLoading) {
+            return `<div class="picker-empty">Загрузка клиентов...</div>`;
+        }
+        const items = filteredClients(role.key);
+        if (!items.length) {
+            return `<div class="picker-empty">Клиенты не найдены</div>`;
+        }
+        return items.map(client => `
+            <button type="button"
+                    class="picker-row${selectedClass(rs.clientId === client.id)}"
+                    data-action="select-client"
+                    data-role="${role.key}"
+                    data-id="${client.id}">
+                <span class="picker-row-main">${TM.escapeHtml(clientLabel(client))}</span>
+                <span class="picker-row-sub">${TM.escapeHtml(client.id)}</span>
+            </button>
+        `).join("");
+    }
+
+    function renderAccountList(role) {
+        const rs = roleState(role.key);
+        if (!rs.clientId) {
+            return `<div class="picker-empty">Выберите клиента</div>`;
+        }
+        if (rs.loading) {
+            return `<div class="picker-empty">Загрузка счетов...</div>`;
+        }
+        if (!rs.accounts.length) {
+            return `<div class="picker-empty">Счетов нет</div>`;
+        }
+        return rs.accounts.map(account => `
+            <button type="button"
+                    class="picker-row picker-row--stacked${selectedClass(rs.accountId === account.id)}"
+                    data-action="select-account"
+                    data-role="${role.key}"
+                    data-id="${account.id}">
+                <span class="picker-row-main">${TM.escapeHtml(entityNumber(account))}</span>
+                <span class="picker-row-sub">${TM.escapeHtml(entityDescription(account))}</span>
+            </button>
+        `).join("");
+    }
+
+    function renderCardList(role) {
+        const rs = roleState(role.key);
+        if (!rs.clientId) {
+            return `<div class="picker-empty">Выберите клиента</div>`;
+        }
+        if (rs.loading) {
+            return `<div class="picker-empty">Загрузка карт...</div>`;
+        }
+        if (!rs.cards.length) {
+            return `<div class="picker-empty">Карт нет</div>`;
+        }
+        const accountsById = accountNumberById(role.key);
+        return rs.cards.map(card => {
+            const accountNumber = accountsById.get(card.account_id) || card.account_id;
+            return `
+                <button type="button"
+                        class="picker-row picker-row--stacked${selectedClass(rs.cardId === card.id)}"
+                        data-action="select-card"
+                        data-role="${role.key}"
+                        data-id="${card.id}">
+                    <span class="picker-row-main">${TM.escapeHtml(entityNumber(card))}</span>
+                    <span class="picker-row-sub">${TM.escapeHtml(entityDescription(card))}</span>
+                    <span class="picker-row-meta">Счёт: ${TM.escapeHtml(accountNumber)}</span>
+                </button>
+            `;
+        }).join("");
+    }
+
+    function renderRole(role) {
+        const rs = roleState(role.key);
+        return `
+            <section class="role-panel" data-role-panel="${role.key}">
+                <div class="role-panel__header">
+                    <h3>${TM.escapeHtml(role.title)}</h3>
+                    <span>${TM.escapeHtml(role.key)}</span>
+                </div>
+                <div class="picker-group">
+                    <label for="${role.key}-client-search">Клиенты</label>
+                    <input id="${role.key}-client-search"
+                           class="picker-search"
+                           type="search"
+                           placeholder="Поиск"
+                           value="${TM.escapeHtml(rs.clientQuery)}"
+                           data-action="search-clients"
+                           data-role="${role.key}">
+                    <div class="picker-list" role="listbox" aria-label="${TM.escapeHtml(role.title)}: клиенты">
+                        ${renderClientList(role)}
+                    </div>
+                </div>
+                <div class="role-panel__choices">
+                    <div class="picker-group">
+                        <label>Счета</label>
+                        <div class="picker-list" role="listbox" aria-label="${TM.escapeHtml(role.title)}: счета">
+                            ${renderAccountList(role)}
+                        </div>
+                    </div>
+                    <div class="picker-group">
+                        <label>Карты</label>
+                        <div class="picker-list" role="listbox" aria-label="${TM.escapeHtml(role.title)}: карты">
+                            ${renderCardList(role)}
+                        </div>
+                    </div>
+                </div>
+            </section>
+        `;
+    }
+
+    function renderAll() {
+        rolePanels.innerHTML = roles.map(renderRole).join("");
+    }
+
+    async function loadRoleEntities(role) {
+        const rs = roleState(role.key);
+        if (!rs.clientId) {
+            rs.accounts = [];
+            rs.cards = [];
+            renderAll();
+            return;
+        }
+        const token = Symbol(role.key);
+        rs.loadToken = token;
+        rs.loading = true;
+        rs.accounts = [];
+        rs.cards = [];
+        renderAll();
         try {
-            const accs = await TM.api("GET", `/api/accounts?client_id=${clientId}`);
-            accSel.innerHTML += accs.map(a => `<option value="${a.id}">${TM.escapeHtml(a.attributes?.number || a.id)}</option>`).join("");
-        } catch (e) { TM.toast("Не удалось загрузить счета: " + e.message, "error"); }
+            const clientId = encodeURIComponent(rs.clientId);
+            const [accounts, cards] = await Promise.all([
+                TM.api("GET", `/api/accounts?client_id=${clientId}`),
+                TM.api("GET", `/api/cards?client_id=${clientId}`),
+            ]);
+            if (rs.loadToken !== token) return;
+            rs.accounts = accounts;
+            rs.cards = cards;
+        } catch (e) {
+            if (rs.loadToken === token) {
+                TM.toast("Не удалось загрузить счета и карты: " + e.message, "error");
+            }
+        } finally {
+            if (rs.loadToken === token) {
+                rs.loading = false;
+                renderAll();
+            }
+        }
     }
 
-    async function loadCards(accountId, cardSel) {
-        cardSel.innerHTML = `<option value="">— первая —</option>`;
-        if (!accountId) return;
-        try {
-            const cards = await TM.api("GET", `/api/cards?account_id=${accountId}`);
-            cardSel.innerHTML += cards.map(c => `<option value="${c.id}">${TM.escapeHtml(c.attributes?.number || c.id)}</option>`).join("");
-        } catch (e) { TM.toast("Не удалось загрузить карты: " + e.message, "error"); }
+    function setClient(roleKey, clientId) {
+        const role = roleByKey.get(roleKey);
+        if (!role) return;
+        const rs = roleState(roleKey);
+        rs.clientId = clientId;
+        rs.accountId = null;
+        rs.cardId = null;
+        loadRoleEntities(role);
     }
 
-    selSenderClient.addEventListener("change", () => loadAccounts(selSenderClient.value, selSenderAccount, selSenderCard));
-    selSenderAccount.addEventListener("change", () => loadCards(selSenderAccount.value, selSenderCard));
-    selReceiverClient.addEventListener("change", () => loadAccounts(selReceiverClient.value, selReceiverAccount, selReceiverCard));
-    selReceiverAccount.addEventListener("change", () => loadCards(selReceiverAccount.value, selReceiverCard));
+    function toggleAccount(roleKey, accountId) {
+        const rs = roleState(roleKey);
+        rs.accountId = rs.accountId === accountId ? null : accountId;
+        if (rs.accountId) {
+            rs.cardId = null;
+        }
+        renderAll();
+    }
+
+    function toggleCard(roleKey, cardId) {
+        const rs = roleState(roleKey);
+        rs.cardId = rs.cardId === cardId ? null : cardId;
+        if (rs.cardId) {
+            rs.accountId = null;
+        }
+        renderAll();
+    }
+
+    function buildRequestBody() {
+        const body = {};
+        for (const role of roles) {
+            const rs = roleState(role.key);
+            body[`${role.requestPrefix}_client_id`] = rs.clientId || null;
+            body[`${role.requestPrefix}_account_id`] = rs.accountId || null;
+            body[`${role.requestPrefix}_card_id`] = rs.cardId || null;
+        }
+        return body;
+    }
+
+    rolePanels.addEventListener("input", event => {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement)) return;
+        if (target.dataset.action !== "search-clients") return;
+        if (!target.dataset.role) return;
+        const rs = roleState(target.dataset.role);
+        rs.clientQuery = target.value;
+        renderAll();
+        const nextInput = document.getElementById(`${target.dataset.role}-client-search`);
+        if (nextInput) {
+            nextInput.focus();
+            nextInput.setSelectionRange(target.value.length, target.value.length);
+        }
+    });
+
+    rolePanels.addEventListener("click", event => {
+        if (!(event.target instanceof Element)) return;
+        const button = event.target.closest("button[data-action]");
+        if (!button) return;
+        const action = button.dataset.action;
+        const roleKey = button.dataset.role;
+        const id = button.dataset.id;
+        if (!roleKey || !id) return;
+        if (action === "select-client") {
+            setClient(roleKey, id);
+        } else if (action === "select-account") {
+            toggleAccount(roleKey, id);
+        } else if (action === "select-card") {
+            toggleCard(roleKey, id);
+        }
+    });
 
     btnRender.addEventListener("click", async () => {
-        unresolved.hidden = true; unresolved.innerHTML = "";
-        const body = {
-            sender_client_id: selSenderClient.value || null,
-            sender_account_id: selSenderAccount.value || null,
-            sender_card_id: selSenderCard.value || null,
-            receiver_client_id: selReceiverClient.value || null,
-            receiver_account_id: selReceiverAccount.value || null,
-            receiver_card_id: selReceiverCard.value || null,
-        };
+        unresolved.hidden = true;
+        unresolved.innerHTML = "";
         try {
-            lastResult = await TM.api("POST", `/api/templates/${T.id}/fill`, body);
+            lastResult = await TM.api("POST", `/api/templates/${T.id}/fill`, buildRequestBody());
             if (lastResult.html) {
                 result.innerHTML = lastResult.html;
             } else {
@@ -68,22 +316,34 @@
                 unresolved.hidden = false;
                 unresolved.innerHTML = `<strong>Не подставлено:</strong> ${lastResult.unresolved.map(TM.escapeHtml).join(", ")}`;
             }
-        } catch (e) { TM.toast(e.message, "error"); }
+        } catch (e) {
+            TM.toast(e.message, "error");
+        }
     });
 
     btnDownload.addEventListener("click", () => {
         if (!lastResult) return;
         const ext = lastResult.format === "xml" ? "xml" : "json";
-        const blob = new Blob([lastResult.content], { type: ext === "xml" ? "application/xml" : "application/json" });
+        const blob = new Blob([lastResult.content], {
+            type: ext === "xml" ? "application/xml" : "application/json",
+        });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
         a.download = `filled-${Date.now()}.${ext}`;
-        document.body.appendChild(a); a.click(); a.remove();
+        document.body.appendChild(a);
+        a.click();
+        URL.revokeObjectURL(a.href);
+        a.remove();
     });
 
+    renderAll();
     try {
         clients = await TM.api("GET", "/api/clients");
-        fillClients(selSenderClient);
-        fillClients(selReceiverClient);
-    } catch (e) { TM.toast("Не удалось загрузить клиентов: " + e.message, "error"); }
+        clientsLoading = false;
+        renderAll();
+    } catch (e) {
+        clientsLoading = false;
+        renderAll();
+        TM.toast("Не удалось загрузить клиентов: " + e.message, "error");
+    }
 })();

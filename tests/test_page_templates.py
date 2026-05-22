@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from app.routes.deps import get_templates
 
 
@@ -100,3 +102,22 @@ def test_entity_list_has_table_meta_and_detail_drawer() -> None:
     assert 'id="detail-drawer"' in html
     assert '<tr id="thead-row"></tr>' in html
     assert 'id="select-all"' not in html
+
+
+def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
+    html = render_template(
+        "templates_reg/fill.html",
+        {
+            "active": "templates",
+            "template": SimpleNamespace(
+                id="3db678b1-1111-2222-3333-444444444444",
+                name="Fill test",
+                format="json",
+            ),
+            "has_account_owner": True,
+        },
+    )
+
+    assert 'id="role-panels"' in html
+    assert "hasAccountOwner: true" in html
+    assert 'id="sender-client"' not in html

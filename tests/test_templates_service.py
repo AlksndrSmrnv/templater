@@ -111,3 +111,32 @@ async def test_analyze_content_returns_preview_without_mutating_model() -> None:
     assert result["placeholders"][0]["location"] == "/fullName"
     assert result["placeholders"][0]["mode"] == "mapped"
     assert result["llm_meta"]["summary"].startswith("Анализ выполнен без LLM")
+
+
+@pytest.mark.asyncio
+async def test_build_field_catalog_includes_account_owner_paths() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+    definitions = {
+        "client": [SimpleNamespace(name="fullName", label="ФИО", data_type="string")],
+        "account": [SimpleNamespace(name="number", label="Номер счёта", data_type="string")],
+        "card": [SimpleNamespace(name="number", label="Номер карты", data_type="string")],
+    }
+
+    class FakeSchema:
+        async def list_schema(
+            self,
+            entity_type: str,
+            *,
+            include_deprecated: bool = False,
+        ) -> list[SimpleNamespace]:
+            assert include_deprecated is False
+            return definitions[entity_type]
+
+    svc.schema = FakeSchema()  # type: ignore[assignment]
+
+    catalog = await svc.build_field_catalog()
+    paths = {entry["path"] for entry in catalog}
+
+    assert "accountOwner.fullName" in paths
+    assert "accountOwner.account.number" in paths
+    assert "accountOwner.card.number" in paths

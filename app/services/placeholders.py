@@ -1,8 +1,8 @@
-"""Resolve ``{{sender.*}}`` / ``{{receiver.*}}`` placeholders against test data.
+"""Resolve role placeholders against test data.
 
 Given a template (with placeholders already applied to its content) and the
-selected sender/receiver client+account+card, this builds the final message
-body by substituting each placeholder token with concrete values.
+selected role client+account+card, this builds the final message body by
+substituting each placeholder token with concrete values.
 """
 
 from __future__ import annotations
@@ -41,6 +41,9 @@ class PlaceholderFiller:
         receiver_client_id: uuid.UUID | None,
         receiver_account_id: uuid.UUID | None,
         receiver_card_id: uuid.UUID | None,
+        account_owner_client_id: uuid.UUID | None = None,
+        account_owner_account_id: uuid.UUID | None = None,
+        account_owner_card_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         context: dict[str, Any] = {}
         context["sender"] = await self._role_context(
@@ -48,6 +51,11 @@ class PlaceholderFiller:
         )
         context["receiver"] = await self._role_context(
             client_id=receiver_client_id, account_id=receiver_account_id, card_id=receiver_card_id
+        )
+        context["accountOwner"] = await self._role_context(
+            client_id=account_owner_client_id,
+            account_id=account_owner_account_id,
+            card_id=account_owner_card_id,
         )
         return context
 
@@ -65,21 +73,28 @@ class PlaceholderFiller:
         if client is None:
             raise NotFoundError("Клиент не найден")
         out.update(client.attributes or {})
-        # Account: explicit OR first one for this client
+        card: Card | None = None
+        if card_id is not None:
+            card = await self.cards.get(card_id)
+            if card is None:
+                raise ValidationFailed("Карта не найдена")
+
+        # Account: explicit, card owner, or first one for this client.
         account: Account | None = None
         if account_id is not None:
             account = await self.accounts.get(account_id)
             if account is None or account.client_id != client.id:
                 raise ValidationFailed("Счёт не принадлежит выбранному клиенту")
+        elif card is not None:
+            account = await self.accounts.get(card.account_id)
+            if account is None or account.client_id != client.id:
+                raise ValidationFailed("Счёт карты не принадлежит выбранному клиенту")
         else:
             accs = await self.accounts.list_all(client_id=client.id)
             account = accs[0] if accs else None
         if account is not None:
             out["account"] = dict(account.attributes or {})
-            # Card
-            card: Card | None = None
             if card_id is not None:
-                card = await self.cards.get(card_id)
                 if card is None or card.account_id != account.id:
                     raise ValidationFailed("Карта не принадлежит выбранному счёту")
             else:
@@ -178,6 +193,9 @@ class PlaceholderFiller:
         receiver_client_id: uuid.UUID | None,
         receiver_account_id: uuid.UUID | None,
         receiver_card_id: uuid.UUID | None,
+        account_owner_client_id: uuid.UUID | None = None,
+        account_owner_account_id: uuid.UUID | None = None,
+        account_owner_card_id: uuid.UUID | None = None,
     ) -> tuple[str, list[str], list[str]]:
         ctx = await self.build_context(
             sender_client_id=sender_client_id,
@@ -186,5 +204,8 @@ class PlaceholderFiller:
             receiver_client_id=receiver_client_id,
             receiver_account_id=receiver_account_id,
             receiver_card_id=receiver_card_id,
+            account_owner_client_id=account_owner_client_id,
+            account_owner_account_id=account_owner_account_id,
+            account_owner_card_id=account_owner_card_id,
         )
         return self.fill_content(template.content, template.format, ctx)

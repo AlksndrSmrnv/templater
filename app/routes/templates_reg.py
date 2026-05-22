@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import ssl
 import uuid
 from types import SimpleNamespace
@@ -28,6 +29,7 @@ from app.utils.errors import LLMUnavailable, ValidationFailed
 
 router = APIRouter()
 log = logging.getLogger(__name__)
+ACCOUNT_OWNER_TOKEN_RE = re.compile(r"\{\{\s*accountOwner\.")
 
 
 def _llm_ssl_message(exc: BaseException) -> str:
@@ -45,6 +47,19 @@ def _validate_preview_source(data: TemplateCreate) -> None:
         TemplateService._extract_leaves(data.format, data.content)
     except Exception as exc:
         raise ValidationFailed(f"Шаблон не парсится как {data.format}: {exc}") from exc
+
+
+def _has_account_owner_placeholders(placeholders: list[dict[str, Any]]) -> bool:
+    for item in placeholders:
+        suggestion = item.get("suggestion")
+        if isinstance(suggestion, str) and suggestion.startswith("accountOwner."):
+            return True
+        value = item.get("value")
+        if isinstance(value, str) and (
+            value.startswith("accountOwner.") or ACCOUNT_OWNER_TOKEN_RE.search(value)
+        ):
+            return True
+    return False
 
 
 # ---------- HTML pages ----------
@@ -87,10 +102,11 @@ async def page_fill(
     session: AsyncSession = SessionDep,
 ) -> Response:
     template = await TemplateService(session).get(template_id)
+    has_account_owner = _has_account_owner_placeholders(template.placeholders or [])
     return templates.TemplateResponse(
         request,
         "templates_reg/fill.html",
-        {"active": "templates", "template": template},
+        {"active": "templates", "template": template, "has_account_owner": has_account_owner},
     )
 
 
@@ -278,6 +294,9 @@ async def api_fill(
         receiver_client_id=data.receiver_client_id,
         receiver_account_id=data.receiver_account_id,
         receiver_card_id=data.receiver_card_id,
+        account_owner_client_id=data.account_owner_client_id,
+        account_owner_account_id=data.account_owner_account_id,
+        account_owner_card_id=data.account_owner_card_id,
     )
     html = render_filled_html(template.format, rendered, changed)
     return {"content": rendered, "html": html, "format": template.format, "unresolved": unresolved}

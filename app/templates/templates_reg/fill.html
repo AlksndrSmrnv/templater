@@ -9,38 +9,7 @@
     </div>
 </div>
 
-<div class="cards" style="grid-template-columns: 1fr 1fr;">
-    <div class="card">
-        <h3>Отправитель (sender)</h3>
-        <div class="form-section">
-            <label>Клиент</label>
-            <select id="sender-client"><option value="">—</option></select>
-        </div>
-        <div class="form-section">
-            <label>Счёт (опционально, иначе первый)</label>
-            <select id="sender-account"><option value="">— первый —</option></select>
-        </div>
-        <div class="form-section">
-            <label>Карта (опционально, иначе первая)</label>
-            <select id="sender-card"><option value="">— первая —</option></select>
-        </div>
-    </div>
-    <div class="card">
-        <h3>Получатель (receiver)</h3>
-        <div class="form-section">
-            <label>Клиент</label>
-            <select id="receiver-client"><option value="">—</option></select>
-        </div>
-        <div class="form-section">
-            <label>Счёт (опционально)</label>
-            <select id="receiver-account"><option value="">— первый —</option></select>
-        </div>
-        <div class="form-section">
-            <label>Карта (опционально)</label>
-            <select id="receiver-card"><option value="">— первая —</option></select>
-        </div>
-    </div>
-</div>
+<div id="role-panels" class="role-panels"></div>
 
 <div class="form-actions" style="margin-top:14px;">
     <button class="btn primary" id="btn-render">Заполнить</button>
@@ -52,7 +21,11 @@
 <pre class="template-code" id="result-code">—</pre>
 
 <script>
-window.TEMPLATE = { id: "{{ template.id }}", format: "{{ template.format }}" };
+window.TEMPLATE = {
+    id: "{{ template.id }}",
+    format: "{{ template.format }}",
+    hasAccountOwner: {{ has_account_owner|tojson }}
+};
 </script>
 <script src="/static/js/template-fill.js"></script>
 {% endblock %}
