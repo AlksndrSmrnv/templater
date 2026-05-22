@@ -40,6 +40,7 @@ a:hover { text-decoration: underline; }
 .topbar {
     display: flex;
     align-items: center;
+    gap: 24px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
     padding: 0 24px;
@@ -49,19 +50,22 @@ a:hover { text-decoration: underline; }
     top: 0;
     z-index: 50;
 }
-.brand { font-weight: 700; font-size: 18px; margin-right: 32px; }
+.brand { font-weight: 700; font-size: 18px; flex-shrink: 0; }
 .brand a { color: var(--text); }
-.topnav { display: flex; gap: 4px; align-items: stretch; height: 100%; }
+.topnav { display: flex; gap: 4px; align-items: stretch; height: 100%; flex: 1; min-width: 0; }
 .topnav > a, .nav-group {
-    display: flex; align-items: center;
+    display: flex; align-items: center; gap: 6px;
     padding: 0 14px;
     color: var(--text);
     height: 100%;
+    min-width: 0;
     position: relative;
     cursor: pointer;
     border-radius: var(--radius-sm);
     transition: background 0.15s ease, color 0.15s ease;
 }
+.nav-icon { flex-shrink: 0; }
+.nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topnav > a:hover, .nav-group:hover { background: var(--surface-2); text-decoration: none; }
 .topnav > a.active, .nav-group.active { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
 .topnav .disabled { color: var(--muted); pointer-events: none; cursor: not-allowed; opacity: 0.55; }
@@ -94,8 +98,12 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 .card h3 { margin: 0 0 6px; }
 .card p { margin: 0; color: var(--muted); font-size: 13px; }
 
-.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
-.page-header .actions { display: flex; gap: 8px; }
+.page-header {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 12px 16px; margin-bottom: 18px; flex-wrap: wrap;
+}
+.page-header h1 { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.page-header .actions { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
 
 .btn {
     display: inline-flex; align-items: center; gap: 6px;
