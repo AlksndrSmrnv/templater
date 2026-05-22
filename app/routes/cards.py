@@ -20,7 +20,7 @@ async def page_list(request: Request, templates: Jinja2Templates = TemplatesDep)
     return templates.TemplateResponse(
         request,
         "entities/list.html",
-        {"active": "data", "entity_type": "card", "title": "Карты"},
+        {"active": "data", "entity_type": "card", "title": "💳 Карты"},
     )
 
 
@@ -29,7 +29,7 @@ async def page_new(request: Request, templates: Jinja2Templates = TemplatesDep) 
     return templates.TemplateResponse(
         request,
         "entities/form.html",
-        {"active": "data", "entity_type": "card", "title": "Новая карта", "entity_id": None},
+        {"active": "data", "entity_type": "card", "title": "💳 Новая карта", "entity_id": None},
     )
 
 
@@ -40,7 +40,7 @@ async def page_edit(
     return templates.TemplateResponse(
         request,
         "entities/form.html",
-        {"active": "data", "entity_type": "card", "title": "Карта", "entity_id": str(card_id)},
+        {"active": "data", "entity_type": "card", "title": "💳 Карта", "entity_id": str(card_id)},
     )
 
 

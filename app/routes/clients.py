@@ -22,7 +22,7 @@ async def page_list(request: Request, templates: Jinja2Templates = TemplatesDep)
     return templates.TemplateResponse(
         request,
         "entities/list.html",
-        {"active": "data", "entity_type": "client", "title": "Клиенты"},
+        {"active": "data", "entity_type": "client", "title": "👥 Клиенты"},
     )
 
 
@@ -31,7 +31,7 @@ async def page_new(request: Request, templates: Jinja2Templates = TemplatesDep) 
     return templates.TemplateResponse(
         request,
         "entities/form.html",
-        {"active": "data", "entity_type": "client", "title": "Новый клиент", "entity_id": None},
+        {"active": "data", "entity_type": "client", "title": "👥 Новый клиент", "entity_id": None},
     )
 
 
@@ -42,7 +42,7 @@ async def page_edit(
     return templates.TemplateResponse(
         request,
         "entities/form.html",
-        {"active": "data", "entity_type": "client", "title": "Клиент", "entity_id": str(client_id)},
+        {"active": "data", "entity_type": "client", "title": "👥 Клиент", "entity_id": str(client_id)},
     )
 
 
