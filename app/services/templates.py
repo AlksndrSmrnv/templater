@@ -17,22 +17,31 @@ from app.services.dynamic_fields import resolve_dynamic_token
 from app.services.role_resolver import resolve_role_from_path
 from app.utils import walker
 from app.utils.errors import NotFoundError, ValidationFailed
+from app.utils.paths import clean_path_segment, path_segments
 
 log = logging.getLogger(__name__)
 
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}")
 ACCOUNT_OWNER_TOKEN_RE = re.compile(r"\{\{\s*accountOwner\.")
-PATH_INDEX_RE = re.compile(r"\[[^\]]*\]")
 FIELD_CATALOG_ENTITIES = ("client", "account", "card")
 ENTITY_SCOPES = frozenset(entity for entity in FIELD_CATALOG_ENTITIES if entity != "client")
 
 
 class TemplateAccountOwnerSource(Protocol):
-    format: str
-    content: str
-    original_content: str
-    llm_meta: dict[str, Any]
-    placeholders: list[dict[str, Any]]
+    @property
+    def format(self) -> str: ...
+
+    @property
+    def content(self) -> str: ...
+
+    @property
+    def original_content(self) -> str: ...
+
+    @property
+    def llm_meta(self) -> dict[str, Any] | None: ...
+
+    @property
+    def placeholders(self) -> list[dict[str, Any]] | None: ...
 
 
 def placeholders_have_account_owner(placeholders: list[dict[str, Any]]) -> bool:
@@ -437,29 +446,11 @@ class TemplateService:
 
     @staticmethod
     def _path_segments(path: str) -> list[str]:
-        cleaned = TemplateService._clean_suggestion(path)
-        if not cleaned:
-            return []
-        raw_segments = re.split(r"[/.]+", cleaned.strip("/."))
-        out: list[str] = []
-        for raw in raw_segments:
-            segment = TemplateService._clean_path_segment(raw)
-            if segment is not None:
-                out.append(segment)
-        return out
+        return path_segments(TemplateService._clean_suggestion(path))
 
     @staticmethod
     def _clean_path_segment(segment: str) -> str | None:
-        segment = segment.strip()
-        if not segment or segment == "#text":
-            return None
-        segment = PATH_INDEX_RE.sub("", segment)
-        if segment.startswith("@"):
-            segment = segment[1:]
-        segment = segment.replace("~1", "/").replace("~0", "~")
-        if not segment or segment.isdigit():
-            return None
-        return segment
+        return clean_path_segment(segment)
 
     @staticmethod
     def _clean_suggestion(suggestion: str) -> str:
@@ -475,12 +466,13 @@ class TemplateService:
 
     @staticmethod
     def _entity_scope_from_segments(segments: list[str], role: str | None) -> str | None:
+        """Return entity scope from normalized path segments."""
+
         role_idx = TemplateService._last_role_segment_index(segments, role)
         search_segments = segments[role_idx + 1 :] if role_idx is not None else segments
         for segment in search_segments:
-            cleaned = TemplateService._clean_path_segment(segment)
-            if cleaned is not None and cleaned.lower() in ENTITY_SCOPES:
-                return cleaned.lower()
+            if segment.lower() in ENTITY_SCOPES:
+                return segment.lower()
         return None
 
     @staticmethod

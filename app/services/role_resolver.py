@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import re
+from app.utils.paths import path_segments, segment_tokens
 
 ROLE_SYNONYMS: dict[str, tuple[str, ...]] = {
     "sender": (
@@ -43,17 +43,13 @@ ROLE_SYNONYMS: dict[str, tuple[str, ...]] = {
 }
 
 _ROLE_PRIORITY = ("accountOwner", "receiver", "sender")
-_CAMEL_BOUNDARY = re.compile(r"(?<=[a-zа-яё0-9])(?=[A-ZА-ЯЁ])")
-_ACRONYM_BOUNDARY = re.compile(r"(?<=[A-ZА-ЯЁ])(?=[A-ZА-ЯЁ][a-zа-яё])")
-_NON_TOKEN_CHARS = re.compile(r"[_\W]+", flags=re.UNICODE)
-_PATH_INDEX = re.compile(r"\[[^\]]*\]")
 
 
 def resolve_role_from_path(location: str) -> str | None:
     """Resolve participant role from a JSON-pointer / XML leaf path."""
 
-    for segment in reversed(_path_segments(location)):
-        tokens = _segment_tokens(segment)
+    for segment in reversed(path_segments(location)):
+        tokens = segment_tokens(segment)
         if not tokens:
             continue
         roles = {
@@ -65,25 +61,3 @@ def resolve_role_from_path(location: str) -> str | None:
             if role in roles:
                 return role
     return None
-
-
-def _path_segments(location: str) -> list[str]:
-    if not location:
-        return []
-    segments = []
-    for raw_segment in location.split("/"):
-        segment = raw_segment.replace("~1", "/").replace("~0", "~").strip()
-        segment = _PATH_INDEX.sub("", segment)
-        if segment.startswith("@"):
-            segment = segment[1:]
-        if not segment or segment == "#text":
-            continue
-        segments.append(segment)
-    return segments
-
-
-def _segment_tokens(segment: str) -> set[str]:
-    spaced = _CAMEL_BOUNDARY.sub(" ", segment)
-    spaced = _ACRONYM_BOUNDARY.sub(" ", spaced)
-    spaced = _NON_TOKEN_CHARS.sub(" ", spaced)
-    return {token.lower() for token in spaced.split() if token}
