@@ -28,6 +28,8 @@ services:
       APP_HOST: 0.0.0.0
       APP_PORT: "8000"
       APP_DEBUG: "false"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_JSON: ${LOG_JSON:-true}
       GIGACHAT_BASE_URL: ${GIGACHAT_BASE_URL:-}
       GIGACHAT_CERT_B64: ${GIGACHAT_CERT_B64:-}
       GIGACHAT_KEY_B64: ${GIGACHAT_KEY_B64:-}
