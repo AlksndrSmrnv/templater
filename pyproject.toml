@@ -4,25 +4,26 @@ version = "0.1.0"
 description = "Web app for preparing test data and JSON/XML message templates"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi==0.115.0",
-    "uvicorn[standard]==0.30.6",
-    "jinja2==3.1.4",
-    "python-multipart==0.0.9",
-    "pydantic==2.9.2",
-    "pydantic-settings==2.5.2",
-    "SQLAlchemy[asyncio]==2.0.35",
-    "asyncpg==0.30.0",
-    "alembic==1.13.3",
+    "fastapi==0.136.1",
+    "uvicorn[standard]==0.47.0",
+    "jinja2==3.1.6",
+    "python-multipart==0.0.29",
+    "pydantic==2.13.4",
+    "pydantic-settings==2.14.1",
+    "SQLAlchemy[asyncio]>=2.0.49,<2.1",
+    "asyncpg==0.31.0",
+    "alembic==1.18.4",
     "httpx==0.28.1",
     "gigachat==0.2.1",
-    "python-dotenv==1.0.1",
+    "python-dotenv==1.2.2",
+    "structlog==25.5.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest==8.3.3",
-    "pytest-asyncio==0.24.0",
-    "ruff==0.6.9",
+    "pytest==9.0.3",
+    "pytest-asyncio==1.3.0",
+    "ruff==0.15.14",
     "mypy==1.20.2",
 ]
 
@@ -32,7 +33,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP", "B", "SIM"]
-ignore = ["B008", "SIM108", "SIM105", "UP038", "B904", "E501"]
+ignore = ["B008", "SIM108", "SIM105", "B904", "E501"]
 
 [tool.mypy]
 strict = true

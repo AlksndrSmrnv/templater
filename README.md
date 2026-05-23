@@ -91,7 +91,7 @@ Alembic, засеивает базовые справочники и подни�
 **Вручную** (то же самое по шагам):
 
 ```bash
-uv sync --all-extras
+uv sync --frozen --all-extras
 uv run alembic upgrade head
 uv run python -m scripts.seed_reference_data
 uv run uvicorn app.main:app --reload
