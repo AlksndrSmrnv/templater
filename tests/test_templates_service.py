@@ -694,6 +694,60 @@ async def test_analyze_content_preserves_account_owner_account_scope_from_path()
 
 
 @pytest.mark.asyncio
+async def test_analyze_content_does_not_treat_card_holder_as_card_scope() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+
+    async def fake_catalog() -> list[dict[str, str]]:
+        return [
+            {"path": "accountOwner.firstName", "label": "Owner — Имя", "data_type": "string"},
+            {
+                "path": "accountOwner.card.firstName",
+                "label": "Owner card — Имя на карте",
+                "data_type": "string",
+            },
+        ]
+
+    svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
+
+    result = await svc.analyze_content(
+        fmt="json",
+        original_content='{"accountOwner": {"cardHolder": {"firstName": "Иван"}}}',
+        llm_service=None,
+    )
+
+    parsed = json.loads(result["content"])
+
+    assert result["placeholders"][0]["suggestion"] == "accountOwner.firstName"
+    assert parsed["accountOwner"]["cardHolder"]["firstName"] == "{{accountOwner.firstName}}"
+
+
+def test_path_segments_strip_multiple_index_suffixes() -> None:
+    assert TemplateService._path_segments("/root/accountOwner[0][1]/client[2]/firstName") == [
+        "root",
+        "accountOwner",
+        "client",
+        "firstName",
+    ]
+
+
+def test_entity_scope_requires_whole_path_segment() -> None:
+    assert (
+        TemplateService._entity_scope_from_segments(
+            ["accountOwner", "creditCard", "firstName"],
+            "accountOwner",
+        )
+        is None
+    )
+    assert (
+        TemplateService._entity_scope_from_segments(
+            ["accountOwner", "account", "number"],
+            "accountOwner",
+        )
+        == "account"
+    )
+
+
+@pytest.mark.asyncio
 async def test_build_field_catalog_includes_account_owner_paths() -> None:
     svc = TemplateService(cast(Any, SimpleNamespace()))
     definitions = {

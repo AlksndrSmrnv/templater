@@ -232,3 +232,46 @@ async def test_page_fill_detects_account_owner_from_template_structure(
 
     assert response.name == "templates_reg/fill.html"
     assert response.context["has_account_owner"] is True
+
+
+@pytest.mark.asyncio
+async def test_page_fill_keeps_account_owner_false_without_meta_placeholders_or_structure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    template_id = uuid.uuid4()
+    template = SimpleNamespace(
+        id=template_id,
+        name="No owner",
+        format="json",
+        llm_meta={"has_account_owner": False},
+        placeholders=[],
+        content='{"sender": {"fullName": "Иванов"}}',
+        original_content='{"sender": {"fullName": "Иванов"}}',
+    )
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            assert requested_id == template_id
+            return template
+
+    class FakeTemplates:
+        def TemplateResponse(self, request: object, name: str, context: dict[str, object]) -> Any:
+            return SimpleNamespace(name=name, context=context)
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+
+    response = cast(
+        Any,
+        await templates_reg.page_fill(
+            template_id,
+            request=cast(Any, SimpleNamespace()),
+            templates=cast(Any, FakeTemplates()),
+            session=cast(Any, SimpleNamespace()),
+        ),
+    )
+
+    assert response.name == "templates_reg/fill.html"
+    assert response.context["has_account_owner"] is False

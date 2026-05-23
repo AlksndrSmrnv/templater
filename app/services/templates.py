@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from collections import Counter, defaultdict
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,13 +18,21 @@ from app.services.role_resolver import resolve_role_from_path
 from app.utils import walker
 from app.utils.errors import NotFoundError, ValidationFailed
 
+log = logging.getLogger(__name__)
+
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}")
 ACCOUNT_OWNER_TOKEN_RE = re.compile(r"\{\{\s*accountOwner\.")
-PATH_INDEX_RE = re.compile(r"\[[^\]]*\]$")
-CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-zа-яё0-9])(?=[A-ZА-ЯЁ])")
-ACRONYM_BOUNDARY_RE = re.compile(r"(?<=[A-ZА-ЯЁ])(?=[A-ZА-ЯЁ][a-zа-яё])")
-NON_TOKEN_CHARS_RE = re.compile(r"[_\W]+", flags=re.UNICODE)
-ENTITY_SCOPES = frozenset({"account", "card"})
+PATH_INDEX_RE = re.compile(r"\[[^\]]*\]")
+FIELD_CATALOG_ENTITIES = ("client", "account", "card")
+ENTITY_SCOPES = frozenset(entity for entity in FIELD_CATALOG_ENTITIES if entity != "client")
+
+
+class TemplateAccountOwnerSource(Protocol):
+    format: str
+    content: str
+    original_content: str
+    llm_meta: dict[str, Any]
+    placeholders: list[dict[str, Any]]
 
 
 def placeholders_have_account_owner(placeholders: list[dict[str, Any]]) -> bool:
@@ -45,23 +54,29 @@ def content_has_account_owner(fmt: str, content: str | None) -> bool:
     if not content:
         return False
     try:
-        leaves = TemplateService._extract_leaves(fmt, content)
+        if fmt == "json":
+            leaves = walker.walk_json(content)
+        elif fmt == "xml":
+            leaves = walker.walk_xml(content)
+        else:
+            return False
     except Exception:
+        log.debug("Unable to inspect template content for accountOwner role", exc_info=True)
         return False
     return any(resolve_role_from_path(leaf.location) == "accountOwner" for leaf in leaves)
 
 
-def template_has_account_owner(template: Any) -> bool:
+def template_has_account_owner(template: TemplateAccountOwnerSource) -> bool:
     if placeholders_have_account_owner(template.placeholders or []):
         return True
     meta = template.llm_meta or {}
     if meta.get("has_account_owner") is True:
         return True
-    fmt = str(getattr(template, "format", ""))
-    return content_has_account_owner(fmt, getattr(template, "content", None)) or content_has_account_owner(
-        fmt,
-        getattr(template, "original_content", None),
-    )
+    if content_has_account_owner(template.format, template.content):
+        return True
+    if template.original_content != template.content:
+        return content_has_account_owner(template.format, template.original_content)
+    return False
 
 
 def normalize_placeholders(raw: Any) -> list[dict[str, Any]]:
@@ -183,7 +198,8 @@ class TemplateService:
 
         result: list[dict[str, str]] = []
         for role in ("sender", "receiver", "accountOwner"):
-            for entity, prefix in (("client", role), ("account", f"{role}.account"), ("card", f"{role}.card")):
+            for entity in FIELD_CATALOG_ENTITIES:
+                prefix = role if entity == "client" else f"{role}.{entity}"
                 defs = await self.schema.list_schema(entity, include_deprecated=False)
                 for d in defs:
                     result.append(
@@ -325,8 +341,8 @@ class TemplateService:
             for source in sources:
                 if not source:
                     continue
-                source = TemplateService._clean_suggestion(source)
-                source_segments = TemplateService._path_segments(source)
+                cleaned = TemplateService._clean_suggestion(source)
+                source_segments = TemplateService._path_segments(cleaned)
                 tail = TemplateService._last_path_segment(source_segments)
                 if tail is None:
                     continue
@@ -379,7 +395,7 @@ class TemplateService:
                 out[leaf.location] = exact[leaf.location]
                 continue
             key = leaf_keys[leaf.location]
-            if key and leaf_key_counts[key] == 1 and len(by_key.get(key, [])) == 1:
+            if leaf_key_counts[key] == 1 and len(by_key.get(key, [])) == 1:
                 out[leaf.location] = by_key[key][0]
         return out
 
@@ -462,10 +478,9 @@ class TemplateService:
         role_idx = TemplateService._last_role_segment_index(segments, role)
         search_segments = segments[role_idx + 1 :] if role_idx is not None else segments
         for segment in search_segments:
-            tokens = TemplateService._segment_tokens(segment)
-            for scope in ENTITY_SCOPES:
-                if scope in tokens:
-                    return scope
+            cleaned = TemplateService._clean_path_segment(segment)
+            if cleaned is not None and cleaned.lower() in ENTITY_SCOPES:
+                return cleaned.lower()
         return None
 
     @staticmethod
@@ -476,13 +491,6 @@ class TemplateService:
             if resolve_role_from_path(segments[idx]) == role:
                 return idx
         return None
-
-    @staticmethod
-    def _segment_tokens(segment: str) -> set[str]:
-        spaced = CAMEL_BOUNDARY_RE.sub(" ", segment)
-        spaced = ACRONYM_BOUNDARY_RE.sub(" ", spaced)
-        spaced = NON_TOKEN_CHARS_RE.sub(" ", spaced)
-        return {token.lower() for token in spaced.split() if token}
 
     @staticmethod
     def _heuristic_mappings(
