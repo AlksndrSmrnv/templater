@@ -390,6 +390,141 @@ async def test_analyze_content_keeps_account_owner_role_for_llm_ucp_id_attribute
 
 
 @pytest.mark.asyncio
+async def test_analyze_content_falls_back_for_account_owner_llm_suggestion_without_attribute() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+
+    async def fake_catalog() -> list[dict[str, str]]:
+        return [
+            {"path": "sender.fullName", "label": "Sender — ФИО", "data_type": "string"},
+            {"path": "receiver.fullName", "label": "Receiver — ФИО", "data_type": "string"},
+            {"path": "accountOwner.fullName", "label": "Owner — ФИО", "data_type": "string"},
+        ]
+
+    class FakeLlm:
+        async def analyze_template(
+            self,
+            *,
+            content: str,
+            fmt: str,
+            leaves: list[dict[str, str]],
+            catalog: list[dict[str, str]],
+        ) -> dict[str, Any]:
+            return {
+                "meta": {"summary": "llm"},
+                "placeholders": [
+                    {
+                        "location": "/accountOwner/client/fullName",
+                        "suggestion": "accountOwner",
+                    }
+                ],
+            }
+
+    svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
+
+    result = await svc.analyze_content(
+        fmt="json",
+        original_content='{"accountOwner": {"client": {"fullName": "Смирнов"}}}',
+        llm_service=FakeLlm(),
+    )
+
+    assert result["placeholders"][0]["suggestion"] == "accountOwner.fullName"
+    assert (
+        json.loads(result["content"])["accountOwner"]["client"]["fullName"]
+        == "{{accountOwner.fullName}}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_analyze_content_falls_back_for_account_owner_nested_llm_suggestion() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+
+    async def fake_catalog() -> list[dict[str, str]]:
+        return [
+            {"path": "sender.fullName", "label": "Sender — ФИО", "data_type": "string"},
+            {"path": "receiver.fullName", "label": "Receiver — ФИО", "data_type": "string"},
+            {"path": "accountOwner.fullName", "label": "Owner — ФИО", "data_type": "string"},
+        ]
+
+    class FakeLlm:
+        async def analyze_template(
+            self,
+            *,
+            content: str,
+            fmt: str,
+            leaves: list[dict[str, str]],
+            catalog: list[dict[str, str]],
+        ) -> dict[str, Any]:
+            return {
+                "meta": {"summary": "llm"},
+                "placeholders": [
+                    {
+                        "location": "/accountOwner/client/fullName",
+                        "suggestion": "accountOwner.client.fullName",
+                    }
+                ],
+            }
+
+    svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
+
+    result = await svc.analyze_content(
+        fmt="json",
+        original_content='{"accountOwner": {"client": {"fullName": "Смирнов"}}}',
+        llm_service=FakeLlm(),
+    )
+
+    assert result["placeholders"][0]["suggestion"] == "accountOwner.fullName"
+    assert (
+        json.loads(result["content"])["accountOwner"]["client"]["fullName"]
+        == "{{accountOwner.fullName}}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_analyze_content_falls_back_for_account_owner_synonym_llm_suggestion() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+
+    async def fake_catalog() -> list[dict[str, str]]:
+        return [
+            {"path": "sender.fullName", "label": "Sender — ФИО", "data_type": "string"},
+            {"path": "receiver.fullName", "label": "Receiver — ФИО", "data_type": "string"},
+            {"path": "accountOwner.fullName", "label": "Owner — ФИО", "data_type": "string"},
+        ]
+
+    class FakeLlm:
+        async def analyze_template(
+            self,
+            *,
+            content: str,
+            fmt: str,
+            leaves: list[dict[str, str]],
+            catalog: list[dict[str, str]],
+        ) -> dict[str, Any]:
+            return {
+                "meta": {"summary": "llm"},
+                "placeholders": [
+                    {
+                        "location": "/accountOwner/client/fullName",
+                        "suggestion": "owner",
+                    }
+                ],
+            }
+
+    svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
+
+    result = await svc.analyze_content(
+        fmt="json",
+        original_content='{"accountOwner": {"client": {"fullName": "Смирнов"}}}',
+        llm_service=FakeLlm(),
+    )
+
+    assert result["placeholders"][0]["suggestion"] == "accountOwner.fullName"
+    assert (
+        json.loads(result["content"])["accountOwner"]["client"]["fullName"]
+        == "{{accountOwner.fullName}}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_build_field_catalog_includes_account_owner_paths() -> None:
     svc = TemplateService(cast(Any, SimpleNamespace()))
     definitions = {

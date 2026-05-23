@@ -285,14 +285,18 @@ class TemplateService:
         catalog_by_lower: dict[str, str],
     ) -> str | None:
         path_role = resolve_role_from_path(leaf.location)
+        sources = (llm_suggestion, heuristic_suggestion)
         if path_role is not None:
-            source = llm_suggestion or heuristic_suggestion
-            if source is None or "." not in source:
-                return None
-            attr = source.split(".", 1)[1]
-            return catalog_by_lower.get(f"{path_role}.{attr}".lower())
+            for source in sources:
+                if not source or "." not in source:
+                    continue
+                attr = source.split(".", 1)[1]
+                canonical = catalog_by_lower.get(f"{path_role}.{attr}".lower())
+                if canonical:
+                    return canonical
+            return None
 
-        for suggestion in (llm_suggestion, heuristic_suggestion):
+        for suggestion in sources:
             if suggestion:
                 canonical = catalog_by_lower.get(suggestion.lower())
                 if canonical:
