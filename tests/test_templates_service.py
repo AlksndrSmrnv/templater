@@ -582,6 +582,118 @@ async def test_analyze_content_maps_deep_nested_account_owner_field_by_role_not_
 
 
 @pytest.mark.asyncio
+async def test_analyze_content_uses_nested_account_owner_llm_leaf_attribute() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+
+    async def fake_catalog() -> list[dict[str, str]]:
+        return [
+            {"path": "sender.firstName", "label": "Sender — Имя", "data_type": "string"},
+            {"path": "accountOwner.firstName", "label": "Owner — Имя", "data_type": "string"},
+        ]
+
+    class FakeLlm:
+        async def analyze_template(
+            self,
+            *,
+            content: str,
+            fmt: str,
+            leaves: list[dict[str, str]],
+            catalog: list[dict[str, str]],
+        ) -> dict[str, Any]:
+            return {
+                "meta": {"summary": "llm"},
+                "placeholders": [
+                    {
+                        "location": "/root/accountOwner/client/arbitraryWrapper/given",
+                        "suggestion": (
+                            "accountOwner.client.anyIntermediatePath.personName.firstName"
+                        ),
+                    }
+                ],
+            }
+
+    svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
+
+    result = await svc.analyze_content(
+        fmt="json",
+        original_content=(
+            '{"root": {"accountOwner": {"client": {"arbitraryWrapper": {"given": "Иван"}}}}}'
+        ),
+        llm_service=FakeLlm(),
+    )
+
+    parsed = json.loads(result["content"])
+
+    assert result["placeholders"][0]["suggestion"] == "accountOwner.firstName"
+    assert (
+        parsed["root"]["accountOwner"]["client"]["arbitraryWrapper"]["given"]
+        == "{{accountOwner.firstName}}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_analyze_content_maps_account_owner_field_without_llm_by_path_role() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+
+    async def fake_catalog() -> list[dict[str, str]]:
+        return [
+            {"path": "sender.firstName", "label": "Sender — Имя", "data_type": "string"},
+            {"path": "accountOwner.firstName", "label": "Owner — Имя", "data_type": "string"},
+        ]
+
+    svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
+
+    result = await svc.analyze_content(
+        fmt="json",
+        original_content=(
+            '{"outer": {"accountOwner": {"client": {"unknownEnvelope": {"firstName": "Иван"}}}}}'
+        ),
+        llm_service=None,
+    )
+
+    parsed = json.loads(result["content"])
+
+    assert result["placeholders"][0]["suggestion"] == "accountOwner.firstName"
+    assert (
+        parsed["outer"]["accountOwner"]["client"]["unknownEnvelope"]["firstName"]
+        == "{{accountOwner.firstName}}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_analyze_content_preserves_account_owner_account_scope_from_path() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+
+    async def fake_catalog() -> list[dict[str, str]]:
+        return [
+            {"path": "accountOwner.number", "label": "Owner — Номер клиента", "data_type": "string"},
+            {
+                "path": "accountOwner.account.number",
+                "label": "Owner account — Номер счёта",
+                "data_type": "string",
+            },
+        ]
+
+    svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
+
+    result = await svc.analyze_content(
+        fmt="json",
+        original_content=(
+            '{"root": {"accountOwner": {"wrapper": {"account": {"details": {"number": "40817"}}}}}}'
+        ),
+        llm_service=None,
+    )
+
+    parsed = json.loads(result["content"])
+
+    assert result["placeholders"][0]["suggestion"] == "accountOwner.account.number"
+    assert (
+        parsed["root"]["accountOwner"]["wrapper"]["account"]["details"]["number"]
+        == "{{accountOwner.account.number}}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_build_field_catalog_includes_account_owner_paths() -> None:
     svc = TemplateService(cast(Any, SimpleNamespace()))
     definitions = {

@@ -149,7 +149,9 @@ def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
 
 
 @pytest.mark.asyncio
-async def test_page_fill_prefers_persisted_account_owner_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_page_fill_detects_account_owner_from_placeholders_despite_false_meta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     template_id = uuid.uuid4()
     template = SimpleNamespace(
         id=template_id,
@@ -157,6 +159,8 @@ async def test_page_fill_prefers_persisted_account_owner_flag(monkeypatch: pytes
         format="json",
         llm_meta={"has_account_owner": False},
         placeholders=[{"suggestion": "accountOwner.ownerName", "value": "{{accountOwner.ownerName}}"}],
+        content='{"ownerName": "{{accountOwner.ownerName}}"}',
+        original_content='{"ownerName": "Иванов"}',
     )
 
     class FakeTemplateService:
@@ -184,4 +188,47 @@ async def test_page_fill_prefers_persisted_account_owner_flag(monkeypatch: pytes
     )
 
     assert response.name == "templates_reg/fill.html"
-    assert response.context["has_account_owner"] is False
+    assert response.context["has_account_owner"] is True
+
+
+@pytest.mark.asyncio
+async def test_page_fill_detects_account_owner_from_template_structure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    template_id = uuid.uuid4()
+    template = SimpleNamespace(
+        id=template_id,
+        name="Structure flag",
+        format="json",
+        llm_meta={"has_account_owner": False},
+        placeholders=[],
+        content='{"root": {"accountOwner": {"client": {"fullName": "Иванов"}}}}',
+        original_content='{"root": {"accountOwner": {"client": {"fullName": "Иванов"}}}}',
+    )
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            assert requested_id == template_id
+            return template
+
+    class FakeTemplates:
+        def TemplateResponse(self, request: object, name: str, context: dict[str, object]) -> Any:
+            return SimpleNamespace(name=name, context=context)
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+
+    response = cast(
+        Any,
+        await templates_reg.page_fill(
+            template_id,
+            request=cast(Any, SimpleNamespace()),
+            templates=cast(Any, FakeTemplates()),
+            session=cast(Any, SimpleNamespace()),
+        ),
+    )
+
+    assert response.name == "templates_reg/fill.html"
+    assert response.context["has_account_owner"] is True

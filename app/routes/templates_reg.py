@@ -27,6 +27,7 @@ from app.services.templates import (
     TemplateService,
     normalize_placeholders,
     placeholders_have_account_owner,
+    template_has_account_owner,
 )
 from app.utils.errors import LLMUnavailable, ValidationFailed
 
@@ -91,14 +92,14 @@ async def page_fill(
     session: AsyncSession = SessionDep,
 ) -> Response:
     template = await TemplateService(session).get(template_id)
-    meta = template.llm_meta or {}
-    has_account_owner = meta.get("has_account_owner")
-    if has_account_owner is None:
-        has_account_owner = placeholders_have_account_owner(template.placeholders or [])
     return templates.TemplateResponse(
         request,
         "templates_reg/fill.html",
-        {"active": "templates", "template": template, "has_account_owner": has_account_owner},
+        {
+            "active": "templates",
+            "template": template,
+            "has_account_owner": template_has_account_owner(template),
+        },
     )
 
 
