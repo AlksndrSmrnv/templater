@@ -11,6 +11,8 @@ anyio==4.13.0
     #   httpx
     #   starlette
     #   watchfiles
+ast-serialize==0.5.0
+    # via mypy
 asyncpg==0.31.0
     # via template-maker
 certifi==2026.5.20
@@ -58,7 +60,7 @@ markupsafe==3.0.3
     # via
     #   jinja2
     #   mako
-mypy==1.20.2
+mypy==2.1.0
     # via template-maker
 mypy-extensions==1.1.0
     # via mypy
