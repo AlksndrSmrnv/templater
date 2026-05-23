@@ -13,6 +13,12 @@ def test_resolve_role_from_path_detects_account_owner_synonyms() -> None:
     assert resolve_role_from_path("/accountOwner/client/personName/firstname") == "accountOwner"
     assert resolve_role_from_path("/client/holder/personName/firstName") == "accountOwner"
     assert resolve_role_from_path("/счет/владелец/имя") == "accountOwner"
+    assert (
+        resolve_role_from_path(
+            "/тут_путь_до_accountOwner/accountOwner/client/clientInfo/personInfo/personName/firstName"
+        )
+        == "accountOwner"
+    )
 
 
 def test_resolve_role_from_path_detects_sender_synonyms_and_camel_case() -> None:
