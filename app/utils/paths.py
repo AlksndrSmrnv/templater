@@ -1,3 +1,10 @@
+"""Shared helpers for template path parsing and tokenization.
+
+The app sees three closely related path forms: JSON Pointer / XML-ish leaf paths
+from walkers, dotted catalog suggestions from the LLM, and XML attribute/index
+markers. Use ``pointer_path_segments`` when dots are literal key characters.
+"""
+
 from __future__ import annotations
 
 import re
@@ -13,6 +20,16 @@ def path_segments(path: str) -> list[str]:
     if not path:
         return []
     raw_segments = re.split(r"[/.]+", path.strip("/."))
+    return _clean_segments(raw_segments)
+
+
+def pointer_path_segments(path: str) -> list[str]:
+    if not path:
+        return []
+    return _clean_segments(path.strip("/").split("/"))
+
+
+def _clean_segments(raw_segments: list[str]) -> list[str]:
     out: list[str] = []
     for raw in raw_segments:
         segment = clean_path_segment(raw)

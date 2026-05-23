@@ -17,7 +17,7 @@ from app.services.dynamic_fields import resolve_dynamic_token
 from app.services.role_resolver import resolve_role_from_path
 from app.utils import walker
 from app.utils.errors import NotFoundError, ValidationFailed
-from app.utils.paths import clean_path_segment, path_segments
+from app.utils.paths import path_segments
 
 log = logging.getLogger(__name__)
 
@@ -447,10 +447,6 @@ class TemplateService:
     @staticmethod
     def _path_segments(path: str) -> list[str]:
         return path_segments(TemplateService._clean_suggestion(path))
-
-    @staticmethod
-    def _clean_path_segment(segment: str) -> str | None:
-        return clean_path_segment(segment)
 
     @staticmethod
     def _clean_suggestion(suggestion: str) -> str:

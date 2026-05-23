@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.utils.paths import path_segments, segment_tokens
+from app.utils.paths import pointer_path_segments, segment_tokens
 
 ROLE_SYNONYMS: dict[str, tuple[str, ...]] = {
     "sender": (
@@ -48,7 +48,7 @@ _ROLE_PRIORITY = ("accountOwner", "receiver", "sender")
 def resolve_role_from_path(location: str) -> str | None:
     """Resolve participant role from a JSON-pointer / XML leaf path."""
 
-    for segment in reversed(path_segments(location)):
+    for segment in reversed(pointer_path_segments(location)):
         tokens = segment_tokens(segment)
         if not tokens:
             continue
