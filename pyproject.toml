@@ -3,6 +3,28 @@ name = "template-maker"
 version = "0.1.0"
 description = "Web app for preparing test data and JSON/XML message templates"
 requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.115.0",
+    "uvicorn[standard]==0.30.6",
+    "jinja2==3.1.4",
+    "python-multipart==0.0.9",
+    "pydantic==2.9.2",
+    "pydantic-settings==2.5.2",
+    "SQLAlchemy[asyncio]==2.0.35",
+    "asyncpg==0.30.0",
+    "alembic==1.13.3",
+    "httpx==0.28.1",
+    "gigachat==0.2.1",
+    "python-dotenv==1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.3",
+    "pytest-asyncio==0.24.0",
+    "ruff==0.6.9",
+    "mypy==1.20.2",
+]
 
 [tool.ruff]
 line-length = 110
