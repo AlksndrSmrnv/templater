@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     app_debug: bool = False
+    log_level: str = "INFO"
+    log_json: bool = True
 
     database_url: str = "postgresql+asyncpg://template_maker:template_maker@localhost:5432/template_maker"
     # Dedicated PostgreSQL schema the app lives in. Set as the connection

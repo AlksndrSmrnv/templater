@@ -6,7 +6,7 @@
 # PostgreSQL и GigaChat — адреса и креды берутся из .env.
 #
 # Скрипт одной командой:
-#   1. создаёт виртуальное окружение и ставит зависимости (один раз);
+#   1. синхронизирует локальное окружение через uv;
 #   2. применяет миграции Alembic к указанной в .env базе;
 #   3. засеивает базовые справочники (идемпотентно);
 #   4. запускает uvicorn с авто-перезагрузкой.
@@ -17,21 +17,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-PYTHON="${PYTHON:-python3.11}"
-
-# 1. Виртуальное окружение и зависимости (создаётся один раз).
-if [ ! -d .venv ]; then
-    echo ">> Создаю виртуальное окружение ($PYTHON) и ставлю зависимости..."
-    if ! command -v "$PYTHON" >/dev/null 2>&1; then
-        echo "!! $PYTHON не найден. Установите Python 3.11+ или задайте PYTHON=<путь>." >&2
-        exit 1
-    fi
-    "$PYTHON" -m venv .venv
-    .venv/bin/pip install --quiet --upgrade pip
-    .venv/bin/pip install -r requirements.txt
+# 1. Локальное окружение и зависимости.
+if ! command -v uv >/dev/null 2>&1; then
+    echo "!! uv не найден. Установите uv: https://docs.astral.sh/uv/getting-started/installation/" >&2
+    exit 1
 fi
-# shellcheck disable=SC1091
-source .venv/bin/activate
+echo ">> Синхронизирую локальное окружение через uv..."
+uv sync --frozen --all-extras
 
 # 2. .env с РЕАЛЬНЫМИ настройками. Без него дальше идти нельзя — иначе
 #    приложение пойдёт на плейсхолдерную БД из шаблона.
@@ -51,12 +43,12 @@ fi
 # 3. Миграции Alembic в настоящую БД.
 echo ">> Применяю миграции Alembic..."
 echo "   (ошибка подключения здесь = PostgreSQL недоступен или неверный DATABASE_URL)"
-alembic upgrade head
+uv run alembic upgrade head
 
 # 4. Сидинг базовых справочников (идемпотентно).
 echo ">> Засеиваю базовые справочники..."
-python -m scripts.seed_reference_data
+uv run python -m scripts.seed_reference_data
 
 # 5. Запуск приложения.
 echo ">> Запускаю приложение на http://127.0.0.1:8000  (Ctrl+C для остановки)"
-exec uvicorn app.main:app --reload
+exec uv run uvicorn app.main:app --reload

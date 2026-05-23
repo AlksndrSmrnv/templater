@@ -8,15 +8,20 @@
         <a class="btn" href="/templates">Шаблоны</a>
     </div>
 </div>
-<form id="import-form" class="form">
+<form id="import-form"
+      class="form"
+      hx-post="/import-htmx"
+      hx-encoding="multipart/form-data"
+      hx-target="#result"
+      hx-swap="innerHTML">
     <div class="form-section">
         <label>Файл выгрузки (.json) <span class="required-mark">*</span>
-            <input type="file" id="file" accept=".json" required>
+            <input type="file" id="file" name="file" accept=".json" required>
         </label>
     </div>
     <div class="form-section">
         <label>Политика конфликтов <span class="muted">(значение по умолчанию берётся из «Настроек»)</span></label>
-        <select id="policy">
+        <select id="policy" name="policy">
             <option value="skip" {% if default_policy == "skip" %}selected{% endif %}>Пропускать существующие</option>
             <option value="overwrite" {% if default_policy == "overwrite" %}selected{% endif %}>Перезаписывать</option>
             <option value="fail" {% if default_policy == "fail" %}selected{% endif %}>Падать при ошибке</option>
@@ -26,21 +31,5 @@
         <button class="btn primary" type="submit">Импортировать</button>
     </div>
 </form>
-<pre id="result" class="template-code" hidden></pre>
-<script>
-document.getElementById("import-form").addEventListener("submit", async e => {
-    e.preventDefault();
-    const file = document.getElementById("file").files[0];
-    if (!file) return;
-    const policy = document.getElementById("policy").value;
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("policy", policy);
-    const res = await fetch("/api/import", { method: "POST", body: fd });
-    const data = await res.json();
-    const out = document.getElementById("result");
-    out.hidden = false;
-    out.textContent = JSON.stringify(data, null, 2);
-});
-</script>
+<div id="result"></div>
 {% endblock %}

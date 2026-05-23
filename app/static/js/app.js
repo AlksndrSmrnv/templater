@@ -72,3 +72,8 @@ TM.entityLink = function (entityType, id, label) {
 };
 
 TM.confirm = function (msg) { return window.confirm(msg); };
+
+document.addEventListener("showToast", function (event) {
+    const detail = event.detail || {};
+    TM.toast(detail.message || detail.value || "Готово", detail.type || "success");
+});

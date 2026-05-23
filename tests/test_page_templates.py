@@ -64,6 +64,8 @@ def test_reference_form_serializes_page_context_as_json_literals() -> None:
 
     assert page_line == 'window.PAGE = { entityType: "currency", valueId: "5f9a67c4-1111-2222-3333-444444444444" };'
     assert "&#34;" not in page_line
+    assert 'hx-put="/references-htmx/currency/5f9a67c4-1111-2222-3333-444444444444"' in html
+    assert "reference-form.js" not in html
 
 
 def test_list_pages_serialize_string_context_as_json_literals() -> None:
@@ -91,6 +93,24 @@ def test_list_pages_serialize_string_context_as_json_literals() -> None:
     assert reference_page_line == 'window.PAGE = { entityType: "currency", isReference: true };'
     assert "&#34;" not in entity_page_line
     assert "&#34;" not in reference_page_line
+    assert 'hx-get="/references-htmx/currency/table"' in reference_html
+    assert "reference-list.js" not in reference_html
+
+
+def test_import_page_uses_htmx_upload_form() -> None:
+    html = render_template(
+        "import.html",
+        {
+            "active": "data",
+            "default_policy": "skip",
+        },
+    )
+
+    assert 'hx-post="/import-htmx"' in html
+    assert 'hx-encoding="multipart/form-data"' in html
+    assert "htmx.org@2.0.4" in html
+    assert "alpinejs@3.14.1" in html
+    assert "/api/import" not in html
 
 
 def test_entity_list_has_table_meta_and_detail_drawer() -> None:

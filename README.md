@@ -57,6 +57,12 @@ docker-compose up --build
 PostgreSQL и GigaChat — адреса и креды берутся из `.env`. Локальный Postgres
 поднимать не нужно.
 
+Для локального окружения используется `uv`; Docker и Jenkins по-прежнему читают
+сгенерированный `requirements.txt`.
+
+Логи по умолчанию пишутся в JSON (`LOG_JSON=true`). Для читаемого локального
+вывода можно поставить `LOG_JSON=false`; уровень задаётся через `LOG_LEVEL`.
+
 **1. Заполнить `.env` реальными значениями:**
 
 ```bash
@@ -88,12 +94,10 @@ Alembic, засеивает базовые справочники и подни�
 **Вручную** (то же самое по шагам):
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-alembic upgrade head
-python -m scripts.seed_reference_data
-uvicorn app.main:app --reload
+uv sync --frozen --all-extras
+uv run alembic upgrade head
+uv run python -m scripts.seed_reference_data
+uv run uvicorn app.main:app --reload
 ```
 
 ## Подключение GigaChat
@@ -197,7 +201,7 @@ docker/                    # Dockerfile + entrypoint
 ## Тесты
 
 ```bash
-pytest -q
+uv run pytest -q
 ```
 
 Тестируется бизнес-логика без зависимости от Postgres: walker JSON/XML, рендер
