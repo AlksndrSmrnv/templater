@@ -1,0 +1,11 @@
+{% set rows = items | default([]) %}
+{% set fields = schema | default([]) %}
+{% if rows %}
+    {% for row in rows %}
+        {% include "partials/reference_row.html" %}
+    {% endfor %}
+{% else %}
+    <tr>
+        <td colspan="{{ fields | length + 3 }}" class="muted" style="text-align:center; padding:24px;">Нет данных</td>
+    </tr>
+{% endif %}

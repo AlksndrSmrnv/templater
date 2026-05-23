@@ -1,0 +1,10 @@
+{% if message %}
+    <strong>{{ message }}</strong>
+{% endif %}
+{% if errors %}
+    <ul>
+        {% for error in errors %}
+            <li>{{ error }}</li>
+        {% endfor %}
+    </ul>
+{% endif %}

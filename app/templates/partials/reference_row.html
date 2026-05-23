@@ -1,0 +1,16 @@
+<tr>
+    <td>{{ row.code }}</td>
+    <td>{{ row.name }}</td>
+    {% for field in schema %}
+        <td>{{ (row.attributes or {}).get(field.name, "") }}</td>
+    {% endfor %}
+    <td class="row-actions">
+        <a class="btn" href="/references/{{ entity_type }}/{{ row.id }}/edit">Редактировать</a>
+        <button class="btn danger"
+                type="button"
+                hx-delete="/references-htmx/{{ entity_type }}/{{ row.id }}"
+                hx-target="closest tr"
+                hx-swap="outerHTML swap:300ms"
+                hx-confirm="Удалить запись?">Удалить</button>
+    </td>
+</tr>

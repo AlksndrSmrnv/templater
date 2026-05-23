@@ -1,0 +1,14 @@
+{% if ok %}
+    <pre class="template-code">{{ summary | tojson(indent=2) }}</pre>
+{% else %}
+    <div class="errors">
+        <strong>{{ message }}</strong>
+        {% if details %}
+            <ul>
+                {% for detail in details %}
+                    <li>{{ detail }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    </div>
+{% endif %}

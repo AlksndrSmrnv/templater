@@ -13,7 +13,7 @@ from app.repositories.settings import SettingsRepository
 from app.routes.deps import SessionDep, TemplatesDep
 from app.schemas.exchange import ExportRequest
 from app.services.export_import import ExportImportService
-from app.utils.errors import ValidationFailed
+from app.utils.errors import DomainError, ValidationFailed
 
 router = APIRouter()
 
@@ -69,3 +69,41 @@ async def api_import(
 
     summary = await ExportImportService(session).import_package(package, policy=policy)
     return JSONResponse(content=summary.model_dump())
+
+
+@router.post("/import-htmx")
+async def htmx_import(
+    request: Request,
+    file: UploadFile = File(...),
+    policy: str | None = Form(None),
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    try:
+        raw = await file.read()
+        package: Any = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/import_result.html",
+            {"ok": False, "message": f"Не удалось прочитать файл: {exc}", "details": []},
+            status_code=422,
+        )
+    try:
+        if policy is None or policy not in VALID_POLICIES:
+            saved = await SettingsRepository(session).get("import_policy", "skip")
+            policy = saved if saved in VALID_POLICIES else "skip"
+        summary = await ExportImportService(session).import_package(package, policy=policy)
+    except DomainError as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/import_result.html",
+            {"ok": False, "message": exc.message, "details": exc.details},
+            status_code=exc.status_code,
+        )
+    return templates.TemplateResponse(
+        request,
+        "partials/import_result.html",
+        {"ok": True, "summary": summary.model_dump()},
+        headers={"HX-Trigger": json.dumps({"showToast": {"message": "Импорт завершён", "type": "success"}})},
+    )

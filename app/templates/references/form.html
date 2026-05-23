@@ -7,31 +7,75 @@
         <a class="btn" href="/references/{{ entity_type }}">Назад</a>
     </div>
 </div>
-<form id="ref-form" class="form" autocomplete="off">
-    <div id="form-errors" class="errors" hidden></div>
+{% set attrs = item.attributes if item else {} %}
+<form id="ref-form"
+      class="form"
+      autocomplete="off"
+      {% if value_id %}
+      hx-put="/references-htmx/{{ entity_type }}/{{ value_id }}"
+      {% else %}
+      hx-post="/references-htmx/{{ entity_type }}"
+      {% endif %}
+      hx-target="#form-errors"
+      hx-swap="innerHTML">
+    <div id="form-errors" class="errors"></div>
     <div class="form-section">
         <label>Код *
-            <input type="text" id="code" required>
+            <input type="text" id="code" name="code" value="{{ item.code if item else '' }}" required>
         </label>
     </div>
     <div class="form-section">
         <label>Название *
-            <input type="text" id="name" required>
+            <input type="text" id="name" name="name" value="{{ item.name if item else '' }}" required>
         </label>
     </div>
-    <div id="form-fields"></div>
+    <div id="form-fields">
+        {% for field in schema | default([]) %}
+            {% set field_id = "attr-" ~ field.name %}
+            {% set field_name = "attr_" ~ field.name %}
+            {% set value = attrs.get(field.name) %}
+            <div class="form-section">
+                <label for="{{ field_id }}">{{ field.label }}{% if field.is_required %}<span class="required-mark">*</span>{% endif %}</label>
+                {% if field.data_type == "text" %}
+                    <textarea id="{{ field_id }}" name="{{ field_name }}" rows="3">{{ value or "" }}</textarea>
+                {% elif field.data_type == "int" %}
+                    <input type="number" step="1" id="{{ field_id }}" name="{{ field_name }}" value="{{ value or '' }}">
+                {% elif field.data_type == "number" %}
+                    <input type="number" step="any" id="{{ field_id }}" name="{{ field_name }}" value="{{ value or '' }}">
+                {% elif field.data_type == "bool" %}
+                    <input type="checkbox" id="{{ field_id }}" name="{{ field_name }}" value="true" {% if value %}checked{% endif %}>
+                {% elif field.data_type == "date" %}
+                    <input type="date" id="{{ field_id }}" name="{{ field_name }}" value="{{ value or '' }}">
+                {% elif field.data_type == "enum" %}
+                    <select id="{{ field_id }}" name="{{ field_name }}">
+                        <option value="">—</option>
+                        {% for option in (field.options or {}).get("values", []) %}
+                            <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="text" id="{{ field_id }}" name="{{ field_name }}" value="{{ value or '' }}">
+                {% endif %}
+            </div>
+        {% endfor %}
+    </div>
     <div class="form-section">
         <label>Описание
-            <textarea id="description" rows="3"></textarea>
+            <textarea id="description" name="description" rows="3">{{ item.description if item else "" }}</textarea>
         </label>
     </div>
     <div class="form-actions">
         <button class="btn primary" type="submit">Сохранить</button>
-        {% if value_id %}<button class="btn danger" type="button" id="btn-delete">Удалить</button>{% endif %}
+        {% if value_id %}
+            <button class="btn danger"
+                    type="button"
+                    hx-delete="/references-htmx/{{ entity_type }}/{{ value_id }}?redirect=true"
+                    hx-confirm="Удалить запись?"
+                    hx-swap="none">Удалить</button>
+        {% endif %}
     </div>
 </form>
 <script>
     window.PAGE = { entityType: {{ entity_type | tojson }}, valueId: {{ value_id | tojson }} };
 </script>
-<script src="/static/js/reference-form.js"></script>
 {% endblock %}

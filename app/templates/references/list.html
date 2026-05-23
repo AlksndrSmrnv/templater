@@ -9,18 +9,51 @@
     </div>
 </div>
 <div class="filters">
-    <label>Поиск:
-        <input id="search" type="search" placeholder="по коду / названию">
-    </label>
+    <form id="reference-controls"
+          class="filters-inline"
+          hx-get="/references-htmx/{{ entity_type }}/table"
+          hx-target="#reference-table-body"
+          hx-swap="innerHTML"
+          hx-trigger="input changed delay:200ms, change">
+        <label>Поиск:
+            <input id="search" name="search" type="search" value="{{ search | default('') }}" placeholder="по коду / названию">
+        </label>
+        <label>Сортировка:
+            <select name="sort">
+                <option value="code" {% if sort == "code" %}selected{% endif %}>Код</option>
+                <option value="name" {% if sort == "name" %}selected{% endif %}>Название</option>
+                <option value="description" {% if sort == "description" %}selected{% endif %}>Описание</option>
+                {% for field in schema | default([]) %}
+                    <option value="{{ field.name }}" {% if sort == field.name %}selected{% endif %}>{{ field.label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>Порядок:
+            <select name="direction">
+                <option value="asc" {% if direction != "desc" %}selected{% endif %}>А → Я</option>
+                <option value="desc" {% if direction == "desc" %}selected{% endif %}>Я → А</option>
+            </select>
+        </label>
+    </form>
 </div>
 <div class="table-wrap">
-    <table class="data-table" id="entities-table">
-        <thead><tr id="thead-row"><th></th></tr></thead>
-        <tbody id="entities-body"><tr><td colspan="100" class="muted">Загрузка...</td></tr></tbody>
+    <table class="data-table" id="references-table">
+        <thead>
+            <tr>
+                <th>Код</th>
+                <th>Название</th>
+                {% for field in schema | default([]) %}
+                    <th>{{ field.label }}</th>
+                {% endfor %}
+                <th class="no-sort"></th>
+            </tr>
+        </thead>
+        <tbody id="reference-table-body">
+            {% include "partials/reference_table.html" %}
+        </tbody>
     </table>
 </div>
 <script>
     window.PAGE = { entityType: {{ entity_type | tojson }}, isReference: true };
 </script>
-<script src="/static/js/reference-list.js"></script>
 {% endblock %}
