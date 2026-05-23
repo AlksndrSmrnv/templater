@@ -41,6 +41,19 @@ def test_fill_content_replaces_tokens_in_json() -> None:
     assert "/note" not in changed
 
 
+def test_fill_content_replaces_account_owner_client_tokens_in_json() -> None:
+    filler = PlaceholderFiller(session=_session())
+    ctx = {"accountOwner": {"firstName": "Иван"}}
+    content = '{"ownerFirstName": "{{accountOwner.firstName}}"}'
+
+    rendered, unresolved, changed = filler.fill_content(content, "json", ctx)
+
+    parsed = json.loads(rendered)
+    assert parsed["ownerFirstName"] == "Иван"
+    assert unresolved == []
+    assert changed == ["/ownerFirstName"]
+
+
 def test_fill_content_escapes_special_chars_in_json() -> None:
     """Values with quotes / backslashes must not break the JSON envelope."""
 

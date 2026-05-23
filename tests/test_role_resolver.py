@@ -21,6 +21,10 @@ def test_resolve_role_from_path_detects_account_owner_synonyms() -> None:
     )
 
 
+def test_resolve_role_from_path_keeps_dots_inside_json_pointer_segments() -> None:
+    assert resolve_role_from_path("/owner.sender/firstName") == "accountOwner"
+
+
 def test_resolve_role_from_path_detects_sender_synonyms_and_camel_case() -> None:
     assert resolve_role_from_path("/sender/personName/firstname") == "sender"
     assert resolve_role_from_path("/payment/PayerInfo/firstName") == "sender"

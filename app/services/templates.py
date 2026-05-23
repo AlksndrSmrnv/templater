@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging
 import re
 import uuid
-from typing import Any
+from collections import Counter, defaultdict
+from typing import Any, Protocol
 
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,9 +17,31 @@ from app.services.dynamic_fields import resolve_dynamic_token
 from app.services.role_resolver import resolve_role_from_path
 from app.utils import walker
 from app.utils.errors import NotFoundError, ValidationFailed
+from app.utils.paths import path_segments
+
+log = logging.getLogger(__name__)
 
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}")
 ACCOUNT_OWNER_TOKEN_RE = re.compile(r"\{\{\s*accountOwner\.")
+FIELD_CATALOG_ENTITIES = ("client", "account", "card")
+ENTITY_SCOPES = frozenset(entity for entity in FIELD_CATALOG_ENTITIES if entity != "client")
+
+
+class TemplateAccountOwnerSource(Protocol):
+    @property
+    def format(self) -> str: ...
+
+    @property
+    def content(self) -> str: ...
+
+    @property
+    def original_content(self) -> str: ...
+
+    @property
+    def llm_meta(self) -> dict[str, Any] | None: ...
+
+    @property
+    def placeholders(self) -> list[dict[str, Any]] | None: ...
 
 
 def placeholders_have_account_owner(placeholders: list[dict[str, Any]]) -> bool:
@@ -32,6 +56,35 @@ def placeholders_have_account_owner(placeholders: list[dict[str, Any]]) -> bool:
             value.startswith("accountOwner.") or ACCOUNT_OWNER_TOKEN_RE.search(value)
         ):
             return True
+    return False
+
+
+def content_has_account_owner(fmt: str, content: str | None) -> bool:
+    if not content:
+        return False
+    try:
+        if fmt == "json":
+            leaves = walker.walk_json(content)
+        elif fmt == "xml":
+            leaves = walker.walk_xml(content)
+        else:
+            return False
+    except Exception:
+        log.debug("Unable to inspect template content for accountOwner role", exc_info=True)
+        return False
+    return any(resolve_role_from_path(leaf.location) == "accountOwner" for leaf in leaves)
+
+
+def template_has_account_owner(template: TemplateAccountOwnerSource) -> bool:
+    if placeholders_have_account_owner(template.placeholders or []):
+        return True
+    meta = template.llm_meta or {}
+    if meta.get("has_account_owner") is True:
+        return True
+    if content_has_account_owner(template.format, template.content):
+        return True
+    if template.original_content != template.content:
+        return content_has_account_owner(template.format, template.original_content)
     return False
 
 
@@ -154,7 +207,8 @@ class TemplateService:
 
         result: list[dict[str, str]] = []
         for role in ("sender", "receiver", "accountOwner"):
-            for entity, prefix in (("client", role), ("account", f"{role}.account"), ("card", f"{role}.card")):
+            for entity in FIELD_CATALOG_ENTITIES:
+                prefix = role if entity == "client" else f"{role}.{entity}"
                 defs = await self.schema.list_schema(entity, include_deprecated=False)
                 for d in defs:
                     result.append(
@@ -211,7 +265,7 @@ class TemplateService:
                 leaves=[{"location": leaf.location, "value": leaf.value} for leaf in leaves],
                 catalog=catalog,
             )
-            llm_mappings = {item["location"]: item for item in result.get("placeholders", [])}
+            llm_mappings = self._llm_mappings_by_leaf(leaves, result.get("placeholders", []))
             llm_meta = result.get("meta") or {}
         else:
             llm_mappings = {}
@@ -243,6 +297,7 @@ class TemplateService:
                 heuristic_suggestion=heuristic_suggestion
                 if isinstance(heuristic_suggestion, str)
                 else None,
+                catalog=catalog,
                 catalog_by_lower=catalog_by_lower,
             )
             mode = "mapped" if suggestion else "literal"
@@ -282,25 +337,147 @@ class TemplateService:
         leaf: walker.Leaf,
         llm_suggestion: str | None,
         heuristic_suggestion: str | None,
+        catalog: list[dict[str, str]],
         catalog_by_lower: dict[str, str],
     ) -> str | None:
         path_role = resolve_role_from_path(leaf.location)
         sources = (llm_suggestion, heuristic_suggestion)
         if path_role is not None:
+            leaf_scope = TemplateService._entity_scope_from_segments(
+                TemplateService._path_segments(leaf.location),
+                path_role,
+            )
             for source in sources:
-                if not source or "." not in source:
+                if not source:
                     continue
-                attr = source.split(".", 1)[1]
-                canonical = catalog_by_lower.get(f"{path_role}.{attr}".lower())
+                cleaned = TemplateService._clean_suggestion(source)
+                source_segments = TemplateService._path_segments(cleaned)
+                tail = TemplateService._last_path_segment(source_segments)
+                if tail is None:
+                    continue
+                source_scope = TemplateService._entity_scope_from_segments(source_segments, path_role)
+                canonical = TemplateService._find_catalog_match(
+                    catalog,
+                    role=path_role,
+                    attr=tail,
+                    entity_scope=source_scope or leaf_scope,
+                )
                 if canonical:
                     return canonical
             return None
 
         for suggestion in sources:
             if suggestion:
-                canonical = catalog_by_lower.get(suggestion.lower())
+                canonical = catalog_by_lower.get(
+                    TemplateService._clean_suggestion(suggestion).lower()
+                )
                 if canonical:
                     return canonical
+        return None
+
+    @staticmethod
+    def _llm_mappings_by_leaf(
+        leaves: list[walker.Leaf],
+        raw_placeholders: Any,
+    ) -> dict[str, dict[str, Any]]:
+        if not isinstance(raw_placeholders, list):
+            return {}
+
+        exact: dict[str, dict[str, Any]] = {}
+        by_key: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
+        for item in raw_placeholders:
+            if not isinstance(item, dict):
+                continue
+            location = item.get("location")
+            if not isinstance(location, str) or not location:
+                continue
+            exact[location] = item
+            key = TemplateService._path_key(location)
+            if key:
+                by_key[key].append(item)
+
+        leaf_keys = {leaf.location: TemplateService._path_key(leaf.location) for leaf in leaves}
+        leaf_key_counts = Counter(key for key in leaf_keys.values() if key)
+        out: dict[str, dict[str, Any]] = {}
+        for leaf in leaves:
+            if leaf.location in exact:
+                out[leaf.location] = exact[leaf.location]
+                continue
+            key = leaf_keys[leaf.location]
+            if leaf_key_counts[key] == 1 and len(by_key.get(key, [])) == 1:
+                out[leaf.location] = by_key[key][0]
+        return out
+
+    @staticmethod
+    def _find_catalog_match(
+        catalog: list[dict[str, str]],
+        *,
+        role: str,
+        attr: str,
+        entity_scope: str | None,
+    ) -> str | None:
+        attr_key = attr.lower()
+        role_key = role.lower()
+        scoped_candidates: list[str] = []
+        role_attr_candidates: list[str] = []
+        for entry in catalog:
+            path = entry["path"]
+            parts = path.split(".")
+            if not parts or parts[0].lower() != role_key or parts[-1].lower() != attr_key:
+                continue
+            catalog_scope = (
+                parts[1].lower()
+                if len(parts) > 2 and parts[1].lower() in ENTITY_SCOPES
+                else None
+            )
+            if entity_scope is not None:
+                if catalog_scope == entity_scope:
+                    scoped_candidates.append(path)
+            elif catalog_scope is None:
+                role_attr_candidates.append(path)
+
+        if entity_scope is not None:
+            return scoped_candidates[0] if len(scoped_candidates) == 1 else None
+        return role_attr_candidates[0] if len(role_attr_candidates) == 1 else None
+
+    @staticmethod
+    def _path_key(path: str) -> tuple[str, ...]:
+        return tuple(segment.lower() for segment in TemplateService._path_segments(path))
+
+    @staticmethod
+    def _path_segments(path: str) -> list[str]:
+        return path_segments(TemplateService._clean_suggestion(path))
+
+    @staticmethod
+    def _clean_suggestion(suggestion: str) -> str:
+        value = suggestion.strip()
+        match = PLACEHOLDER_RE.fullmatch(value)
+        if match:
+            return match.group(1).strip()
+        return value
+
+    @staticmethod
+    def _last_path_segment(segments: list[str]) -> str | None:
+        return segments[-1] if segments else None
+
+    @staticmethod
+    def _entity_scope_from_segments(segments: list[str], role: str | None) -> str | None:
+        """Return entity scope from normalized path segments."""
+
+        role_idx = TemplateService._last_role_segment_index(segments, role)
+        search_segments = segments[role_idx + 1 :] if role_idx is not None else segments
+        for segment in search_segments:
+            if segment.lower() in ENTITY_SCOPES:
+                return segment.lower()
+        return None
+
+    @staticmethod
+    def _last_role_segment_index(segments: list[str], role: str | None) -> int | None:
+        if role is None:
+            return None
+        for idx in range(len(segments) - 1, -1, -1):
+            if resolve_role_from_path(segments[idx]) == role:
+                return idx
         return None
 
     @staticmethod
