@@ -175,10 +175,9 @@ def test_import_page_uses_htmx_upload_form() -> None:
     assert "alpinejs@3.14.1" in html
     assert "htmx:load" in html
     assert "Alpine.initTree(e.detail.elt)" in html
-    assert "Alpine.destroyTree" in html
-    assert "htmx:afterSwap" in html
-    assert "Alpine.initTree(e.detail.target)" in html
-    assert "htmx:oobAfterSwap" in html
+    assert "Alpine.destroyTree" not in html
+    assert "htmx:afterSwap" not in html
+    assert "htmx:oobAfterSwap" not in html
     assert "/api/import" not in html
 
 
