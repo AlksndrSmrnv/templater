@@ -386,6 +386,16 @@ class TemplateService:
         if not isinstance(raw_placeholders, list):
             return {}
 
+        malformed = sum(
+            1
+            for item in raw_placeholders
+            if not isinstance(item, dict)
+            or not isinstance(item.get("location"), str)
+            or not item.get("location")
+        )
+        if malformed:
+            log.info("LLM returned %d malformed placeholder entries (dropped)", malformed)
+
         exact: dict[str, tuple[int, dict[str, Any]]] = {}
         by_key: dict[tuple[str, ...], list[tuple[int, dict[str, Any]]]] = defaultdict(list)
         placeholder_entries: list[

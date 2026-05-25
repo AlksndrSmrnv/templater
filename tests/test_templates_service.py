@@ -286,6 +286,26 @@ def test_llm_mappings_by_leaf_warns_once_about_unmatched_placeholders(
     assert "accountOwner.surname" in caplog.text
 
 
+def test_llm_mappings_by_leaf_logs_malformed_placeholder_entries(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    leaves = [walker.Leaf(location="/sender/firstName", value="Иван")]
+    raw_placeholders = [
+        "not-a-dict",
+        {},
+        {"location": ""},
+        {"location": None},
+        {"location": 123},
+    ]
+
+    with caplog.at_level(logging.INFO, logger="app.services.templates"):
+        result = TemplateService._llm_mappings_by_leaf(leaves, raw_placeholders)
+
+    assert result == {}
+    assert len(caplog.records) == 1
+    assert "LLM returned 5 malformed placeholder entries (dropped)" in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_analyze_content_sets_account_owner_meta_when_placeholder_detected() -> None:
     svc = TemplateService(cast(Any, SimpleNamespace()))
