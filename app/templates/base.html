@@ -66,6 +66,17 @@
      x-cloak
      :class="toastType"
      x-text="toastMessage"></div>
+<script>
+    document.body.addEventListener('htmx:beforeSwap', (e) => {
+        if (e.detail.target && window.Alpine) Alpine.destroyTree(e.detail.target);
+    });
+    document.body.addEventListener('htmx:afterSwap', (e) => {
+        if (e.detail.target && window.Alpine) Alpine.initTree(e.detail.target);
+    });
+    document.body.addEventListener('htmx:oobAfterSwap', (e) => {
+        if (e.detail.target && window.Alpine) Alpine.initTree(e.detail.target);
+    });
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

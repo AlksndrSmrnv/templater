@@ -13,7 +13,12 @@
                 hx-include="#template-editor-form"
                 hx-target="#template-code-wrap"
                 hx-swap="outerHTML"
+                hx-indicator="#regen-indicator"
+                hx-disabled-elt="this"
                 {% if not llm_active %}disabled title="LLM не настроена"{% endif %}>Перегенерировать с LLM</button>
+        <span id="regen-indicator" class="htmx-indicator muted">
+            <span class="spinner"></span> Генерация…
+        </span>
         <button class="btn danger"
                 type="button"
                 hx-delete="/templates-htmx/{{ template.id }}?redirect=true"

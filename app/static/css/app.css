@@ -496,6 +496,11 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 .llm-status.off { background: #fdecea; color: var(--danger); }
 
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; }
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator,
+.htmx-indicator.htmx-request { display: inline-flex; align-items: center; gap: 6px; }
+.btn.htmx-request,
+.btn[disabled] { opacity: 0.6; cursor: wait; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 720px) {

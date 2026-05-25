@@ -3,7 +3,7 @@
 <form class="form"
       style="border:none; box-shadow:none; padding:18px;"
       autocomplete="off"
-      x-data="{ dataType: {{ (attribute.data_type if is_edit else 'string') | tojson }} }"
+      x-data="{ dataType: {{ (attribute.data_type if is_edit else 'string') | tojson | forceescape }} }"
       {% if is_edit %}
       hx-put="/settings-htmx/attributes/{{ attribute.id }}"
       {% else %}

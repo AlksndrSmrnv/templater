@@ -14,7 +14,7 @@
       class="form"
       autocomplete="off"
       x-data="{
-          tags: {{ (item.tags if item else []) | tojson }},
+          tags: {{ (item.tags if item else []) | tojson | forceescape }},
           draft: '',
           addTag() {
               const value = this.draft.trim();

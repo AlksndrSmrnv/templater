@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -8,6 +9,9 @@ import pytest
 
 from app.routes import templates_reg
 from app.routes.deps import get_templates
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def render_template(name: str, context: dict[str, object]) -> str:
@@ -35,6 +39,7 @@ def install_page_fill_fakes(monkeypatch: pytest.MonkeyPatch, template: Any) -> N
 
 
 def test_entity_form_uses_htmx_update_without_static_js() -> None:
+    entity = SimpleNamespace(tags=['vip "quoted"'], attributes={})
     html = render_template(
         "entities/form.html",
         {
@@ -42,7 +47,7 @@ def test_entity_form_uses_htmx_update_without_static_js() -> None:
             "entity_type": "client",
             "title": "Клиент",
             "entity_id": "3db678b1-1111-2222-3333-444444444444",
-            "entity": None,
+            "entity": entity,
             "schema": [],
             "ref_options": {},
             "parent_options": [],
@@ -51,7 +56,7 @@ def test_entity_form_uses_htmx_update_without_static_js() -> None:
     )
 
     assert 'hx-put="/entities-htmx/client/3db678b1-1111-2222-3333-444444444444"' in html
-    assert 'x-data="' in html
+    assert "tags: [&#34;vip \\&#34;quoted\\&#34;&#34;]" in html
     assert "window.PAGE" not in html
     assert "/static/js/entity-form.js" not in html
 
@@ -129,12 +134,29 @@ def test_list_pages_serialize_string_context_as_json_literals() -> None:
 
     assert reference_page_line == 'window.PAGE = { entityType: "currency", isReference: true };'
     assert "&#34;" not in reference_page_line
+    assert "sort: &#34;created_at&#34;" in entity_html
+    assert "direction: &#34;desc&#34;" in entity_html
     assert 'hx-get="/entities-htmx/client/table"' in entity_html
     assert 'hx-trigger="input changed delay:200ms, refresh"' in entity_html
     assert '@input.debounce.200ms="dispatchFilters()"' in entity_html
     assert "window.PAGE" not in entity_html
     assert 'hx-get="/references-htmx/currency/table"' in reference_html
     assert "reference-list.js" not in reference_html
+
+
+def test_attribute_form_escapes_json_inside_x_data_attribute() -> None:
+    html = render_template(
+        "partials/attribute_form.html",
+        {
+            "attribute": None,
+            "entity_types": ["client"],
+            "selected_entity_type": "client",
+            "data_types": ["string", "enum"],
+            "reference_types": [],
+        },
+    )
+
+    assert "x-data=\"{ dataType: &#34;string&#34; }\"" in html
 
 
 def test_import_page_uses_htmx_upload_form() -> None:
@@ -150,6 +172,11 @@ def test_import_page_uses_htmx_upload_form() -> None:
     assert 'hx-encoding="multipart/form-data"' in html
     assert "htmx.org@2.0.4" in html
     assert "alpinejs@3.14.1" in html
+    assert "htmx:beforeSwap" in html
+    assert "Alpine.destroyTree(e.detail.target)" in html
+    assert "htmx:afterSwap" in html
+    assert "Alpine.initTree(e.detail.target)" in html
+    assert "htmx:oobAfterSwap" in html
     assert "/api/import" not in html
 
 
@@ -212,6 +239,10 @@ def test_template_upload_uses_htmx_preview_form() -> None:
 
     assert 'hx-post="/templates-htmx/preview"' in html
     assert 'hx-encoding="multipart/form-data"' in html
+    assert 'hx-indicator="#upload-indicator"' in html
+    assert 'hx-disabled-elt="#upload-form button[type=submit]"' in html
+    assert 'id="upload-indicator"' in html
+    assert "Обработка LLM" in html
     assert "showFormErrors" in html
     assert "$refs.errors.replaceChildren" not in html
     assert "/static/js/placeholder-editor.js" not in html
@@ -263,7 +294,20 @@ def test_template_view_disables_regenerate_when_llm_inactive() -> None:
     )
 
     assert 'disabled title="LLM не настроена"' in html
+    assert 'hx-indicator="#regen-indicator"' in html
+    assert 'hx-disabled-elt="this"' in html
+    assert 'id="regen-indicator"' in html
+    assert "Генерация" in html
     assert "Наведите на подсвеченное значение" in html
+
+
+def test_app_css_defines_htmx_indicator_states() -> None:
+    css = (PROJECT_ROOT / "app/static/css/app.css").read_text()
+
+    assert ".htmx-indicator" in css
+    assert ".htmx-request .htmx-indicator" in css
+    assert ".htmx-indicator.htmx-request" in css
+    assert ".btn.htmx-request" in css
 
 
 @pytest.mark.asyncio
