@@ -167,7 +167,7 @@ async def api_preview(data: TemplateCreate, session: AsyncSession = SessionDep) 
                     original_content=data.content,
                     llm_service=llm_svc,
                 )
-            llm_used = True
+            llm_used = result.get("llm_debug") is not None
         except LLMUnavailable as exc:
             llm_error = str(exc)
             result = await svc.analyze_content(
@@ -214,6 +214,7 @@ async def api_preview(data: TemplateCreate, session: AsyncSession = SessionDep) 
         "rendered_html": rendered_html,
         "llm_used": llm_used,
         "llm_error": llm_error,
+        "llm_debug": result.get("llm_debug"),
     }
 
 
