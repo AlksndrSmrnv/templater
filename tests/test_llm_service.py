@@ -54,6 +54,24 @@ async def test_analyze_template_handles_garbled_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_analyze_template_parses_trailing_commas() -> None:
+    response_text = (
+        '{"meta": {"summary": "X", "category": "transfer", "scenarios": ["a"],},'
+        ' "placeholders": [{"location": "/fullName", "suggestion": "sender.fullName",}],}'
+    )
+    client = FakeClient(response_text)
+    service = LLMService(client)
+    result = await service.analyze_template(
+        content='{"fullName":"X"}',
+        fmt="json",
+        leaves=["/fullName"],
+        catalog=[{"path": "sender.fullName", "label": "Sender", "data_type": "string"}],
+    )
+    assert result["meta"]["summary"] == "X"
+    assert result["placeholders"] == [{"location": "/fullName", "suggestion": "sender.fullName"}]
+
+
+@pytest.mark.asyncio
 async def test_analyze_template_recovers_json_substring() -> None:
     client = FakeClient('Извините, вот мой ответ: {"meta": {"summary": "S"}, "placeholders": []} спасибо!')
     service = LLMService(client)
