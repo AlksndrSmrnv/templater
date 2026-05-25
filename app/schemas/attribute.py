@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -31,7 +30,3 @@ class AttributeDefinitionUpdate(BaseModel):
     display_order: int | None = None
     description: str | None = None
     options: dict[str, Any] | None = None
-
-
-class AttributeDefinitionRead(AttributeDefinitionBase):
-    id: uuid.UUID

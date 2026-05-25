@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -21,10 +21,6 @@ class ExportPackage(BaseModel):
     accounts: list[dict[str, Any]]
     cards: list[dict[str, Any]]
     templates: list[dict[str, Any]]
-
-
-class ImportConflictPolicy(BaseModel):
-    policy: Literal["skip", "overwrite", "fail"] = "skip"
 
 
 class ImportSummary(BaseModel):

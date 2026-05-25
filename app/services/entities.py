@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +37,9 @@ class ClientService:
         if c is None:
             raise NotFoundError("Клиент не найден")
         return c
+
+    async def get_many(self, ids: Sequence[uuid.UUID]) -> list[Client]:
+        return await self.repo.get_many(ids)
 
     async def create(self, data: ClientCreate) -> Client:
         attrs = await self.schema.validate_attributes("client", data.attributes)
@@ -81,6 +85,12 @@ class AccountService:
         if a is None:
             raise NotFoundError("Счёт не найден")
         return a
+
+    async def get_many(self, ids: Sequence[uuid.UUID]) -> list[Account]:
+        return await self.repo.get_many(ids)
+
+    async def list_for_client_ids(self, client_ids: Sequence[uuid.UUID]) -> list[Account]:
+        return await self.repo.list_for_client_ids(client_ids)
 
     async def create(self, data: AccountCreate) -> Account:
         client = await self.clients.get(data.client_id)
@@ -139,6 +149,15 @@ class CardService:
         if c is None:
             raise NotFoundError("Карта не найдена")
         return c
+
+    async def get_many(self, ids: Sequence[uuid.UUID]) -> list[Card]:
+        return await self.repo.get_many(ids)
+
+    async def list_for_account_ids(self, account_ids: Sequence[uuid.UUID]) -> list[Card]:
+        return await self.repo.list_for_account_ids(account_ids)
+
+    async def list_for_client_ids(self, client_ids: Sequence[uuid.UUID]) -> list[Card]:
+        return await self.repo.list_for_client_ids(client_ids)
 
     async def create(self, data: CardCreate) -> Card:
         account = await self.accounts.get(data.account_id)

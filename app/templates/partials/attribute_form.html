@@ -1,0 +1,83 @@
+{% set is_edit = attribute is not none %}
+{% set options = attribute.options if is_edit else {} %}
+<form class="form"
+      style="border:none; box-shadow:none; padding:18px;"
+      autocomplete="off"
+      x-data="{ dataType: {{ (attribute.data_type if is_edit else 'string') | tojson }} }"
+      {% if is_edit %}
+      hx-put="/settings-htmx/attributes/{{ attribute.id }}"
+      {% else %}
+      hx-post="/settings-htmx/attributes"
+      {% endif %}
+      hx-target="#attr-errors"
+      hx-swap="innerHTML">
+    <h2>{{ "Редактирование атрибута" if is_edit else "Новый атрибут" }}</h2>
+    <div id="attr-errors" class="errors"></div>
+    <div class="form-section">
+        <label>Тип сущности <span class="required-mark">*</span>
+            <select name="entity_type" required {% if is_edit %}disabled{% endif %}>
+                {% for t in entity_types %}
+                    <option value="{{ t }}" {% if (attribute.entity_type if is_edit else selected_entity_type) == t %}selected{% endif %}>{{ t }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </div>
+    <div class="form-section">
+        <label>Имя поля <span class="required-mark">*</span>
+            <input type="text"
+                   name="name"
+                   value="{{ attribute.name if is_edit else '' }}"
+                   required
+                   pattern="[A-Za-z][A-Za-z0-9_]*"
+                   {% if is_edit %}disabled{% endif %}>
+        </label>
+    </div>
+    <div class="form-section">
+        <label>Подпись <span class="required-mark">*</span>
+            <input type="text" name="label" value="{{ attribute.label if is_edit else '' }}" required>
+        </label>
+    </div>
+    <div class="form-section">
+        <label>Тип данных <span class="required-mark">*</span>
+            <select name="data_type" x-model="dataType" required {% if is_edit %}disabled{% endif %}>
+                {% for dt in data_types %}
+                    <option value="{{ dt }}">{{ dt }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </div>
+    <div class="form-section" x-show="dataType === 'enum'">
+        <label>Значения enum
+            <input type="text"
+                   name="enum_values"
+                   value="{{ ((options or {}).get('values', []) | join(', ')) if is_edit else '' }}"
+                   placeholder="vip, standard, blocked">
+        </label>
+    </div>
+    <div class="form-section" x-show="dataType === 'ref'">
+        <label>Справочник
+            <select name="ref_entity">
+                {% for ref_type in reference_types %}
+                    <option value="{{ ref_type }}" {% if (options or {}).get("ref_entity") == ref_type %}selected{% endif %}>{{ ref_type }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </div>
+    <div class="form-section">
+        <label><input type="checkbox" name="is_required" value="true" {% if is_edit and attribute.is_required %}checked{% endif %}> Обязательное</label>
+    </div>
+    <div class="form-section">
+        <label>Порядок отображения
+            <input type="number" name="display_order" value="{{ attribute.display_order if is_edit else 0 }}">
+        </label>
+    </div>
+    <div class="form-section">
+        <label>Описание
+            <textarea name="description" rows="2">{{ attribute.description if is_edit else "" }}</textarea>
+        </label>
+    </div>
+    <div class="form-actions">
+        <button class="btn primary" type="submit">Сохранить</button>
+        <button class="btn" type="button" @click="open = false">Отмена</button>
+    </div>
+</form>

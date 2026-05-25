@@ -1,0 +1,25 @@
+{% set rows = templates_list | default([]) %}
+{% if rows %}
+    {% for template in rows %}
+        <tr>
+            <td><a href="/templates/{{ template.id }}">{{ template.name }}</a></td>
+            <td>{{ template.format }}</td>
+            <td>{{ (template.llm_meta or {}).get("category", "") }}</td>
+            <td>{{ template.description or (template.llm_meta or {}).get("summary", "") }}</td>
+            <td>{{ template.updated_at }}</td>
+            <td class="row-actions">
+                <a class="btn" href="/templates/{{ template.id }}/fill">Заполнить</a>
+                <button class="btn danger"
+                        type="button"
+                        hx-delete="/templates-htmx/{{ template.id }}"
+                        hx-target="closest tr"
+                        hx-swap="outerHTML swap:300ms"
+                        hx-confirm="Удалить шаблон?">Удалить</button>
+            </td>
+        </tr>
+    {% endfor %}
+{% else %}
+    <tr>
+        <td colspan="6" class="muted" style="text-align:center; padding:24px;">Нет шаблонов</td>
+    </tr>
+{% endif %}

@@ -38,6 +38,12 @@ class AttributeSchemaService:
     async def list_all(self) -> list[AttributeDefinition]:
         return await self.attrs.list_all()
 
+    async def get(self, attr_id: uuid.UUID) -> AttributeDefinition:
+        attr = await self.attrs.get_by_id(attr_id)
+        if attr is None:
+            raise NotFoundError("Атрибут не найден")
+        return attr
+
     async def create(self, data: AttributeDefinitionCreate) -> AttributeDefinition:
         self._check_entity_type(data.entity_type)
         self._check_attribute_name(data.name)

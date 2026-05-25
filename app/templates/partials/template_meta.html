@@ -1,0 +1,18 @@
+<div class="muted" style="font-size:12px;">
+    {% set meta = (template.llm_meta if template is defined else llm_meta | default({})) or {} %}
+    {% if meta.get("summary") %}
+        <strong>Резюме:</strong> {{ meta.get("summary") }}<br>
+    {% endif %}
+    {% if meta.get("category") %}
+        <strong>Категория:</strong> {{ meta.get("category") }}<br>
+    {% endif %}
+    {% if meta.get("scenarios") %}
+        <strong>Сценарии:</strong>
+        <ul style="margin:4px 0 0 18px;">
+            {% for scenario in meta.get("scenarios") %}<li>{{ scenario }}</li>{% endfor %}
+        </ul>
+    {% endif %}
+    {% if not meta.get("summary") and not meta.get("category") and not meta.get("scenarios") %}
+        Метаинформация не получена.
+    {% endif %}
+</div>

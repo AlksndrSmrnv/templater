@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -36,15 +35,6 @@ class PlaceholderInfo(BaseModel):
     suggestion: str | None = None  # LLM-suggested placeholder path
 
 
-class TemplateRead(TemplateBase):
-    id: uuid.UUID
-    original_content: str
-    llm_meta: dict[str, Any]
-    placeholders: list[dict[str, Any]]
-    created_at: datetime
-    updated_at: datetime
-
-
 class TemplateFillRequest(BaseModel):
     sender_client_id: uuid.UUID | None = None
     sender_account_id: uuid.UUID | None = None
@@ -55,9 +45,3 @@ class TemplateFillRequest(BaseModel):
     account_owner_client_id: uuid.UUID | None = None
     account_owner_account_id: uuid.UUID | None = None
     account_owner_card_id: uuid.UUID | None = None
-
-
-class TemplateFillResult(BaseModel):
-    content: str
-    format: Literal["json", "xml"]
-    unresolved: list[str] = Field(default_factory=list)

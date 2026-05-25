@@ -1,0 +1,104 @@
+{% set row_id = item.id | string %}
+<div class="drawer-header">
+    <h2>Запись</h2>
+    <button class="drawer-close" type="button" aria-label="Закрыть" @click="closeDrawer()">&times;</button>
+</div>
+<div class="drawer-body">
+    <div class="detail-field">
+        <div class="detail-label">Описание</div>
+        <div class="detail-value">{{ item.description or "—" }}</div>
+    </div>
+    {% if entity_type == "client" %}
+        <div class="detail-field">
+            <div class="detail-label">Счета</div>
+            <div class="detail-value relation-links">
+                {% for account in accounts_by_client.get(row_id, []) %}
+                    <a class="entity-link" href="/accounts?open={{ account.id }}">{{ labels.account.get(account.id|string, account.id|string) }}</a>
+                {% else %}—{% endfor %}
+            </div>
+        </div>
+        <div class="detail-field">
+            <div class="detail-label">Карты</div>
+            <div class="detail-value relation-links">
+                {% for card in cards_by_client.get(row_id, []) %}
+                    <a class="entity-link" href="/cards?open={{ card.id }}">{{ labels.card.get(card.id|string, card.id|string) }}</a>
+                {% else %}—{% endfor %}
+            </div>
+        </div>
+    {% elif entity_type == "account" %}
+        <div class="detail-field">
+            <div class="detail-label">Клиент</div>
+            <div class="detail-value">
+                {% set client_id = item.client_id | string %}
+                <a class="entity-link" href="/clients?open={{ item.client_id }}">{{ labels.client.get(client_id, client_id) }}</a>
+            </div>
+        </div>
+        <div class="detail-field">
+            <div class="detail-label">Карты</div>
+            <div class="detail-value relation-links">
+                {% for card in cards_by_account.get(row_id, []) %}
+                    <a class="entity-link" href="/cards?open={{ card.id }}">{{ labels.card.get(card.id|string, card.id|string) }}</a>
+                {% else %}—{% endfor %}
+            </div>
+        </div>
+    {% else %}
+        {% set account = accounts_by_id.get(item.account_id|string) %}
+        <div class="detail-field">
+            <div class="detail-label">Клиент</div>
+            <div class="detail-value">
+                {% if account %}
+                    {% set client_id = account.client_id | string %}
+                    <a class="entity-link" href="/clients?open={{ account.client_id }}">{{ labels.client.get(client_id, client_id) }}</a>
+                {% else %}—{% endif %}
+            </div>
+        </div>
+        <div class="detail-field">
+            <div class="detail-label">Счёт</div>
+            <div class="detail-value">
+                <a class="entity-link" href="/accounts?open={{ item.account_id }}">{{ labels.account.get(item.account_id|string, item.account_id|string) }}</a>
+            </div>
+        </div>
+    {% endif %}
+    {% for field in schema %}
+        {% set raw = (item.attributes or {}).get(field.name) %}
+        <div class="detail-field">
+            <div class="detail-label">{{ field.label }}</div>
+            <div class="detail-value">
+                {% if field.data_type == "bool" %}
+                    {% if raw %}✓{% else %}✗{% endif %}
+                {% elif field.data_type == "ref" %}
+                    {% set ref_entity = (field.options or {}).get("ref_entity") %}
+                    {{ ref_options.get(ref_entity, {}).get(raw|string, raw or "—") }}
+                {% else %}
+                    {{ raw or "—" }}
+                {% endif %}
+            </div>
+        </div>
+    {% endfor %}
+    <div class="detail-field">
+        <div class="detail-label">Теги</div>
+        <div class="detail-value">
+            {% for tag in item.tags or [] %}
+                <span class="tag">{{ tag }}</span>
+            {% else %}
+                —
+            {% endfor %}
+        </div>
+    </div>
+    <div class="detail-field">
+        <div class="detail-label">Создано</div>
+        <div class="detail-value">{{ item.created_at }}</div>
+    </div>
+    <div class="detail-field">
+        <div class="detail-label">Обновлено</div>
+        <div class="detail-value">{{ item.updated_at }}</div>
+    </div>
+</div>
+<div class="drawer-footer">
+    <a class="btn primary" href="/{{ entity_type }}s/{{ item.id }}/edit">Редактировать</a>
+    <button class="btn danger"
+            type="button"
+            hx-delete="/entities-htmx/{{ entity_type }}/{{ item.id }}"
+            hx-confirm="Удалить запись?"
+            hx-swap="none">Удалить</button>
+</div>

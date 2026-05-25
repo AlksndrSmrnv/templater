@@ -1,0 +1,38 @@
+{% set rows = attributes | default([]) %}
+{% if rows %}
+    {% for attr in rows %}
+        <tr>
+            <td>{{ attr.entity_type }}</td>
+            <td><code>{{ attr.name }}</code></td>
+            <td>{{ attr.label }}</td>
+            <td>
+                {{ attr.data_type }}
+                {% if attr.data_type == "ref" and (attr.options or {}).get("ref_entity") %}
+                    → {{ (attr.options or {}).get("ref_entity") }}
+                {% endif %}
+            </td>
+            <td>{% if attr.is_required %}✓{% endif %}</td>
+            <td>{% if attr.is_deprecated %}✓{% endif %}</td>
+            <td>{{ attr.display_order }}</td>
+            <td>{{ attr.description }}</td>
+            <td class="row-actions">
+                <button class="btn"
+                        type="button"
+                        hx-get="/settings-htmx/attributes/{{ attr.id }}/edit"
+                        hx-target="#attr-modal-content"
+                        hx-swap="innerHTML">Изменить</button>
+                {% if not attr.is_deprecated %}
+                    <button class="btn danger"
+                            type="button"
+                            hx-post="/settings-htmx/attributes/{{ attr.id }}/deprecate"
+                            hx-swap="none"
+                            hx-confirm="Пометить атрибут как устаревший?">В архив</button>
+                {% endif %}
+            </td>
+        </tr>
+    {% endfor %}
+{% else %}
+    <tr>
+        <td colspan="9" class="muted" style="text-align:center; padding:24px;">Нет атрибутов</td>
+    </tr>
+{% endif %}

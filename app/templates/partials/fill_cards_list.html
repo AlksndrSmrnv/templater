@@ -1,0 +1,18 @@
+{% set rows = cards | default([]) %}
+{% if not client_id %}
+    <div class="picker-empty">Выберите клиента</div>
+{% elif rows %}
+    {% for card in rows %}
+        {% set card_id = card.id | string %}
+        <button type="button"
+                class="picker-row picker-row--stacked"
+                @click="selectCard('{{ role }}', '{{ card_id }}')"
+                :class="{ selected: state.{{ role }}.cardId === '{{ card_id }}' }">
+            <span class="picker-row-main">{{ labels.card.get(card_id, card_id) }}</span>
+            <span class="picker-row-sub">{{ card.description or "Без описания" }}</span>
+            <span class="picker-row-meta">Счёт: {{ labels.account.get(card.account_id|string, card.account_id|string) }}</span>
+        </button>
+    {% endfor %}
+{% else %}
+    <div class="picker-empty">Карт нет</div>
+{% endif %}

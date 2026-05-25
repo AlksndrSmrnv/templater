@@ -14,11 +14,27 @@ def render_template(name: str, context: dict[str, object]) -> str:
     return get_templates().env.get_template(name).render(context)
 
 
-def page_context_line(html: str) -> str:
-    return next(line.strip() for line in html.splitlines() if line.strip().startswith("window.PAGE"))
+def install_page_fill_fakes(monkeypatch: pytest.MonkeyPatch, template: Any) -> None:
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            assert requested_id == template.id
+            return template
+
+    async def fake_fill_labels(session: object) -> dict[str, dict[str, str]]:
+        return {"client": {}, "account": {}, "card": {}}
+
+    async def fake_list_all(self: object) -> list[object]:
+        return []
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg.ClientService, "list_all", fake_list_all)
+    monkeypatch.setattr(templates_reg, "_fill_labels", fake_fill_labels)
 
 
-def test_entity_form_serializes_page_context_as_json_literals() -> None:
+def test_entity_form_uses_htmx_update_without_static_js() -> None:
     html = render_template(
         "entities/form.html",
         {
@@ -26,16 +42,21 @@ def test_entity_form_serializes_page_context_as_json_literals() -> None:
             "entity_type": "client",
             "title": "Клиент",
             "entity_id": "3db678b1-1111-2222-3333-444444444444",
+            "entity": None,
+            "schema": [],
+            "ref_options": {},
+            "parent_options": [],
+            "labels": {"client": {}, "account": {}, "card": {}},
         },
     )
 
-    page_line = page_context_line(html)
+    assert 'hx-put="/entities-htmx/client/3db678b1-1111-2222-3333-444444444444"' in html
+    assert 'x-data="' in html
+    assert "window.PAGE" not in html
+    assert "/static/js/entity-form.js" not in html
 
-    assert page_line == 'window.PAGE = { entityType: "client", entityId: "3db678b1-1111-2222-3333-444444444444" };'
-    assert "&#34;" not in page_line
 
-
-def test_entity_form_serializes_missing_id_as_null() -> None:
+def test_entity_form_uses_htmx_create_without_static_js() -> None:
     html = render_template(
         "entities/form.html",
         {
@@ -43,10 +64,17 @@ def test_entity_form_serializes_missing_id_as_null() -> None:
             "entity_type": "client",
             "title": "Новый клиент",
             "entity_id": None,
+            "entity": None,
+            "schema": [],
+            "ref_options": {},
+            "parent_options": [],
+            "labels": {"client": {}, "account": {}, "card": {}},
         },
     )
 
-    assert page_context_line(html) == 'window.PAGE = { entityType: "client", entityId: null };'
+    assert 'hx-post="/entities-htmx/client"' in html
+    assert "window.PAGE" not in html
+    assert "/static/js/entity-form.js" not in html
 
 
 def test_reference_form_serializes_page_context_as_json_literals() -> None:
@@ -60,7 +88,7 @@ def test_reference_form_serializes_page_context_as_json_literals() -> None:
         },
     )
 
-    page_line = page_context_line(html)
+    page_line = next(line.strip() for line in html.splitlines() if line.strip().startswith("window.PAGE"))
 
     assert page_line == 'window.PAGE = { entityType: "currency", valueId: "5f9a67c4-1111-2222-3333-444444444444" };'
     assert "&#34;" not in page_line
@@ -75,6 +103,15 @@ def test_list_pages_serialize_string_context_as_json_literals() -> None:
             "active": "data",
             "entity_type": "client",
             "title": 'Clients "VIP"',
+            "schema": [SimpleNamespace(name="inn", label="ИНН")],
+            "items": [],
+            "items_total": 0,
+            "ref_options": {},
+            "accounts_by_client": {},
+            "cards_by_client": {},
+            "cards_by_account": {},
+            "accounts_by_id": {},
+            "labels": {"client": {}, "account": {}, "card": {}},
         },
     )
     reference_html = render_template(
@@ -86,13 +123,16 @@ def test_list_pages_serialize_string_context_as_json_literals() -> None:
         },
     )
 
-    entity_page_line = page_context_line(entity_html)
-    reference_page_line = page_context_line(reference_html)
+    reference_page_line = next(
+        line.strip() for line in reference_html.splitlines() if line.strip().startswith("window.PAGE")
+    )
 
-    assert entity_page_line == 'window.PAGE = { entityType: "client", title: "Clients \\"VIP\\"" };'
     assert reference_page_line == 'window.PAGE = { entityType: "currency", isReference: true };'
-    assert "&#34;" not in entity_page_line
     assert "&#34;" not in reference_page_line
+    assert 'hx-get="/entities-htmx/client/table"' in entity_html
+    assert 'hx-trigger="input changed delay:200ms, refresh"' in entity_html
+    assert '@input.debounce.200ms="dispatchFilters()"' in entity_html
+    assert "window.PAGE" not in entity_html
     assert 'hx-get="/references-htmx/currency/table"' in reference_html
     assert "reference-list.js" not in reference_html
 
@@ -120,13 +160,23 @@ def test_entity_list_has_table_meta_and_detail_drawer() -> None:
             "active": "data",
             "entity_type": "client",
             "title": "Клиенты",
+            "schema": [],
+            "items": [],
+            "items_total": 0,
+            "ref_options": {},
+            "accounts_by_client": {},
+            "cards_by_client": {},
+            "cards_by_account": {},
+            "accounts_by_id": {},
+            "labels": {"client": {}, "account": {}, "card": {}},
         },
     )
 
     assert 'id="table-meta"' in html
     assert 'id="detail-drawer"' in html
-    assert '<tr id="thead-row"></tr>' in html
-    assert 'id="select-all"' not in html
+    assert "drawerHasContent: false" in html
+    assert 'hx-get="/entities-htmx/client/table"' in html
+    assert '<script src="/static/js/entity-list.js">' not in html
 
 
 def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
@@ -140,15 +190,18 @@ def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
                 format="json",
             ),
             "has_account_owner": True,
+            "clients": [],
+            "labels": {"client": {}, "account": {}, "card": {}},
         },
     )
 
     assert 'id="role-panels"' in html
-    assert "hasAccountOwner: true" in html
+    assert "accountOwner: { clientId: '', accountId: '', cardId: '' }" in html
+    assert 'hx-post="/templates-htmx/3db678b1-1111-2222-3333-444444444444/fill/render"' in html
     assert 'id="sender-client"' not in html
 
 
-def test_template_upload_llm_debug_panel_keeps_headings_outside_code_blocks() -> None:
+def test_template_upload_uses_htmx_preview_form() -> None:
     html = render_template(
         "templates_reg/upload.html",
         {
@@ -157,11 +210,60 @@ def test_template_upload_llm_debug_panel_keeps_headings_outside_code_blocks() ->
         },
     )
 
+    assert 'hx-post="/templates-htmx/preview"' in html
+    assert 'hx-encoding="multipart/form-data"' in html
+    assert "showFormErrors" in html
+    assert "$refs.errors.replaceChildren" not in html
+    assert "/static/js/placeholder-editor.js" not in html
+
+
+def test_template_review_llm_debug_panel_keeps_headings_outside_code_blocks() -> None:
+    html = render_template(
+        "partials/template_review.html",
+        {
+            "name": "T",
+            "description": "",
+            "format": "json",
+            "original_content": '{"a":"x"}',
+            "llm_meta": {"summary": "ok"},
+            "llm_used": True,
+            "llm_error": None,
+            "llm_debug": {"system_prompt": "system", "user_prompt": "user", "response_text": "raw"},
+            "rendered_html": "{}",
+            "placeholders": [],
+            "catalog": [],
+        },
+    )
+
     assert '<div id="llm-debug-panel" class="template-code"' not in html
     assert '<div id="llm-debug-panel" class="llm-debug-panel"' in html
     assert '<pre class="template-code" id="llm-debug-system"' in html
     assert '<pre class="template-code" id="llm-debug-user"' in html
     assert '<pre class="template-code" id="llm-debug-response"' in html
+    assert 'id="review-template-code-wrap"' in html
+    assert 'id="template-code-wrap"' not in html
+
+
+def test_template_view_disables_regenerate_when_llm_inactive() -> None:
+    html = render_template(
+        "templates_reg/view.html",
+        {
+            "active": "templates",
+            "template": SimpleNamespace(
+                id="3db678b1-1111-2222-3333-444444444444",
+                name="Template",
+                description="",
+                llm_meta={},
+            ),
+            "rendered_html": "{}",
+            "placeholders": [],
+            "catalog": [],
+            "llm_active": False,
+        },
+    )
+
+    assert 'disabled title="LLM не настроена"' in html
+    assert "Наведите на подсвеченное значение" in html
 
 
 @pytest.mark.asyncio
@@ -179,19 +281,11 @@ async def test_page_fill_detects_account_owner_from_placeholders_despite_false_m
         original_content='{"ownerName": "Иванов"}',
     )
 
-    class FakeTemplateService:
-        def __init__(self, session: object) -> None:
-            self.session = session
-
-        async def get(self, requested_id: uuid.UUID) -> Any:
-            assert requested_id == template_id
-            return template
-
     class FakeTemplates:
         def TemplateResponse(self, request: object, name: str, context: dict[str, object]) -> Any:
             return SimpleNamespace(name=name, context=context)
 
-    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    install_page_fill_fakes(monkeypatch, template)
 
     response = cast(
         Any,
@@ -222,19 +316,11 @@ async def test_page_fill_detects_account_owner_from_template_structure(
         original_content='{"root": {"accountOwner": {"client": {"fullName": "Иванов"}}}}',
     )
 
-    class FakeTemplateService:
-        def __init__(self, session: object) -> None:
-            self.session = session
-
-        async def get(self, requested_id: uuid.UUID) -> Any:
-            assert requested_id == template_id
-            return template
-
     class FakeTemplates:
         def TemplateResponse(self, request: object, name: str, context: dict[str, object]) -> Any:
             return SimpleNamespace(name=name, context=context)
 
-    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    install_page_fill_fakes(monkeypatch, template)
 
     response = cast(
         Any,
@@ -265,19 +351,11 @@ async def test_page_fill_keeps_account_owner_false_without_meta_placeholders_or_
         original_content='{"sender": {"fullName": "Иванов"}}',
     )
 
-    class FakeTemplateService:
-        def __init__(self, session: object) -> None:
-            self.session = session
-
-        async def get(self, requested_id: uuid.UUID) -> Any:
-            assert requested_id == template_id
-            return template
-
     class FakeTemplates:
         def TemplateResponse(self, request: object, name: str, context: dict[str, object]) -> Any:
             return SimpleNamespace(name=name, context=context)
 
-    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    install_page_fill_fakes(monkeypatch, template)
 
     response = cast(
         Any,

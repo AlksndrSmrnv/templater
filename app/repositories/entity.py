@@ -59,6 +59,16 @@ class AccountRepository:
         stmt = select(Account).where(Account.id.in_(ids))
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def list_for_client_ids(self, client_ids: Sequence[uuid.UUID]) -> list[Account]:
+        if not client_ids:
+            return []
+        stmt = (
+            select(Account)
+            .where(Account.client_id.in_(client_ids))
+            .order_by(Account.created_at.desc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def count_cards(self, account_id: uuid.UUID) -> int:
         stmt = select(func.count(Card.id)).where(Card.account_id == account_id)
         return int((await self.session.execute(stmt)).scalar_one())
@@ -96,6 +106,27 @@ class CardRepository:
         if not ids:
             return []
         stmt = select(Card).where(Card.id.in_(ids))
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_for_account_ids(self, account_ids: Sequence[uuid.UUID]) -> list[Card]:
+        if not account_ids:
+            return []
+        stmt = (
+            select(Card)
+            .where(Card.account_id.in_(account_ids))
+            .order_by(Card.created_at.desc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_for_client_ids(self, client_ids: Sequence[uuid.UUID]) -> list[Card]:
+        if not client_ids:
+            return []
+        stmt = (
+            select(Card)
+            .join(Account, Card.account_id == Account.id)
+            .where(Account.client_id.in_(client_ids))
+            .order_by(Card.created_at.desc())
+        )
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def add(self, card: Card) -> Card:

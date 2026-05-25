@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -21,12 +20,6 @@ class ClientUpdate(ClientBase):
     pass
 
 
-class ClientRead(ClientBase):
-    id: uuid.UUID
-    created_at: datetime
-    updated_at: datetime
-
-
 class AccountBase(BaseModel):
     client_id: uuid.UUID
     description: str = ""
@@ -42,12 +35,6 @@ class AccountUpdate(AccountBase):
     pass
 
 
-class AccountRead(AccountBase):
-    id: uuid.UUID
-    created_at: datetime
-    updated_at: datetime
-
-
 class CardBase(BaseModel):
     account_id: uuid.UUID
     description: str = ""
@@ -61,9 +48,3 @@ class CardCreate(CardBase):
 
 class CardUpdate(CardBase):
     pass
-
-
-class CardRead(CardBase):
-    id: uuid.UUID
-    created_at: datetime
-    updated_at: datetime
