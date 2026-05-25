@@ -33,10 +33,15 @@ class LLMService:
             content=content, fmt=fmt, leaves=leaves, catalog=catalog
         )
         response: ChatResponse = await self.client.chat(system_prompt, user_prompt)
+        debug = {
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "response_text": response.text,
+        }
         parsed = self._parse_json(response.text)
         if not isinstance(parsed, dict):
             log.warning("LLM analyze_template returned non-dict; using empty result")
-            return {"placeholders": [], "meta": {}}
+            return {"placeholders": [], "meta": {}, "debug": debug}
         placeholders = parsed.get("placeholders") or []
         meta = parsed.get("meta") or {}
         normalized = []
@@ -47,7 +52,7 @@ class LLMService:
             sug = item.get("suggestion") or None
             if loc:
                 normalized.append({"location": loc, "suggestion": sug})
-        return {"placeholders": normalized, "meta": meta}
+        return {"placeholders": normalized, "meta": meta, "debug": debug}
 
     async def regenerate_meta(self, *, content: str, fmt: str) -> dict[str, Any]:
         system_prompt, user_prompt = self.prompts.build_template_meta(content=content, fmt=fmt)

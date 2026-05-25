@@ -65,6 +65,18 @@
         </div>
     </div>
 
+    <div id="llm-debug-wrap" style="margin-top:10px;" hidden>
+        <button class="btn" id="btn-toggle-llm-debug" type="button">Показать запрос и ответ LLM</button>
+        <div id="llm-debug-panel" class="template-code" style="margin-top:8px;" hidden>
+            <h4 style="margin:0 0 4px;">System prompt</h4>
+            <pre id="llm-debug-system" style="white-space:pre-wrap;"></pre>
+            <h4 style="margin:8px 0 4px;">User prompt</h4>
+            <pre id="llm-debug-user" style="white-space:pre-wrap;"></pre>
+            <h4 style="margin:8px 0 4px;">Ответ LLM</h4>
+            <pre id="llm-debug-response" style="white-space:pre-wrap;"></pre>
+        </div>
+    </div>
+
     <h3>Содержимое</h3>
     <pre class="template-code" id="preview-code"></pre>
 
@@ -86,6 +98,12 @@ const reviewStage = document.getElementById("review-stage");
 const reviewCode = document.getElementById("preview-code");
 const saveReviewedBtn = document.getElementById("btn-save-reviewed");
 const backBtn = document.getElementById("btn-back-edit");
+const llmDebugWrap = document.getElementById("llm-debug-wrap");
+const llmDebugToggle = document.getElementById("btn-toggle-llm-debug");
+const llmDebugPanel = document.getElementById("llm-debug-panel");
+const llmDebugSystem = document.getElementById("llm-debug-system");
+const llmDebugUser = document.getElementById("llm-debug-user");
+const llmDebugResponse = document.getElementById("llm-debug-response");
 const catalogPromise = TM.api("GET", "/api/templates/catalog").catch(e => {
     TM.toast("Не удалось загрузить каталог полей: " + e.message, "error");
     return [];
@@ -140,6 +158,21 @@ async function showReview(data) {
         llmError.hidden = true;
         llmError.textContent = "";
     }
+    if (data.llm_debug && typeof data.llm_debug === "object" && !Array.isArray(data.llm_debug)) {
+        llmDebugSystem.textContent = String(data.llm_debug.system_prompt ?? "");
+        llmDebugUser.textContent = String(data.llm_debug.user_prompt ?? "");
+        llmDebugResponse.textContent = String(data.llm_debug.response_text ?? "");
+        llmDebugPanel.hidden = true;
+        llmDebugToggle.textContent = "Показать запрос и ответ LLM";
+        llmDebugWrap.hidden = false;
+    } else {
+        llmDebugWrap.hidden = true;
+        llmDebugPanel.hidden = true;
+        llmDebugSystem.textContent = "";
+        llmDebugUser.textContent = "";
+        llmDebugResponse.textContent = "";
+        llmDebugToggle.textContent = "Показать запрос и ответ LLM";
+    }
     reviewCode.innerHTML = data.rendered_html;
     if (reviewEditor) {
         reviewEditor.setCatalog(catalog);
@@ -154,6 +187,14 @@ async function showReview(data) {
     uploadForm.hidden = true;
     reviewStage.hidden = false;
 }
+
+llmDebugToggle.addEventListener("click", () => {
+    const shouldShow = llmDebugPanel.hidden;
+    llmDebugPanel.hidden = !shouldShow;
+    llmDebugToggle.textContent = shouldShow
+        ? "Скрыть запрос и ответ LLM"
+        : "Показать запрос и ответ LLM";
+});
 
 zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("dragover"); });
 zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));

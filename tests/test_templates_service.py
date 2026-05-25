@@ -154,6 +154,42 @@ async def test_analyze_content_returns_preview_without_mutating_model() -> None:
     assert result["placeholders"][0]["location"] == "/fullName"
     assert result["placeholders"][0]["mode"] == "mapped"
     assert result["llm_meta"]["summary"].startswith("Анализ выполнен без LLM")
+    assert result["llm_debug"] is None
+
+
+@pytest.mark.asyncio
+async def test_analyze_content_propagates_llm_debug() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+    debug = {
+        "system_prompt": "system",
+        "user_prompt": "user",
+        "response_text": '{"meta": {"summary": "llm"}, "placeholders": []}',
+    }
+
+    async def fake_catalog() -> list[dict[str, str]]:
+        return []
+
+    class FakeLlm:
+        async def analyze_template(
+            self,
+            *,
+            content: str,
+            fmt: str,
+            leaves: list[dict[str, str]],
+            catalog: list[dict[str, str]],
+        ) -> dict[str, Any]:
+            return {"meta": {"summary": "llm"}, "placeholders": [], "debug": debug}
+
+    svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
+
+    result = await svc.analyze_content(
+        fmt="json",
+        original_content='{"note": "x"}',
+        llm_service=FakeLlm(),
+    )
+
+    assert result["llm_meta"]["summary"] == "llm"
+    assert result["llm_debug"] == debug
 
 
 @pytest.mark.asyncio

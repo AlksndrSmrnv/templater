@@ -213,6 +213,7 @@ async def api_preview(data: TemplateCreate, session: AsyncSession = SessionDep) 
         "rendered_html": rendered_html,
         "llm_used": llm_used,
         "llm_error": llm_error,
+        "llm_debug": result.get("llm_debug"),
     }
 
 

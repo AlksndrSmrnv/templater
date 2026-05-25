@@ -213,9 +213,11 @@ class TemplateService:
             )
             llm_mappings = {item["location"]: item for item in result.get("placeholders", [])}
             llm_meta = result.get("meta") or {}
+            llm_debug = result.get("debug")
         else:
             llm_mappings = {}
             llm_meta = {"summary": "Анализ выполнен без LLM (эвристика по именам полей)."}
+            llm_debug = None
 
         placeholders: list[dict[str, Any]] = []
         replacements: dict[str, str] = {}
@@ -274,6 +276,7 @@ class TemplateService:
                 **llm_meta,
                 "has_account_owner": placeholders_have_account_owner(placeholders),
             },
+            "llm_debug": llm_debug,
         }
 
     @staticmethod

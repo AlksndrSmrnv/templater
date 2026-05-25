@@ -18,10 +18,11 @@ class FakeClient:
 
 @pytest.mark.asyncio
 async def test_analyze_template_parses_valid_json() -> None:
-    client = FakeClient(
+    response_text = (
         '{"meta": {"summary": "X", "category": "transfer", "scenarios": ["a"]},'
         ' "placeholders": [{"location": "/fullName", "suggestion": "sender.fullName"}]}'
     )
+    client = FakeClient(response_text)
     service = LLMService(client)
     result = await service.analyze_template(
         content='{"fullName":"X"}',
@@ -31,17 +32,25 @@ async def test_analyze_template_parses_valid_json() -> None:
     )
     assert result["meta"]["category"] == "transfer"
     assert result["placeholders"] == [{"location": "/fullName", "suggestion": "sender.fullName"}]
+    assert result["debug"]["system_prompt"]
+    assert result["debug"]["user_prompt"]
+    assert result["debug"]["response_text"] == response_text
 
 
 @pytest.mark.asyncio
 async def test_analyze_template_handles_garbled_response() -> None:
     # LLM returned non-JSON: service should not raise.
-    client = FakeClient("это просто текст, не JSON")
+    response_text = "это просто текст, не JSON"
+    client = FakeClient(response_text)
     service = LLMService(client)
     result = await service.analyze_template(
         content="{}", fmt="json", leaves=[{"location": "/a", "value": "x"}], catalog=[],
     )
-    assert result == {"placeholders": [], "meta": {}}
+    assert result["placeholders"] == []
+    assert result["meta"] == {}
+    assert result["debug"]["system_prompt"]
+    assert result["debug"]["user_prompt"]
+    assert result["debug"]["response_text"] == response_text
 
 
 @pytest.mark.asyncio
