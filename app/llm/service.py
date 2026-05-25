@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any
 
 from app.llm.coordinator import LLMCoordinator
@@ -65,39 +64,16 @@ class LLMService:
 
     @staticmethod
     def _parse_json(text: str) -> Any:
-        candidates: list[str] = []
-        stripped = text.strip()
-        if stripped.startswith("```"):
-            lines = stripped.splitlines()
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            stripped = "\n".join(lines).strip()
-        if stripped:
-            candidates.append(stripped)
-        start = stripped.find("{")
-        end = stripped.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            fragment = stripped[start : end + 1]
-            if fragment not in candidates:
-                candidates.append(fragment)
-
-        for raw in candidates:
-            for candidate in (raw, LLMService._strip_trailing_commas(raw)):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # try to extract first JSON object from the text
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                fragment = text[start : end + 1]
                 try:
-                    return json.loads(candidate)
+                    return json.loads(fragment)
                 except json.JSONDecodeError:
-                    continue
-        return None
-
-    @staticmethod
-    def _strip_trailing_commas(text: str) -> str:
-        """Remove trailing commas before ``}`` / ``]`` — a common LLM JSON mistake."""
-
-        prev = None
-        out = text
-        while prev != out:
-            prev = out
-            out = re.sub(r",(\s*[}\]])", r"\1", out)
-        return out
+                    return None
+            return None
