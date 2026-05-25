@@ -20,9 +20,26 @@ def test_build_template_field_mapping_includes_payload_keys() -> None:
     assert "ownerName" in sys_p
     assert "JSON Pointer" in sys_p
     assert '"location": "/RqHdr/RqUID"' in sys_p
+    assert "побайтово равной" in sys_p
     assert payload["leaves"] == ["/fullName"]
     assert '"fullName": "X"' in user_p or 'fullName' in user_p
     assert '"sender.fullName"' in user_p
+
+
+def test_build_template_field_mapping_preserves_xml_leaf_path_syntax() -> None:
+    sys_p, user_p = PromptBuilder.build_template_field_mapping(
+        content="<Root><Item id=\"1\"><Name>X</Name></Item></Root>",
+        fmt="xml",
+        leaves=["/Root/Item[0]/@id", "/Root/Item[0]/Name[0]/#text"],
+        catalog=[{"path": "sender.fullName", "label": "S", "data_type": "string"}],
+    )
+    payload = json.loads(user_p)
+
+    assert payload["leaves"] == ["/Root/Item[0]/@id", "/Root/Item[0]/Name[0]/#text"]
+    assert "[idx]" in sys_p
+    assert "#text" in sys_p
+    assert "@attr" in sys_p
+    assert "не нормализуй" in sys_p
 
 
 def test_build_template_field_mapping_defines_roles_and_account_owner_rule() -> None:
