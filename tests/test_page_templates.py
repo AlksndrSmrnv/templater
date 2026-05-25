@@ -56,6 +56,7 @@ def test_entity_form_uses_htmx_update_without_static_js() -> None:
     )
 
     assert 'hx-put="/entities-htmx/client/3db678b1-1111-2222-3333-444444444444"' in html
+    assert 'x-data="' in html
     assert "tags: [&#34;vip \\&#34;quoted\\&#34;&#34;]" in html
     assert "window.PAGE" not in html
     assert "/static/js/entity-form.js" not in html
@@ -172,11 +173,11 @@ def test_import_page_uses_htmx_upload_form() -> None:
     assert 'hx-encoding="multipart/form-data"' in html
     assert "htmx.org@2.0.4" in html
     assert "alpinejs@3.14.1" in html
-    assert "htmx:beforeSwap" in html
-    assert "Alpine.destroyTree(e.detail.target)" in html
-    assert "htmx:afterSwap" in html
-    assert "Alpine.initTree(e.detail.target)" in html
-    assert "htmx:oobAfterSwap" in html
+    assert "htmx:load" in html
+    assert "Alpine.initTree(e.detail.elt)" in html
+    assert "Alpine.destroyTree" not in html
+    assert "htmx:afterSwap" not in html
+    assert "htmx:oobAfterSwap" not in html
     assert "/api/import" not in html
 
 
@@ -240,7 +241,7 @@ def test_template_upload_uses_htmx_preview_form() -> None:
     assert 'hx-post="/templates-htmx/preview"' in html
     assert 'hx-encoding="multipart/form-data"' in html
     assert 'hx-indicator="#upload-indicator"' in html
-    assert 'hx-disabled-elt="#upload-form button[type=submit]"' in html
+    assert 'hx-disabled-elt="find button[type=submit]"' in html
     assert 'id="upload-indicator"' in html
     assert "Обработка LLM" in html
     assert "showFormErrors" in html
@@ -298,6 +299,7 @@ def test_template_view_disables_regenerate_when_llm_inactive() -> None:
     assert 'hx-disabled-elt="this"' in html
     assert 'id="regen-indicator"' in html
     assert "Генерация" in html
+    assert html.index('hx-delete="/templates-htmx/') < html.index('id="regen-indicator"')
     assert "Наведите на подсвеченное значение" in html
 
 
@@ -308,6 +310,9 @@ def test_app_css_defines_htmx_indicator_states() -> None:
     assert ".htmx-request .htmx-indicator" in css
     assert ".htmx-indicator.htmx-request" in css
     assert ".btn.htmx-request" in css
+    assert ".htmx-request .btn[disabled]" in css
+    assert "cursor: wait" in css
+    assert "cursor: not-allowed" in css
 
 
 @pytest.mark.asyncio

@@ -499,8 +499,9 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 .htmx-indicator { display: none; }
 .htmx-request .htmx-indicator,
 .htmx-indicator.htmx-request { display: inline-flex; align-items: center; gap: 6px; }
+.btn[disabled] { opacity: 0.6; cursor: not-allowed; }
 .btn.htmx-request,
-.btn[disabled] { opacity: 0.6; cursor: wait; }
+.htmx-request .btn[disabled] { opacity: 0.6; cursor: wait; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 720px) {

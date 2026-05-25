@@ -28,7 +28,7 @@
           hx-target="#review-stage"
           hx-swap="innerHTML"
           hx-indicator="#upload-indicator"
-          hx-disabled-elt="#upload-form button[type=submit]"
+          hx-disabled-elt="find button[type=submit]"
           @htmx:before-request="showFormErrors = false"
           @htmx:after-swap="showFormErrors = $event.detail.target === $refs.errors">
         <div id="form-errors" class="errors" x-ref="errors" x-show="showFormErrors"></div>
