@@ -3,8 +3,8 @@
 {% block content %}
 <div x-data="{
     selected: [],
-    sort: {{ (sort | default('created_at')) | tojson }},
-    direction: {{ (direction | default('desc')) | tojson }},
+    sort: {{ (sort | default('created_at')) | tojson | forceescape }},
+    direction: {{ (direction | default('desc')) | tojson | forceescape }},
     drawerOpen: false,
     drawerHasContent: false,
     drawerLoading: false,

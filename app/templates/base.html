@@ -66,6 +66,11 @@
      x-cloak
      :class="toastType"
      x-text="toastMessage"></div>
+<script>
+    document.body.addEventListener('htmx:load', (e) => {
+        if (e.detail.elt && window.Alpine) Alpine.initTree(e.detail.elt);
+    });
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
