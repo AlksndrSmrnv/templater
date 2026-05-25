@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from types import SimpleNamespace
 from typing import Any, cast
@@ -13,6 +14,7 @@ from app.services.templates import (
     normalize_placeholders,
     placeholders_have_account_owner,
 )
+from app.utils import walker
 from app.utils.errors import ValidationFailed
 
 
@@ -175,9 +177,10 @@ async def test_analyze_content_propagates_llm_debug() -> None:
             *,
             content: str,
             fmt: str,
-            leaves: list[dict[str, str]],
+            leaves: list[str],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
+            assert leaves == ["/note"]
             return {"meta": {"summary": "llm"}, "placeholders": [], "debug": debug}
 
     svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
@@ -190,6 +193,117 @@ async def test_analyze_content_propagates_llm_debug() -> None:
 
     assert result["llm_meta"]["summary"] == "llm"
     assert result["llm_debug"] == debug
+
+
+def test_llm_mappings_by_leaf_suffix_matches_unique_same_role_dotted_location() -> None:
+    leaves = [
+        walker.Leaf(
+            location="/root/accountOwner/client/clientInfo/personName/lastName",
+            value="Иванов",
+        )
+    ]
+    raw_placeholders = [
+        {
+            "location": "template.root.accountOwner.client.clientInfo.personName.lastName",
+            "suggestion": "accountOwner.surname",
+        }
+    ]
+
+    result = TemplateService._llm_mappings_by_leaf(leaves, raw_placeholders)
+
+    assert result[leaves[0].location]["suggestion"] == "accountOwner.surname"
+
+
+def test_llm_mappings_by_leaf_suffix_does_not_match_duplicate_leaf_tail_role() -> None:
+    leaves = [
+        walker.Leaf(location="/root/accountOwner/client/primary/lastName", value="Иванов"),
+        walker.Leaf(location="/root/accountOwner/client/backup/lastName", value="Петров"),
+    ]
+    raw_placeholders = [
+        {
+            "location": "template.root.accountOwner.client.primary.lastName",
+            "suggestion": "accountOwner.surname",
+        }
+    ]
+
+    result = TemplateService._llm_mappings_by_leaf(leaves, raw_placeholders)
+
+    assert result == {}
+
+
+def test_llm_mappings_by_leaf_suffix_does_not_match_duplicate_llm_tail_role() -> None:
+    leaves = [
+        walker.Leaf(
+            location="/root/accountOwner/client/clientInfo/personName/lastName",
+            value="Иванов",
+        )
+    ]
+    raw_placeholders = [
+        {
+            "location": "template.root.accountOwner.client.clientInfo.personName.lastName",
+            "suggestion": "accountOwner.surname",
+        },
+        {
+            "location": "payload.accountOwner.personName.lastName",
+            "suggestion": "accountOwner.surname",
+        },
+    ]
+
+    result = TemplateService._llm_mappings_by_leaf(leaves, raw_placeholders)
+
+    assert result == {}
+
+
+def test_llm_mappings_by_leaf_suffix_ignores_paths_without_role() -> None:
+    leaves = [walker.Leaf(location="/root/personName/lastName", value="Иванов")]
+    raw_placeholders = [
+        {"location": "template.root.personName.lastName", "suggestion": "accountOwner.surname"}
+    ]
+
+    result = TemplateService._llm_mappings_by_leaf(leaves, raw_placeholders)
+
+    assert result == {}
+
+
+def test_llm_mappings_by_leaf_warns_once_about_unmatched_placeholders(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    leaves = [walker.Leaf(location="/sender/firstName", value="Иван")]
+    raw_placeholders = [
+        {"location": "/receiver/firstName", "suggestion": "receiver.firstName"},
+        {"location": "/accountOwner/lastName", "suggestion": "accountOwner.surname"},
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="app.services.templates"):
+        result = TemplateService._llm_mappings_by_leaf(leaves, raw_placeholders)
+
+    assert result == {}
+    assert len(caplog.records) == 1
+    assert "LLM returned 2 unmatched placeholders" in caplog.text
+    assert "/receiver/firstName" in caplog.text
+    assert "receiver.firstName" in caplog.text
+    assert "/accountOwner/lastName" in caplog.text
+    assert "accountOwner.surname" in caplog.text
+
+
+def test_llm_mappings_by_leaf_logs_malformed_placeholder_entries(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    leaves = [walker.Leaf(location="/sender/firstName", value="Иван")]
+    raw_placeholders = [
+        "not-a-dict",
+        {},
+        {"location": ""},
+        {"location": None},
+        {"location": 123},
+    ]
+
+    with caplog.at_level(logging.INFO, logger="app.services.templates"):
+        result = TemplateService._llm_mappings_by_leaf(leaves, raw_placeholders)
+
+    assert result == {}
+    assert len(caplog.records) == 1
+    assert "LLM returned 5 malformed placeholder entries (dropped)" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -332,7 +446,7 @@ async def test_analyze_content_uses_path_role_with_llm_attribute() -> None:
             *,
             content: str,
             fmt: str,
-            leaves: list[dict[str, str]],
+            leaves: list[str],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -364,7 +478,7 @@ async def test_analyze_content_resolves_llm_suggestion_case_insensitively() -> N
             *,
             content: str,
             fmt: str,
-            leaves: list[dict[str, str]],
+            leaves: list[str],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -400,7 +514,7 @@ async def test_analyze_content_keeps_account_owner_role_for_llm_ucp_id_attribute
             *,
             content: str,
             fmt: str,
-            leaves: list[dict[str, str]],
+            leaves: list[str],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -442,7 +556,7 @@ async def test_analyze_content_falls_back_for_account_owner_llm_suggestion_witho
             *,
             content: str,
             fmt: str,
-            leaves: list[dict[str, str]],
+            leaves: list[str],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -487,7 +601,7 @@ async def test_analyze_content_falls_back_for_account_owner_nested_llm_suggestio
             *,
             content: str,
             fmt: str,
-            leaves: list[dict[str, str]],
+            leaves: list[str],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -532,7 +646,7 @@ async def test_analyze_content_falls_back_for_account_owner_synonym_llm_suggesti
             *,
             content: str,
             fmt: str,
-            leaves: list[dict[str, str]],
+            leaves: list[str],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -577,7 +691,7 @@ async def test_analyze_content_maps_deep_nested_account_owner_field_by_role_not_
             *,
             content: str,
             fmt: str,
-            leaves: list[dict[str, str]],
+            leaves: list[str],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -618,6 +732,66 @@ async def test_analyze_content_maps_deep_nested_account_owner_field_by_role_not_
 
 
 @pytest.mark.asyncio
+async def test_analyze_content_maps_account_owner_surname_from_exact_llm_location() -> None:
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+
+    async def fake_catalog() -> list[dict[str, str]]:
+        return [
+            {"path": "sender.surname", "label": "Sender — Фамилия", "data_type": "string"},
+            {"path": "receiver.surname", "label": "Receiver — Фамилия", "data_type": "string"},
+            {"path": "accountOwner.surname", "label": "Owner — Фамилия", "data_type": "string"},
+        ]
+
+    class FakeLlm:
+        async def analyze_template(
+            self,
+            *,
+            content: str,
+            fmt: str,
+            leaves: list[str],
+            catalog: list[dict[str, str]],
+        ) -> dict[str, Any]:
+            return {
+                "meta": {"summary": "llm"},
+                "placeholders": [
+                    {
+                        "location": (
+                            "/тут_путь_до_accountOwner/accountOwner/client/clientInfo/"
+                            "personName/lastName"
+                        ),
+                        "suggestion": "accountOwner.surname",
+                    }
+                ],
+            }
+
+    svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
+
+    result = await svc.analyze_content(
+        fmt="json",
+        original_content=(
+            '{"тут_путь_до_accountOwner": {"accountOwner": {"client": {"clientInfo": '
+            '{"personName": {"lastName": "Иванов"}}}}}}'
+        ),
+        llm_service=FakeLlm(),
+    )
+
+    by_location = {item["location"]: item for item in result["placeholders"]}
+    target = by_location[
+        "/тут_путь_до_accountOwner/accountOwner/client/clientInfo/personName/lastName"
+    ]
+    parsed = json.loads(result["content"])
+
+    assert target["mode"] == "mapped"
+    assert target["suggestion"] == "accountOwner.surname"
+    assert (
+        parsed["тут_путь_до_accountOwner"]["accountOwner"]["client"]["clientInfo"]["personName"][
+            "lastName"
+        ]
+        == "{{accountOwner.surname}}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_analyze_content_uses_nested_account_owner_llm_leaf_attribute() -> None:
     svc = TemplateService(cast(Any, SimpleNamespace()))
 
@@ -633,7 +807,7 @@ async def test_analyze_content_uses_nested_account_owner_llm_leaf_attribute() ->
             *,
             content: str,
             fmt: str,
-            leaves: list[dict[str, str]],
+            leaves: list[str],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {

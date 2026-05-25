@@ -4,7 +4,6 @@ can evolve independently and be unit-tested without LLM access."""
 from __future__ import annotations
 
 import json
-from typing import Any
 
 
 class PromptBuilder:
@@ -15,13 +14,21 @@ class PromptBuilder:
         *,
         content: str,
         fmt: str,
-        leaves: list[dict[str, Any]],
+        leaves: list[str],
         catalog: list[dict[str, str]],
     ) -> tuple[str, str]:
         system_prompt = (
             "Ты помогаешь подготовить шаблон сообщения для тестирования банковской системы.\n"
-            "Тебе дают исходный шаблон (JSON или XML), список листовых значений с путями\n"
+            "Тебе дают исходный шаблон (JSON или XML), список путей листовых значений\n"
             "и каталог доступных полей тестовых данных.\n"
+            "\n"
+            "В поле `leaves` массив путей всех листовых значений шаблона. В ответе\n"
+            "`placeholders[].location` ОБЯЗАТЕЛЬНО возвращай строку из этого массива\n"
+            "побайтово равной исходной строке: без изменений, нормализации, сокращения\n"
+            "или перевода в точечную нотацию; значение листа смотри в `template` по этому пути.\n"
+            "Для JSON это JSON Pointer, например \"location\": \"/RqHdr/RqUID\".\n"
+            "Для XML путь может содержать индексы `[idx]`, текстовый маркер `#text` и\n"
+            "атрибуты `@attr`; не нормализуй и не удаляй эти части.\n"
             "\n"
             "В системе три РОЛИ участников; роль каждого поля каталога видна в начале path\n"
             "и в label:\n"

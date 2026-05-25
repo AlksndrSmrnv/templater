@@ -27,7 +27,7 @@ async def test_analyze_template_parses_valid_json() -> None:
     result = await service.analyze_template(
         content='{"fullName":"X"}',
         fmt="json",
-        leaves=[{"location": "/fullName", "value": "X"}],
+        leaves=["/fullName"],
         catalog=[{"path": "sender.fullName", "label": "Sender", "data_type": "string"}],
     )
     assert result["meta"]["category"] == "transfer"
@@ -44,7 +44,7 @@ async def test_analyze_template_handles_garbled_response() -> None:
     client = FakeClient(response_text)
     service = LLMService(client)
     result = await service.analyze_template(
-        content="{}", fmt="json", leaves=[{"location": "/a", "value": "x"}], catalog=[],
+        content="{}", fmt="json", leaves=["/a"], catalog=[],
     )
     assert result["placeholders"] == []
     assert result["meta"] == {}
@@ -58,6 +58,6 @@ async def test_analyze_template_recovers_json_substring() -> None:
     client = FakeClient('Извините, вот мой ответ: {"meta": {"summary": "S"}, "placeholders": []} спасибо!')
     service = LLMService(client)
     result = await service.analyze_template(
-        content="{}", fmt="json", leaves=[{"location": "/a", "value": "x"}], catalog=[],
+        content="{}", fmt="json", leaves=["/a"], catalog=[],
     )
     assert result["meta"]["summary"] == "S"

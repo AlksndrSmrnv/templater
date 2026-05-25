@@ -262,7 +262,7 @@ class TemplateService:
             result = await llm_service.analyze_template(
                 content=original_content,
                 fmt=fmt,
-                leaves=[{"location": leaf.location, "value": leaf.value} for leaf in leaves],
+                leaves=[leaf.location for leaf in leaves],
                 catalog=catalog,
             )
             llm_mappings = self._llm_mappings_by_leaf(leaves, result.get("placeholders", []))
@@ -386,29 +386,81 @@ class TemplateService:
         if not isinstance(raw_placeholders, list):
             return {}
 
-        exact: dict[str, dict[str, Any]] = {}
-        by_key: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
-        for item in raw_placeholders:
+        malformed = sum(
+            1
+            for item in raw_placeholders
+            if not isinstance(item, dict)
+            or not isinstance(item.get("location"), str)
+            or not item.get("location")
+        )
+        if malformed:
+            log.info("LLM returned %d malformed placeholder entries (dropped)", malformed)
+
+        exact: dict[str, tuple[int, dict[str, Any]]] = {}
+        by_key: dict[tuple[str, ...], list[tuple[int, dict[str, Any]]]] = defaultdict(list)
+        placeholder_entries: list[
+            tuple[int, dict[str, Any], tuple[str, ...], str | None]
+        ] = []
+        for raw_index, item in enumerate(raw_placeholders):
             if not isinstance(item, dict):
                 continue
             location = item.get("location")
             if not isinstance(location, str) or not location:
                 continue
-            exact[location] = item
+            exact[location] = (raw_index, item)
             key = TemplateService._path_key(location)
             if key:
-                by_key[key].append(item)
+                by_key[key].append((raw_index, item))
+            placeholder_entries.append((raw_index, item, key, resolve_role_from_path(location)))
 
         leaf_keys = {leaf.location: TemplateService._path_key(leaf.location) for leaf in leaves}
         leaf_key_counts = Counter(key for key in leaf_keys.values() if key)
+        leaf_tail_role_counts = Counter(
+            (key[-1], resolve_role_from_path(leaf.location))
+            for leaf in leaves
+            if (key := leaf_keys[leaf.location])
+        )
         out: dict[str, dict[str, Any]] = {}
+        matched_indexes: set[int] = set()
         for leaf in leaves:
             if leaf.location in exact:
-                out[leaf.location] = exact[leaf.location]
+                matched_index, matched_item = exact[leaf.location]
+                out[leaf.location] = matched_item
+                matched_indexes.add(matched_index)
                 continue
             key = leaf_keys[leaf.location]
             if leaf_key_counts[key] == 1 and len(by_key.get(key, [])) == 1:
-                out[leaf.location] = by_key[key][0]
+                matched_index, matched_item = by_key[key][0]
+                out[leaf.location] = matched_item
+                matched_indexes.add(matched_index)
+                continue
+            if not key:
+                continue
+            leaf_role = resolve_role_from_path(leaf.location)
+            if leaf_role is None:
+                continue
+            tail_role = (key[-1], leaf_role)
+            if leaf_tail_role_counts[tail_role] != 1:
+                continue
+            suffix_matches = [
+                (candidate_index, item)
+                for candidate_index, item, candidate_key, candidate_role in placeholder_entries
+                if candidate_index not in matched_indexes
+                and candidate_key
+                and candidate_key[-1] == key[-1]
+                and candidate_role == leaf_role
+            ]
+            if len(suffix_matches) == 1:
+                matched_index, matched_item = suffix_matches[0]
+                out[leaf.location] = matched_item
+                matched_indexes.add(matched_index)
+        unmatched = [
+            {"location": item.get("location"), "suggestion": item.get("suggestion")}
+            for placeholder_index, item, _, _ in placeholder_entries
+            if placeholder_index not in matched_indexes
+        ]
+        if unmatched:
+            log.warning("LLM returned %d unmatched placeholders: %r", len(unmatched), unmatched)
         return out
 
     @staticmethod
