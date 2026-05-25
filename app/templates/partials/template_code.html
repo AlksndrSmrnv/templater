@@ -4,6 +4,7 @@
          placeholders: [],
          catalog: [],
          dropdownIdx: null,
+         dynamicSuggestion: null,
          search: '',
          dropdownStyle: '',
          init() {
@@ -28,11 +29,21 @@
          },
          open(span, idx) {
              const ph = this.placeholders[idx] || {};
-             if (ph.mode === 'dynamic') return;
              const rect = span.getBoundingClientRect();
              this.dropdownIdx = idx;
+             this.dynamicSuggestion = ph.mode === 'dynamic' && ph.suggestion ? ph.suggestion : null;
              this.search = '';
              this.dropdownStyle = `top:${window.scrollY + rect.bottom + 4}px;left:${window.scrollX + rect.left}px;`;
+         },
+         restoreDynamic() {
+             const ph = this.placeholders[this.dropdownIdx];
+             if (!ph || !this.dynamicSuggestion) return;
+             ph.mode = 'dynamic';
+             {% raw %}ph.value = '{{' + this.dynamicSuggestion + '}}';{% endraw %}
+             ph.suggestion = this.dynamicSuggestion;
+             this.dropdownIdx = null;
+             this.dynamicSuggestion = null;
+             this.refresh();
          },
          chooseLiteral() {
              const ph = this.placeholders[this.dropdownIdx];
@@ -41,6 +52,7 @@
              ph.value = ph.original || '';
              ph.suggestion = null;
              this.dropdownIdx = null;
+             this.dynamicSuggestion = null;
              this.refresh();
          },
          choose(entry) {
@@ -50,6 +62,7 @@
              {% raw %}ph.value = '{{' + entry.path + '}}';{% endraw %}
              ph.suggestion = entry.path;
              this.dropdownIdx = null;
+             this.dynamicSuggestion = null;
              this.refresh();
          },
          filteredCatalog() {
@@ -64,9 +77,15 @@
     <pre class="template-code"
          @click="const span = $event.target.closest('.placeholder'); if (span) open(span, Number(span.dataset.idx));">{{ rendered_html | safe }}</pre>
     <template x-if="dropdownIdx !== null">
-        <div class="dropdown" :style="dropdownStyle" @click.outside="dropdownIdx = null" x-cloak>
+        <div class="dropdown" :style="dropdownStyle" @click.outside="dropdownIdx = null; dynamicSuggestion = null;" x-cloak>
             <input type="search" x-model="search" placeholder="Поиск поля..." autocomplete="off">
             <ul>
+                <template x-if="dynamicSuggestion">
+                    <li @click="restoreDynamic()">
+                        <strong>Использовать динамическое значение</strong>
+                        <span class="path" {% raw %}x-text="'{{' + dynamicSuggestion + '}}'"{% endraw %}></span>
+                    </li>
+                </template>
                 <li @click="chooseLiteral()">
                     <strong>Оставить исходное значение</strong>
                     <div class="path" x-text="(placeholders[dropdownIdx] || {}).original || ''"></div>
