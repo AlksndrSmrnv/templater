@@ -24,7 +24,7 @@ class LLMService:
         *,
         content: str,
         fmt: str,
-        leaves: list[dict[str, Any]],
+        leaves: list[str],
         catalog: list[dict[str, str]],
     ) -> dict[str, Any]:
         if not leaves:

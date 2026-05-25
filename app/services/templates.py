@@ -262,7 +262,7 @@ class TemplateService:
             result = await llm_service.analyze_template(
                 content=original_content,
                 fmt=fmt,
-                leaves=[{"location": leaf.location, "value": leaf.value} for leaf in leaves],
+                leaves=[leaf.location for leaf in leaves],
                 catalog=catalog,
             )
             llm_mappings = self._llm_mappings_by_leaf(leaves, result.get("placeholders", []))
@@ -388,6 +388,7 @@ class TemplateService:
 
         exact: dict[str, dict[str, Any]] = {}
         by_key: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
+        placeholder_entries: list[tuple[dict[str, Any], tuple[str, ...], str | None]] = []
         for item in raw_placeholders:
             if not isinstance(item, dict):
                 continue
@@ -398,17 +399,51 @@ class TemplateService:
             key = TemplateService._path_key(location)
             if key:
                 by_key[key].append(item)
+            placeholder_entries.append((item, key, resolve_role_from_path(location)))
 
         leaf_keys = {leaf.location: TemplateService._path_key(leaf.location) for leaf in leaves}
         leaf_key_counts = Counter(key for key in leaf_keys.values() if key)
+        leaf_tail_role_counts = Counter(
+            (key[-1], resolve_role_from_path(leaf.location))
+            for leaf in leaves
+            if (key := leaf_keys[leaf.location])
+        )
         out: dict[str, dict[str, Any]] = {}
+        matched_ids: set[int] = set()
         for leaf in leaves:
             if leaf.location in exact:
                 out[leaf.location] = exact[leaf.location]
+                matched_ids.add(id(exact[leaf.location]))
                 continue
             key = leaf_keys[leaf.location]
             if leaf_key_counts[key] == 1 and len(by_key.get(key, [])) == 1:
                 out[leaf.location] = by_key[key][0]
+                matched_ids.add(id(by_key[key][0]))
+                continue
+            if not key:
+                continue
+            leaf_role = resolve_role_from_path(leaf.location)
+            tail_role = (key[-1], leaf_role)
+            if leaf_tail_role_counts[tail_role] != 1:
+                continue
+            suffix_matches = [
+                item
+                for item, candidate_key, candidate_role in placeholder_entries
+                if id(item) not in matched_ids
+                and candidate_key
+                and candidate_key[-1] == key[-1]
+                and candidate_role == leaf_role
+            ]
+            if len(suffix_matches) == 1:
+                out[leaf.location] = suffix_matches[0]
+                matched_ids.add(id(suffix_matches[0]))
+        for item, _, _ in placeholder_entries:
+            if id(item) not in matched_ids:
+                log.warning(
+                    "Unmatched LLM placeholder: location=%r suggestion=%r",
+                    item.get("location"),
+                    item.get("suggestion"),
+                )
         return out
 
     @staticmethod
