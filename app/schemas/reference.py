@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -24,9 +22,3 @@ class ReferenceValueUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     attributes: dict[str, Any] | None = None
-
-
-class ReferenceValueRead(ReferenceValueBase):
-    id: uuid.UUID
-    created_at: datetime
-    updated_at: datetime

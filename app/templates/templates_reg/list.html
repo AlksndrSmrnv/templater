@@ -8,9 +8,15 @@
     </div>
 </div>
 <div class="filters">
-    <label>Поиск:
-        <input id="search" type="search" placeholder="по имени / описанию / категории">
-    </label>
+    <form class="filters-inline"
+          hx-get="/templates-htmx/table"
+          hx-target="#tpl-body"
+          hx-swap="innerHTML"
+          hx-trigger="input changed delay:200ms">
+        <label>Поиск:
+            <input id="search" name="search" type="search" value="{{ search | default('') }}" placeholder="по имени / описанию / категории">
+        </label>
+    </form>
 </div>
 <div class="table-wrap">
     <table class="data-table" id="tpl-table">
@@ -20,60 +26,11 @@
             <th>Категория</th>
             <th>Описание / Резюме</th>
             <th>Обновлено</th>
-            <th></th>
+            <th class="no-sort"></th>
         </tr></thead>
-        <tbody id="tpl-body"><tr><td colspan="6" class="muted">Загрузка...</td></tr></tbody>
+        <tbody id="tpl-body">
+            {% include "partials/templates_table.html" %}
+        </tbody>
     </table>
 </div>
-<script>
-(async function () {
-    const tbody = document.getElementById("tpl-body");
-    const searchInput = document.getElementById("search");
-    let items = [];
-
-    function render() {
-        const search = (searchInput.value || "").toLowerCase();
-        const filtered = items.filter(t => {
-            if (!search) return true;
-            const blob = (t.name + " " + t.description + " " + (t.llm_meta?.summary || "") + " " + (t.llm_meta?.category || "")).toLowerCase();
-            return blob.includes(search);
-        });
-        if (filtered.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center; padding:24px;">Нет шаблонов</td></tr>`;
-            return;
-        }
-        tbody.innerHTML = filtered.map(t => `
-            <tr>
-                <td><a href="/templates/${t.id}">${TM.escapeHtml(t.name)}</a></td>
-                <td>${TM.escapeHtml(t.format)}</td>
-                <td>${TM.escapeHtml(t.llm_meta?.category || "")}</td>
-                <td>${TM.escapeHtml(t.description || t.llm_meta?.summary || "")}</td>
-                <td>${TM.formatDate(t.updated_at)}</td>
-                <td class="row-actions">
-                    <a class="btn" href="/templates/${t.id}/fill">Заполнить</a>
-                    <button class="btn danger" data-id="${t.id}">Удалить</button>
-                </td>
-            </tr>
-        `).join("");
-        tbody.querySelectorAll("button[data-id]").forEach(b => {
-            b.addEventListener("click", async () => {
-                if (!TM.confirm("Удалить шаблон?")) return;
-                try {
-                    await TM.api("DELETE", `/api/templates/${b.dataset.id}`);
-                    items = items.filter(t => t.id !== b.dataset.id);
-                    render();
-                } catch (e) { TM.toast(e.message, "error"); }
-            });
-        });
-    }
-
-    searchInput.addEventListener("input", render);
-    try {
-        items = await TM.api("GET", "/api/templates");
-        render();
-    } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="6" style="color:var(--danger)">Ошибка: ${TM.escapeHtml(e.message)}</td></tr>`;
-    }
-})();
-</script>
 {% endblock %}

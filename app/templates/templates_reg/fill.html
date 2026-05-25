@@ -9,23 +9,161 @@
     </div>
 </div>
 
-<div id="role-panels" class="role-panels"></div>
+<div x-data="{
+    state: {
+        sender: { clientId: '', accountId: '', cardId: '' },
+        receiver: { clientId: '', accountId: '', cardId: '' }{% if has_account_owner %},
+        accountOwner: { clientId: '', accountId: '', cardId: '' }{% endif %}
+    },
+    selectClient(role, id) {
+        this.state[role].clientId = id;
+        this.state[role].accountId = '';
+        this.state[role].cardId = '';
+        this.$nextTick(() => {
+            const panel = this.$root.querySelector(`[data-role-panel='${role}']`);
+            if (panel) panel.dispatchEvent(new CustomEvent('client-changed', { bubbles: true }));
+        });
+    },
+    selectAccount(role, id) {
+        this.state[role].accountId = this.state[role].accountId === id ? '' : id;
+        if (this.state[role].accountId) this.state[role].cardId = '';
+    },
+    selectCard(role, id) {
+        this.state[role].cardId = this.state[role].cardId === id ? '' : id;
+        if (this.state[role].cardId) this.state[role].accountId = '';
+    }
+}">
+    <div id="role-panels" class="role-panels">
+        {% for role, title, prefix in [("sender", "Отправитель", "sender"), ("receiver", "Получатель", "receiver")] %}
+            <section class="role-panel" data-role-panel="{{ role }}">
+                <div class="role-panel__header">
+                    <h3>{{ title }}</h3>
+                    <span>{{ role }}</span>
+                </div>
+                <input type="hidden" name="client_id" :value="state.{{ role }}.clientId">
+                <div class="picker-group">
+                    <label for="{{ role }}-client-search">Клиенты</label>
+                    <input id="{{ role }}-client-search"
+                           class="picker-search"
+                           type="search"
+                           name="q"
+                           placeholder="Поиск"
+                           hx-get="/templates-htmx/{{ template.id }}/fill/clients?role={{ role }}"
+                           hx-trigger="input changed delay:200ms"
+                           hx-target="#{{ role }}-clients"
+                           hx-swap="innerHTML">
+                    <div id="{{ role }}-clients" class="picker-list" role="listbox" aria-label="{{ title }}: клиенты">
+                        {% include "partials/fill_clients_list.html" %}
+                    </div>
+                </div>
+                <div class="role-panel__choices">
+                    <div class="picker-group">
+                        <label>Счета</label>
+                        <div class="picker-list picker-list--stacked"
+                             id="{{ role }}-accounts"
+                             hx-get="/templates-htmx/{{ template.id }}/fill/accounts?role={{ role }}"
+                             hx-trigger="client-changed from:closest section"
+                             hx-include="closest section"
+                             hx-swap="innerHTML">
+                            {% set client_id = none %}
+                            {% set accounts = [] %}
+                            {% include "partials/fill_accounts_list.html" %}
+                        </div>
+                    </div>
+                    <div class="picker-group">
+                        <label>Карты</label>
+                        <div class="picker-list picker-list--stacked"
+                             id="{{ role }}-cards"
+                             hx-get="/templates-htmx/{{ template.id }}/fill/cards?role={{ role }}"
+                             hx-trigger="client-changed from:closest section"
+                             hx-include="closest section"
+                             hx-swap="innerHTML">
+                            {% set client_id = none %}
+                            {% set cards = [] %}
+                            {% include "partials/fill_cards_list.html" %}
+                        </div>
+                    </div>
+                </div>
+            </section>
+        {% endfor %}
+        {% if has_account_owner %}
+            {% set role = "accountOwner" %}
+            {% set title = "Владелец счёта" %}
+            <section class="role-panel" data-role-panel="{{ role }}">
+                <div class="role-panel__header">
+                    <h3>{{ title }}</h3>
+                    <span>{{ role }}</span>
+                </div>
+                <input type="hidden" name="client_id" :value="state.accountOwner.clientId">
+                <div class="picker-group">
+                    <label for="{{ role }}-client-search">Клиенты</label>
+                    <input id="{{ role }}-client-search"
+                           class="picker-search"
+                           type="search"
+                           name="q"
+                           placeholder="Поиск"
+                           hx-get="/templates-htmx/{{ template.id }}/fill/clients?role={{ role }}"
+                           hx-trigger="input changed delay:200ms"
+                           hx-target="#{{ role }}-clients"
+                           hx-swap="innerHTML">
+                    <div id="{{ role }}-clients" class="picker-list" role="listbox" aria-label="{{ title }}: клиенты">
+                        {% include "partials/fill_clients_list.html" %}
+                    </div>
+                </div>
+                <div class="role-panel__choices">
+                    <div class="picker-group">
+                        <label>Счета</label>
+                        <div class="picker-list picker-list--stacked"
+                             id="{{ role }}-accounts"
+                             hx-get="/templates-htmx/{{ template.id }}/fill/accounts?role={{ role }}"
+                             hx-trigger="client-changed from:closest section"
+                             hx-include="closest section"
+                             hx-swap="innerHTML">
+                            {% set client_id = none %}
+                            {% set accounts = [] %}
+                            {% include "partials/fill_accounts_list.html" %}
+                        </div>
+                    </div>
+                    <div class="picker-group">
+                        <label>Карты</label>
+                        <div class="picker-list picker-list--stacked"
+                             id="{{ role }}-cards"
+                             hx-get="/templates-htmx/{{ template.id }}/fill/cards?role={{ role }}"
+                             hx-trigger="client-changed from:closest section"
+                             hx-include="closest section"
+                             hx-swap="innerHTML">
+                            {% set client_id = none %}
+                            {% set cards = [] %}
+                            {% include "partials/fill_cards_list.html" %}
+                        </div>
+                    </div>
+                </div>
+            </section>
+        {% endif %}
+    </div>
 
-<div class="form-actions" style="margin-top:14px;">
-    <button class="btn primary" id="btn-render">Заполнить</button>
-    <button class="btn" id="btn-download" disabled>Скачать</button>
+    <form class="form-actions"
+          style="margin-top:14px;"
+          hx-post="/templates-htmx/{{ template.id }}/fill/render"
+          hx-target="#fill-result"
+          hx-swap="innerHTML">
+        <input type="hidden" name="sender_client_id" :value="state.sender.clientId">
+        <input type="hidden" name="sender_account_id" :value="state.sender.accountId">
+        <input type="hidden" name="sender_card_id" :value="state.sender.cardId">
+        <input type="hidden" name="receiver_client_id" :value="state.receiver.clientId">
+        <input type="hidden" name="receiver_account_id" :value="state.receiver.accountId">
+        <input type="hidden" name="receiver_card_id" :value="state.receiver.cardId">
+        {% if has_account_owner %}
+            <input type="hidden" name="account_owner_client_id" :value="state.accountOwner.clientId">
+            <input type="hidden" name="account_owner_account_id" :value="state.accountOwner.accountId">
+            <input type="hidden" name="account_owner_card_id" :value="state.accountOwner.cardId">
+        {% endif %}
+        <button class="btn primary" type="submit">Заполнить</button>
+    </form>
+
+    <div id="fill-result">
+        <h3 style="margin-top:18px;">Результат</h3>
+        <pre class="template-code">—</pre>
+    </div>
 </div>
-
-<div id="unresolved-box" class="errors" hidden></div>
-<h3 style="margin-top:18px;">Результат</h3>
-<pre class="template-code" id="result-code">—</pre>
-
-<script>
-window.TEMPLATE = {
-    id: "{{ template.id }}",
-    format: "{{ template.format }}",
-    hasAccountOwner: {{ has_account_owner|tojson }}
-};
-</script>
-<script src="/static/js/template-fill.js"></script>
 {% endblock %}

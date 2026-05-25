@@ -1,0 +1,17 @@
+{% set rows = accounts | default([]) %}
+{% if not client_id %}
+    <div class="picker-empty">Выберите клиента</div>
+{% elif rows %}
+    {% for account in rows %}
+        {% set account_id = account.id | string %}
+        <button type="button"
+                class="picker-row picker-row--stacked"
+                @click="selectAccount('{{ role }}', '{{ account_id }}')"
+                :class="{ selected: state.{{ role }}.accountId === '{{ account_id }}' }">
+            <span class="picker-row-main">{{ labels.account.get(account_id, account_id) }}</span>
+            <span class="picker-row-sub">{{ account.description or "Без описания" }}</span>
+        </button>
+    {% endfor %}
+{% else %}
+    <div class="picker-empty">Счетов нет</div>
+{% endif %}

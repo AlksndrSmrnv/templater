@@ -1,40 +1,167 @@
 {% extends "base.html" %}
 {% block title %}{{ title }} — Template Maker{% endblock %}
 {% block content %}
-<div class="page-header">
-    <h1>{{ title }}</h1>
-    <div class="actions">
-        <a class="btn primary" href="/{{ entity_type }}s/new">Создать</a>
-        <button class="btn" id="btn-export">Экспорт выбранных</button>
-        <a class="btn" href="/import">Импорт</a>
+<div x-data="{
+    selected: [],
+    sort: {{ (sort | default('created_at')) | tojson }},
+    direction: {{ (direction | default('desc')) | tojson }},
+    drawerOpen: false,
+    drawerHasContent: false,
+    drawerLoading: false,
+    detailId: null,
+    dispatchFilters() { this.$nextTick(() => htmx.trigger(this.$refs.controls, 'refresh')); },
+    openDrawer(id) {
+        this.drawerOpen = true;
+        this.drawerHasContent = true;
+        this.drawerLoading = true;
+        this.detailId = id;
+    },
+    closeDrawer(clear = false) {
+        this.drawerOpen = false;
+        this.detailId = null;
+        this.drawerLoading = false;
+        if (clear) {
+            this.drawerHasContent = false;
+        }
+    },
+    toggleSort(key) {
+        if (this.sort === key) {
+            this.direction = this.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.sort = key;
+            this.direction = 'asc';
+        }
+        this.dispatchFilters();
+    },
+    sortIcon(key) {
+        if (this.sort !== key) return '↕';
+        return this.direction === 'asc' ? '▲' : '▼';
+    },
+    visibleIds() {
+        return Array.from(this.$root.querySelectorAll('#entities-body input.row-select')).map((item) => item.value);
+    },
+    allVisibleSelected() {
+        const ids = this.visibleIds();
+        return ids.length > 0 && ids.every((id) => this.selected.includes(id));
+    },
+    someVisibleSelected() {
+        const ids = this.visibleIds();
+        return ids.some((id) => this.selected.includes(id)) && !this.allVisibleSelected();
+    },
+    toggleVisible(on) {
+        const ids = this.visibleIds();
+        if (on) {
+            ids.forEach((id) => { if (!this.selected.includes(id)) this.selected.push(id); });
+        } else {
+            this.selected = this.selected.filter((id) => !ids.includes(id));
+        }
+    }
+}" @refresh-entities.window="dispatchFilters()" @close-drawer.window="closeDrawer(true)">
+    <div class="page-header">
+        <h1>{{ title }}</h1>
+        <div class="actions">
+            <a class="btn primary" href="/{{ entity_type }}s/new">Создать</a>
+            <form id="entity-export-form" action="/entities-htmx/{{ entity_type }}/export" method="post">
+                <template x-for="id in selected" :key="'export-' + id">
+                    <input type="hidden" name="ids" :value="id">
+                </template>
+                <button class="btn" type="submit" :disabled="selected.length === 0">Экспорт выбранных</button>
+            </form>
+            <a class="btn" href="/import">Импорт</a>
+        </div>
     </div>
-</div>
-<div class="filters">
-    <label>Поиск:
-        <input id="search" type="search" placeholder="по тегам / значениям">
-    </label>
-</div>
-<div class="table-meta" id="table-meta"></div>
-<div class="table-wrap">
-    <table class="data-table" id="entities-table">
-        <thead><tr id="thead-row"></tr></thead>
-        <tbody id="entities-body"><tr><td colspan="100" class="muted">Загрузка...</td></tr></tbody>
-    </table>
-</div>
-<aside class="detail-drawer" id="detail-drawer" aria-hidden="true">
-    <div class="drawer-header">
-        <h2 id="drawer-title">Запись</h2>
-        <button class="drawer-close" id="drawer-close" type="button" aria-label="Закрыть">&times;</button>
+    <div class="filters">
+        <form id="entity-controls"
+              class="filters-inline"
+              x-ref="controls"
+              hx-get="/entities-htmx/{{ entity_type }}/table"
+              hx-target="#entities-body"
+              hx-swap="innerHTML"
+              hx-trigger="input changed delay:200ms, refresh">
+            <input type="hidden" name="sort" x-model="sort">
+            <input type="hidden" name="direction" x-model="direction">
+            <label>Поиск:
+                <input id="search" name="search" type="search" value="{{ search | default('') }}" placeholder="по тегам / значениям">
+            </label>
+        </form>
     </div>
-    <div class="drawer-body" id="drawer-body"></div>
-    <div class="drawer-footer">
-        <a class="btn primary" id="drawer-edit" href="#">Редактировать</a>
-        <button class="btn danger" id="drawer-delete" type="button">Удалить</button>
+    <div class="table-meta" id="table-meta">
+        Записей: {{ items_total | default(items | default([]) | length) }}
+        {% if items is defined and items_total is defined and (items | length) != items_total %}
+            · Показано: {{ items | length }}
+        {% endif %}
+        <span x-show="selected.length > 0" x-cloak> · Выбрано: <span x-text="selected.length"></span></span>
     </div>
-</aside>
-
-<script>
-    window.PAGE = { entityType: {{ entity_type | tojson }}, title: {{ title | tojson }} };
-</script>
-<script src="/static/js/entity-list.js"></script>
+    <div class="table-wrap">
+        <table class="data-table" id="entities-table">
+            <thead>
+                <tr>
+                    <th class="no-sort">
+                        <input type="checkbox"
+                               aria-label="Выбрать все"
+                               @change="toggleVisible($event.target.checked)"
+                               :checked="allVisibleSelected()"
+                               :indeterminate="someVisibleSelected()">
+                    </th>
+                    <th>
+                        <button class="table-sort" type="button" @click="toggleSort('description')">Описание <span class="sort-icon" x-text="sortIcon('description')"></span></button>
+                    </th>
+                    {% for field in schema | default([]) %}
+                        <th>
+                            <button class="table-sort" type="button" @click="toggleSort('{{ field.name }}')">{{ field.label }} <span class="sort-icon" x-text="sortIcon('{{ field.name }}')"></span></button>
+                            <input class="column-filter"
+                                   form="entity-controls"
+                                   name="filter_{{ field.name }}"
+                                   type="search"
+                                   value="{{ (filters | default({})).get(field.name, '') }}"
+                                   placeholder="фильтр"
+                                   @input.debounce.200ms="dispatchFilters()">
+                        </th>
+                    {% endfor %}
+                    {% if entity_type == "client" %}
+                        <th class="no-sort col-relation">Счета</th>
+                        <th class="no-sort col-relation">Карты</th>
+                    {% elif entity_type == "account" %}
+                        <th class="no-sort col-relation">Клиент</th>
+                        <th class="no-sort col-relation">Карты</th>
+                    {% else %}
+                        <th class="no-sort col-relation">Клиент</th>
+                        <th class="no-sort col-relation">Счёт</th>
+                    {% endif %}
+                    <th>
+                        <button class="table-sort" type="button" @click="toggleSort('tags')">Теги <span class="sort-icon" x-text="sortIcon('tags')"></span></button>
+                    </th>
+                    <th>
+                        <button class="table-sort" type="button" @click="toggleSort('created_at')">Создано <span class="sort-icon" x-text="sortIcon('created_at')"></span></button>
+                    </th>
+                </tr>
+            </thead>
+            <tbody id="entities-body"
+                   hx-get="/entities-htmx/{{ entity_type }}/table"
+                   hx-trigger="refresh-entities from:body"
+                   hx-include="#entity-controls"
+                   hx-swap="innerHTML">
+                {% include "partials/entities_table.html" %}
+            </tbody>
+        </table>
+    </div>
+    <aside class="detail-drawer"
+           id="detail-drawer"
+           :class="{ open: drawerOpen }"
+           :aria-hidden="(!drawerOpen).toString()"
+           @keydown.escape.window="closeDrawer()">
+        <div x-show="!drawerHasContent">
+            <div class="drawer-header">
+                <h2>Запись</h2>
+                <button class="drawer-close" type="button" aria-label="Закрыть" @click="closeDrawer()">&times;</button>
+            </div>
+            <div class="drawer-body muted">Выберите строку.</div>
+        </div>
+        <div x-show="drawerHasContent && drawerLoading" class="drawer-body muted">Загрузка...</div>
+        <div id="drawer-content"
+             x-ref="drawerContent"
+             x-show="drawerHasContent && !drawerLoading"
+             @htmx:after-swap="drawerLoading = false"></div>
+    </aside>
+</div>
 {% endblock %}

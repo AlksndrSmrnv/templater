@@ -1,0 +1,83 @@
+<div id="{{ wrap_id | default('template-code-wrap') }}"
+     class="template-code-wrap"
+     x-data="{
+         placeholders: [],
+         catalog: [],
+         dropdownIdx: null,
+         search: '',
+         dropdownStyle: '',
+         init() {
+             this.placeholders = JSON.parse(this.$refs.placeholdersSeed.value || '[]');
+             this.catalog = JSON.parse(this.$refs.catalogSeed.value || '[]');
+             this.$nextTick(() => this.refresh());
+         },
+         display(idx) {
+             const ph = this.placeholders[idx] || {};
+             return ph.mode === 'literal' ? (ph.original || '') : (ph.value || ph.original || '');
+         },
+         modeClass(idx) {
+             return (this.placeholders[idx] || {}).mode || 'literal';
+         },
+         refresh() {
+             this.$root.querySelectorAll('.placeholder').forEach((span) => {
+                 const idx = Number(span.dataset.idx);
+                 span.textContent = this.display(idx);
+                 span.classList.remove('mapped', 'literal', 'dynamic');
+                 span.classList.add(this.modeClass(idx));
+             });
+         },
+         open(span, idx) {
+             const ph = this.placeholders[idx] || {};
+             if (ph.mode === 'dynamic') return;
+             const rect = span.getBoundingClientRect();
+             this.dropdownIdx = idx;
+             this.search = '';
+             this.dropdownStyle = `top:${window.scrollY + rect.bottom + 4}px;left:${window.scrollX + rect.left}px;`;
+         },
+         chooseLiteral() {
+             const ph = this.placeholders[this.dropdownIdx];
+             if (!ph) return;
+             ph.mode = 'literal';
+             ph.value = ph.original || '';
+             ph.suggestion = null;
+             this.dropdownIdx = null;
+             this.refresh();
+         },
+         choose(entry) {
+             const ph = this.placeholders[this.dropdownIdx];
+             if (!ph) return;
+             ph.mode = 'mapped';
+             {% raw %}ph.value = '{{' + entry.path + '}}';{% endraw %}
+             ph.suggestion = entry.path;
+             this.dropdownIdx = null;
+             this.refresh();
+         },
+         filteredCatalog() {
+             const q = this.search.trim().toLowerCase();
+             if (!q) return this.catalog;
+             return this.catalog.filter((entry) => (entry.path || '').toLowerCase().includes(q) || (entry.label || '').toLowerCase().includes(q));
+         }
+     }">
+    <input type="hidden" x-ref="placeholdersSeed" value="{{ (placeholders | default([])) | tojson | forceescape }}">
+    <input type="hidden" x-ref="catalogSeed" value="{{ (catalog | default([])) | tojson | forceescape }}">
+    <input type="hidden" name="{{ input_name | default('placeholders') }}" :value="JSON.stringify(placeholders)">
+    <pre class="template-code"
+         @click="const span = $event.target.closest('.placeholder'); if (span) open(span, Number(span.dataset.idx));">{{ rendered_html | safe }}</pre>
+    <template x-if="dropdownIdx !== null">
+        <div class="dropdown" :style="dropdownStyle" @click.outside="dropdownIdx = null" x-cloak>
+            <input type="search" x-model="search" placeholder="Поиск поля..." autocomplete="off">
+            <ul>
+                <li @click="chooseLiteral()">
+                    <strong>Оставить исходное значение</strong>
+                    <div class="path" x-text="(placeholders[dropdownIdx] || {}).original || ''"></div>
+                </li>
+                <template x-for="entry in filteredCatalog()" :key="entry.path">
+                    <li @click="choose(entry)">
+                        <span x-text="entry.label"></span>
+                        <span class="path" x-text="entry.path"></span>
+                    </li>
+                </template>
+            </ul>
+        </div>
+    </template>
+</div>

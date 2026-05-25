@@ -1,0 +1,106 @@
+{% set rows = items | default([]) %}
+{% set fields = schema | default([]) %}
+{% set relation_count = relation_columns | default(["", ""]) | length %}
+{% set colspan = fields | length + relation_count + 4 %}
+{% set total = items_total | default(rows | length) %}
+{% if oob_meta | default(false) %}
+    <div id="table-meta" hx-swap-oob="innerHTML">
+        Записей: {{ total }}
+        {% if rows | length != total %}
+            · Показано: {{ rows | length }}
+        {% endif %}
+        <span x-show="selected.length > 0" x-cloak> · Выбрано: <span x-text="selected.length"></span></span>
+    </div>
+{% endif %}
+{% if rows %}
+    {% for row in rows %}
+        {% set row_id = row.id | string %}
+        <tr data-id="{{ row_id }}"
+            hx-get="/entities-htmx/{{ entity_type }}/{{ row.id }}/detail"
+            hx-target="#drawer-content"
+            hx-swap="innerHTML"
+            hx-trigger="click[!event.target.closest('a, button, input, label, select, textarea')]"
+            @click="if (!$event.target.closest('a, button, input, label, select, textarea')) openDrawer('{{ row_id }}')"
+            :class="{ 'selected': selected.includes('{{ row_id }}'), 'active': detailId === '{{ row_id }}' }">
+            <td>
+                <input type="checkbox"
+                       class="row-select"
+                       value="{{ row_id }}"
+                       x-model="selected"
+                       @click.stop
+                       aria-label="Выбрать запись">
+            </td>
+            <td class="col-description"><span class="description-text">{{ row.description }}</span></td>
+            {% for field in fields %}
+                {% set raw = (row.attributes or {}).get(field.name) %}
+                <td>
+                    {% if field.data_type == "bool" %}
+                        {% if raw %}✓{% else %}✗{% endif %}
+                    {% elif field.data_type == "ref" %}
+                        {% set ref_entity = (field.options or {}).get("ref_entity") %}
+                        {{ ref_options.get(ref_entity, {}).get(raw|string, raw or "") }}
+                    {% else %}
+                        {{ raw or "" }}
+                    {% endif %}
+                </td>
+            {% endfor %}
+            {% if entity_type == "client" %}
+                <td class="col-relation">
+                    <div class="relation-links">
+                        {% for account in accounts_by_client.get(row_id, []) %}
+                            <a class="entity-link" href="/accounts?open={{ account.id }}" @click.stop>{{ labels.account.get(account.id|string, account.id|string) }}</a>
+                        {% else %}
+                            <span class="muted">—</span>
+                        {% endfor %}
+                    </div>
+                </td>
+                <td class="col-relation">
+                    <div class="relation-links">
+                        {% for card in cards_by_client.get(row_id, []) %}
+                            <a class="entity-link" href="/cards?open={{ card.id }}" @click.stop>{{ labels.card.get(card.id|string, card.id|string) }}</a>
+                        {% else %}
+                            <span class="muted">—</span>
+                        {% endfor %}
+                    </div>
+                </td>
+            {% elif entity_type == "account" %}
+                <td class="col-relation">
+                    {% set client_id = row.client_id | string %}
+                    <a class="entity-link" href="/clients?open={{ row.client_id }}" @click.stop>{{ labels.client.get(client_id, client_id) }}</a>
+                </td>
+                <td class="col-relation">
+                    <div class="relation-links">
+                        {% for card in cards_by_account.get(row_id, []) %}
+                            <a class="entity-link" href="/cards?open={{ card.id }}" @click.stop>{{ labels.card.get(card.id|string, card.id|string) }}</a>
+                        {% else %}
+                            <span class="muted">—</span>
+                        {% endfor %}
+                    </div>
+                </td>
+            {% else %}
+                {% set account = accounts_by_id.get(row.account_id|string) %}
+                <td class="col-relation">
+                    {% if account %}
+                        {% set client_id = account.client_id | string %}
+                        <a class="entity-link" href="/clients?open={{ account.client_id }}" @click.stop>{{ labels.client.get(client_id, client_id) }}</a>
+                    {% else %}
+                        <span class="muted">—</span>
+                    {% endif %}
+                </td>
+                <td class="col-relation">
+                    <a class="entity-link" href="/accounts?open={{ row.account_id }}" @click.stop>{{ labels.account.get(row.account_id|string, row.account_id|string) }}</a>
+                </td>
+            {% endif %}
+            <td>
+                {% for tag in row.tags or [] %}
+                    <span class="tag">{{ tag }}</span>
+                {% endfor %}
+            </td>
+            <td>{{ row.created_at }}</td>
+        </tr>
+    {% endfor %}
+{% else %}
+    <tr>
+        <td colspan="{{ colspan }}" class="muted" style="text-align:center; padding:24px;">Нет данных</td>
+    </tr>
+{% endif %}

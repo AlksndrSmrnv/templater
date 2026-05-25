@@ -8,30 +8,127 @@
     </div>
 </div>
 
-<form id="entity-form" class="form" autocomplete="off">
-    <div id="form-errors" class="errors" hidden></div>
+{% set item = entity | default(none) %}
+{% set attrs = item.attributes if item else {} %}
+<form id="entity-form"
+      class="form"
+      autocomplete="off"
+      x-data="{
+          tags: {{ (item.tags if item else []) | tojson }},
+          draft: '',
+          addTag() {
+              const value = this.draft.trim();
+              if (value && !this.tags.includes(value)) this.tags.push(value);
+              this.draft = '';
+          }
+      }"
+      {% if entity_id %}
+      hx-put="/entities-htmx/{{ entity_type }}/{{ entity_id }}"
+      {% else %}
+      hx-post="/entities-htmx/{{ entity_type }}"
+      {% endif %}
+      hx-target="#form-errors"
+      hx-swap="innerHTML">
+    <div id="form-errors" class="errors"></div>
     <div class="form-section form-section--primary">
-        <label for="description">Описание (основное поле для языковой модели)</label>
+        <label for="description">Описание</label>
         <div class="muted">Кратко опишите, кто этот клиент или что означает этот счёт/карта.</div>
-        <textarea id="description" rows="6"></textarea>
+        <textarea id="description" name="description" rows="6">{{ item.description if item else "" }}</textarea>
     </div>
-    <div id="form-fields" class="form-fields">
-        <div class="muted">Загрузка схемы...</div>
+
+    {% if entity_type == "account" %}
+        <div class="form-section">
+            <label>Клиент <span class="required-mark">*</span>
+                <select name="client_id" required>
+                    <option value="">— выбрать —</option>
+                    {% for client in parent_options | default([]) %}
+                        {% set client_id = client.id | string %}
+                        <option value="{{ client.id }}" {% if item and item.client_id|string == client_id %}selected{% endif %}>{{ labels.client.get(client_id, client_id) }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+        </div>
+    {% elif entity_type == "card" %}
+        <div class="form-section">
+            <label>Счёт <span class="required-mark">*</span>
+                <select name="account_id" required>
+                    <option value="">— выбрать —</option>
+                    {% for account in parent_options | default([]) %}
+                        {% set account_id = account.id | string %}
+                        <option value="{{ account.id }}" {% if item and item.account_id|string == account_id %}selected{% endif %}>{{ labels.account.get(account_id, account_id) }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+        </div>
+    {% endif %}
+
+    <div id="form-fields">
+        {% for field in schema | default([]) %}
+            {% set field_id = "attr-" ~ field.name %}
+            {% set field_name = "attr_" ~ field.name %}
+            {% set value = attrs.get(field.name) %}
+            <div class="form-section">
+                <label for="{{ field_id }}">{{ field.label }}{% if field.is_required %}<span class="required-mark">*</span>{% endif %}{% if field.is_deprecated %}<span class="deprecated-marker">[устаревший]</span>{% endif %}</label>
+                {% if field.data_type == "text" %}
+                    <textarea id="{{ field_id }}" name="{{ field_name }}" rows="3">{{ value or "" }}</textarea>
+                {% elif field.data_type == "int" %}
+                    <input type="number" step="1" id="{{ field_id }}" name="{{ field_name }}" value="{{ value or '' }}">
+                {% elif field.data_type == "number" %}
+                    <input type="number" step="any" id="{{ field_id }}" name="{{ field_name }}" value="{{ value or '' }}">
+                {% elif field.data_type == "bool" %}
+                    <input type="checkbox" id="{{ field_id }}" name="{{ field_name }}" value="true" {% if value %}checked{% endif %}>
+                {% elif field.data_type == "date" %}
+                    <input type="date" id="{{ field_id }}" name="{{ field_name }}" value="{{ value or '' }}">
+                {% elif field.data_type == "datetime" %}
+                    <input type="datetime-local" id="{{ field_id }}" name="{{ field_name }}" value="{{ value or '' }}">
+                {% elif field.data_type == "enum" %}
+                    <select id="{{ field_id }}" name="{{ field_name }}">
+                        <option value="">—</option>
+                        {% for option in (field.options or {}).get("values", []) %}
+                            <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                {% elif field.data_type == "ref" %}
+                    {% set ref_entity = (field.options or {}).get("ref_entity") %}
+                    <select id="{{ field_id }}" name="{{ field_name }}">
+                        <option value="">—</option>
+                        {% for ref_id, ref_label in ref_options.get(ref_entity, {}).items() %}
+                            <option value="{{ ref_id }}" {% if value|string == ref_id %}selected{% endif %}>{{ ref_label }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="text" id="{{ field_id }}" name="{{ field_name }}" value="{{ value or '' }}">
+                {% endif %}
+                {% if field.description %}
+                    <div class="muted" style="font-size:12px; margin-top:4px;">{{ field.description }}</div>
+                {% endif %}
+            </div>
+        {% endfor %}
     </div>
+
     <div class="form-section">
         <label>Теги
-            <input type="text" id="tags-input" placeholder="введите тег и нажмите Enter">
+            <input type="text" x-model="draft" @keydown.enter.prevent="addTag()" placeholder="введите тег и нажмите Enter">
         </label>
-        <div id="tags-list" class="tags"></div>
+        <div class="tags">
+            <template x-for="(tag, idx) in tags" :key="tag">
+                <span class="tag"><span x-text="tag"></span> <button type="button" @click="tags.splice(idx, 1)">×</button></span>
+            </template>
+        </div>
+        <template x-for="tag in tags" :key="'input-' + tag">
+            <input type="hidden" name="tags" :value="tag">
+        </template>
     </div>
+
     <div class="form-actions">
         <button class="btn primary" type="submit">Сохранить</button>
-        {% if entity_id %}<button class="btn danger" type="button" id="btn-delete">Удалить</button>{% endif %}
+        {% if entity_id %}
+            <button class="btn danger"
+                    type="button"
+                    hx-delete="/entities-htmx/{{ entity_type }}/{{ entity_id }}?redirect=true"
+                    hx-confirm="Удалить запись?"
+                    hx-swap="none">Удалить</button>
+        {% endif %}
     </div>
 </form>
-
-<script>
-    window.PAGE = { entityType: {{ entity_type | tojson }}, entityId: {{ entity_id | tojson }} };
-</script>
-<script src="/static/js/entity-form.js"></script>
 {% endblock %}

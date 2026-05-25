@@ -8,262 +8,76 @@
     </div>
 </div>
 
-<form id="upload-form" class="form">
-    <div id="form-errors" class="errors" hidden></div>
-    <div class="form-section">
-        <label>Имя <span class="required-mark">*</span>
-            <input type="text" id="name" required>
-        </label>
-    </div>
-    <div class="form-section">
-        <label>Описание (необязательно)
-            <textarea id="description" rows="2"></textarea>
-        </label>
-    </div>
-    <div class="form-section">
-        <label>Формат</label>
-        <select id="format">
-            <option value="json">JSON</option>
-            <option value="xml">XML</option>
-        </select>
-    </div>
-    <div class="form-section">
-        <label>Содержимое <span class="required-mark">*</span></label>
-        <div id="upload-zone" class="upload-zone">
-            Перетащите файл сюда, выберите файл или вставьте текст ниже
-            <div style="margin-top:8px;">
-                <input type="file" id="file-input" accept=".json,.xml,.txt">
+<div x-data="{
+    stage: 'edit',
+    showFormErrors: true,
+    detectFormat(text) {
+        return (text || '').trim().startsWith('<') ? 'xml' : 'json';
+    },
+    async readFile(file) {
+        const text = await file.text();
+        this.$refs.content.value = text;
+        this.$refs.format.value = this.detectFormat(text);
+    }
+}" @template-previewed.window="stage = 'review'; showFormErrors = false">
+    <form id="upload-form"
+          class="form"
+          x-show="stage === 'edit'"
+          hx-post="/templates-htmx/preview"
+          hx-encoding="multipart/form-data"
+          hx-target="#review-stage"
+          hx-swap="innerHTML"
+          @htmx:before-request="showFormErrors = false"
+          @htmx:after-swap="showFormErrors = $event.detail.target === $refs.errors">
+        <div id="form-errors" class="errors" x-ref="errors" x-show="showFormErrors"></div>
+        <div class="form-section">
+            <label>Имя <span class="required-mark">*</span>
+                <input type="text" name="name" required>
+            </label>
+        </div>
+        <div class="form-section">
+            <label>Описание
+                <textarea name="description" rows="2"></textarea>
+            </label>
+        </div>
+        <div class="form-section">
+            <label>Формат</label>
+            <select name="format" x-ref="format">
+                <option value="json">JSON</option>
+                <option value="xml">XML</option>
+            </select>
+        </div>
+        <div class="form-section">
+            <label>Содержимое <span class="required-mark">*</span></label>
+            <div class="upload-zone"
+                 @dragover.prevent="$el.classList.add('dragover')"
+                 @dragleave="$el.classList.remove('dragover')"
+                 @drop.prevent="$el.classList.remove('dragover'); if ($event.dataTransfer.files[0]) readFile($event.dataTransfer.files[0])">
+                Перетащите файл сюда, выберите файл или вставьте текст ниже
+                <div style="margin-top:8px;">
+                    <input type="file" accept=".json,.xml,.txt" @change="if ($event.target.files[0]) readFile($event.target.files[0])">
+                </div>
             </div>
+            <textarea name="content"
+                      x-ref="content"
+                      rows="14"
+                      style="font-family: ui-monospace, Menlo, monospace; font-size: 13px; margin-top:8px;"
+                      @paste="setTimeout(() => { $refs.format.value = detectFormat($refs.content.value); }, 10)"></textarea>
         </div>
-        <textarea id="content" rows="14" style="font-family: ui-monospace, Menlo, monospace; font-size: 13px; margin-top:8px;"></textarea>
-    </div>
-    <div class="form-section">
-        <p class="muted" style="margin:0;">
-            {% if llm_active %}
-                Перед сохранением шаблон будет обработан LLM.
-            {% else %}
-                LLM не настроена, будет использована эвристика по именам полей.
-            {% endif %}
-        </p>
-    </div>
-    <div class="form-actions">
-        <button class="btn primary" id="btn-preview" type="submit">Обработать LLM</button>
-    </div>
-</form>
-
-<section id="review-stage" class="template-editor" hidden>
-    <div id="review-errors" class="errors" hidden></div>
-    <div style="display:flex; gap:24px; margin-bottom:14px; flex-wrap: wrap;">
-        <div style="flex:1; min-width:260px;">
-            <h3>Метаинформация LLM</h3>
-            <div id="review-meta" class="muted" style="font-size:12px;"></div>
+        <div class="form-section">
+            <p class="muted" style="margin:0;">
+                {% if llm_active %}
+                    Перед сохранением шаблон будет обработан LLM.
+                {% else %}
+                    LLM не настроена, будет использована эвристика по именам полей.
+                {% endif %}
+            </p>
         </div>
-        <div style="flex:1; min-width:260px;">
-            <h3>Статус обработки</h3>
-            <div id="review-status" class="muted" style="font-size:12px;"></div>
-            <div id="llm-error" class="errors" style="margin-top:10px;" hidden></div>
+        <div class="form-actions">
+            <button class="btn primary" type="submit">Обработать LLM</button>
         </div>
-    </div>
+    </form>
 
-    <div id="llm-debug-wrap" style="margin-top:10px;" hidden>
-        <button class="btn" id="btn-toggle-llm-debug" type="button">Показать запрос и ответ LLM</button>
-        <div id="llm-debug-panel" class="llm-debug-panel" style="margin-top:8px;" hidden>
-            <h4 style="margin:0 0 4px;">System prompt</h4>
-            <pre class="template-code" id="llm-debug-system" style="white-space:pre-wrap;"></pre>
-            <h4 style="margin:8px 0 4px;">User prompt</h4>
-            <pre class="template-code" id="llm-debug-user" style="white-space:pre-wrap;"></pre>
-            <h4 style="margin:8px 0 4px;">Ответ LLM</h4>
-            <pre class="template-code" id="llm-debug-response" style="white-space:pre-wrap;"></pre>
-        </div>
-    </div>
-
-    <h3>Содержимое</h3>
-    <pre class="template-code" id="preview-code"></pre>
-
-    <div class="form-actions" style="margin-top:14px;">
-        <button class="btn primary" id="btn-save-reviewed" type="button">Сохранить</button>
-        <button class="btn" id="btn-back-edit" type="button">Назад к редактированию</button>
-    </div>
-</section>
-
-<script src="/static/js/placeholder-editor.js"></script>
-<script>
-const zone = document.getElementById("upload-zone");
-const fileInput = document.getElementById("file-input");
-const contentArea = document.getElementById("content");
-const formatSel = document.getElementById("format");
-const uploadForm = document.getElementById("upload-form");
-const previewBtn = document.getElementById("btn-preview");
-const reviewStage = document.getElementById("review-stage");
-const reviewCode = document.getElementById("preview-code");
-const saveReviewedBtn = document.getElementById("btn-save-reviewed");
-const backBtn = document.getElementById("btn-back-edit");
-const llmDebugWrap = document.getElementById("llm-debug-wrap");
-const llmDebugToggle = document.getElementById("btn-toggle-llm-debug");
-const llmDebugPanel = document.getElementById("llm-debug-panel");
-const llmDebugSystem = document.getElementById("llm-debug-system");
-const llmDebugUser = document.getElementById("llm-debug-user");
-const llmDebugResponse = document.getElementById("llm-debug-response");
-const catalogPromise = TM.api("GET", "/api/templates/catalog").catch(e => {
-    TM.toast("Не удалось загрузить каталог полей: " + e.message, "error");
-    return [];
-});
-let previewState = null;
-let reviewEditor = null;
-
-function detectFormat(text) {
-    const trimmed = (text || "").trim();
-    if (trimmed.startsWith("<")) return "xml";
-    return "json";
-}
-
-function collectFormData() {
-    return {
-        name: document.getElementById("name").value.trim(),
-        description: document.getElementById("description").value,
-        format: formatSel.value,
-        content: contentArea.value,
-    };
-}
-
-function showErrors(target, err) {
-    target.hidden = false;
-    const detailLines = Array.isArray(err.details) ? "<br>" + err.details.map(TM.escapeHtml).join("<br>") : "";
-    target.innerHTML = `<strong>${TM.escapeHtml(err.message)}</strong>${detailLines}`;
-}
-
-function renderMeta(meta) {
-    const parts = [];
-    if (meta && meta.summary) parts.push(`<strong>Резюме:</strong> ${TM.escapeHtml(meta.summary)}<br>`);
-    if (meta && meta.category) parts.push(`<strong>Категория:</strong> ${TM.escapeHtml(meta.category)}<br>`);
-    if (meta && Array.isArray(meta.scenarios) && meta.scenarios.length) {
-        const items = meta.scenarios.map(s => `<li>${TM.escapeHtml(s)}</li>`).join("");
-        parts.push(`<strong>Сценарии:</strong><ul style="margin:4px 0 0 18px;">${items}</ul>`);
-    }
-    return parts.join("") || "Метаинформация не получена.";
-}
-
-async function showReview(data) {
-    previewState = data;
-    const catalog = await catalogPromise;
-    document.getElementById("review-meta").innerHTML = renderMeta(data.llm_meta || {});
-    document.getElementById("review-status").textContent = data.llm_used
-        ? "Шаблон обработан LLM."
-        : "Шаблон обработан эвристикой.";
-    const llmError = document.getElementById("llm-error");
-    if (data.llm_error) {
-        llmError.hidden = false;
-        llmError.textContent = data.llm_error;
-    } else {
-        llmError.hidden = true;
-        llmError.textContent = "";
-    }
-    if (data.llm_debug && typeof data.llm_debug === "object" && !Array.isArray(data.llm_debug)) {
-        llmDebugSystem.textContent = String(data.llm_debug.system_prompt ?? "");
-        llmDebugUser.textContent = String(data.llm_debug.user_prompt ?? "");
-        llmDebugResponse.textContent = String(data.llm_debug.response_text ?? "");
-        llmDebugPanel.hidden = true;
-        llmDebugToggle.textContent = "Показать запрос и ответ LLM";
-        llmDebugWrap.hidden = false;
-    } else {
-        llmDebugWrap.hidden = true;
-        llmDebugPanel.hidden = true;
-        llmDebugSystem.textContent = "";
-        llmDebugUser.textContent = "";
-        llmDebugResponse.textContent = "";
-        llmDebugToggle.textContent = "Показать запрос и ответ LLM";
-    }
-    reviewCode.innerHTML = data.rendered_html;
-    if (reviewEditor) {
-        reviewEditor.setCatalog(catalog);
-        reviewEditor.setPlaceholders(data.placeholders || []);
-    } else {
-        reviewEditor = TM.mountPlaceholderEditor({
-            codeEl: reviewCode,
-            placeholders: data.placeholders || [],
-            catalog,
-        });
-    }
-    uploadForm.hidden = true;
-    reviewStage.hidden = false;
-}
-
-llmDebugToggle.addEventListener("click", () => {
-    const shouldShow = llmDebugPanel.hidden;
-    llmDebugPanel.hidden = !shouldShow;
-    llmDebugToggle.textContent = shouldShow
-        ? "Скрыть запрос и ответ LLM"
-        : "Показать запрос и ответ LLM";
-});
-
-zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("dragover"); });
-zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
-zone.addEventListener("drop", async e => {
-    e.preventDefault(); zone.classList.remove("dragover");
-    const file = e.dataTransfer?.files?.[0];
-    if (file) await readFile(file);
-});
-fileInput.addEventListener("change", async e => {
-    const file = e.target.files?.[0];
-    if (file) await readFile(file);
-});
-
-async function readFile(file) {
-    const text = await file.text();
-    contentArea.value = text;
-    formatSel.value = detectFormat(text);
-}
-
-contentArea.addEventListener("paste", () => {
-    setTimeout(() => { formatSel.value = detectFormat(contentArea.value); }, 10);
-});
-
-uploadForm.addEventListener("submit", async e => {
-    e.preventDefault();
-    const errors = document.getElementById("form-errors");
-    errors.hidden = true; errors.innerHTML = "";
-    previewBtn.disabled = true;
-    previewBtn.innerHTML = '<span class="spinner"></span> Обработка...';
-    try {
-        const data = await TM.api("POST", "/api/templates/preview", collectFormData());
-        await showReview(data);
-    } catch (err) {
-        showErrors(errors, err);
-    } finally {
-        previewBtn.disabled = false;
-        previewBtn.textContent = "Обработать LLM";
-    }
-});
-
-backBtn.addEventListener("click", () => {
-    reviewStage.hidden = true;
-    uploadForm.hidden = false;
-});
-
-saveReviewedBtn.addEventListener("click", async () => {
-    const errors = document.getElementById("review-errors");
-    errors.hidden = true; errors.innerHTML = "";
-    if (!previewState || !reviewEditor) return;
-    saveReviewedBtn.disabled = true;
-    saveReviewedBtn.innerHTML = '<span class="spinner"></span> Сохранение...';
-    const formData = collectFormData();
-    try {
-        const created = await TM.api("POST", "/api/templates", {
-            name: formData.name,
-            description: formData.description,
-            format: previewState.format,
-            content: previewState.original_content,
-            analyze_with_llm: false,
-            placeholders: reviewEditor.getPlaceholders(),
-            llm_meta: previewState.llm_meta || {},
-        });
-        window.location.href = `/templates/${created.id}`;
-    } catch (err) {
-        showErrors(errors, err);
-    } finally {
-        saveReviewedBtn.disabled = false;
-        saveReviewedBtn.textContent = "Сохранить";
-    }
-});
-</script>
+    <section id="review-stage" x-show="stage === 'review'" x-cloak></section>
+</div>
 {% endblock %}

@@ -1,0 +1,54 @@
+<form id="review-form"
+      class="template-editor"
+      hx-post="/templates-htmx"
+      hx-swap="none">
+    <div id="review-errors" class="errors"></div>
+    <input type="hidden" name="name" value="{{ name }}">
+    <input type="hidden" name="description" value="{{ description }}">
+    <input type="hidden" name="format" value="{{ format }}">
+    <input type="hidden" name="content" value="{{ original_content }}">
+    <input type="hidden" name="llm_meta" value="{{ llm_meta | tojson | forceescape }}">
+
+    <div style="display:flex; gap:24px; margin-bottom:14px; flex-wrap: wrap;">
+        <div style="flex:1; min-width:260px;">
+            <h3>Метаинформация LLM</h3>
+            {% include "partials/template_meta.html" %}
+        </div>
+        <div style="flex:1; min-width:260px;">
+            <h3>Статус обработки</h3>
+            <div class="muted" style="font-size:12px;">
+                {% if llm_used %}
+                    Шаблон обработан LLM.
+                {% else %}
+                    Шаблон обработан эвристикой.
+                {% endif %}
+            </div>
+            {% if llm_error %}
+                <div class="errors" style="margin-top:10px;">{{ llm_error }}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if llm_debug %}
+        <div style="margin-top:10px;" x-data="{ open: false }">
+            <button class="btn" type="button" @click="open = !open" x-text="open ? 'Скрыть запрос и ответ LLM' : 'Показать запрос и ответ LLM'"></button>
+            <div id="llm-debug-panel" class="llm-debug-panel" style="margin-top:8px;" x-show="open" x-cloak>
+                <h4 style="margin:0 0 4px;">System prompt</h4>
+                <pre class="template-code" id="llm-debug-system" style="white-space:pre-wrap;">{{ llm_debug.get("system_prompt", "") }}</pre>
+                <h4 style="margin:8px 0 4px;">User prompt</h4>
+                <pre class="template-code" id="llm-debug-user" style="white-space:pre-wrap;">{{ llm_debug.get("user_prompt", "") }}</pre>
+                <h4 style="margin:8px 0 4px;">Ответ LLM</h4>
+                <pre class="template-code" id="llm-debug-response" style="white-space:pre-wrap;">{{ llm_debug.get("response_text", "") }}</pre>
+            </div>
+        </div>
+    {% endif %}
+
+    <h3 style="margin-top:14px;">Содержимое</h3>
+    {% set wrap_id = "review-template-code-wrap" %}
+    {% include "partials/template_code.html" %}
+
+    <div class="form-actions" style="margin-top:14px;">
+        <button class="btn primary" type="submit">Сохранить</button>
+        <button class="btn" type="button" @click="stage = 'edit'; showFormErrors = false">Назад к редактированию</button>
+    </div>
+</form>
