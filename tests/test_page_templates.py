@@ -148,6 +148,22 @@ def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
     assert 'id="sender-client"' not in html
 
 
+def test_template_upload_llm_debug_panel_keeps_headings_outside_code_blocks() -> None:
+    html = render_template(
+        "templates_reg/upload.html",
+        {
+            "active": "templates",
+            "llm_active": True,
+        },
+    )
+
+    assert '<div id="llm-debug-panel" class="template-code"' not in html
+    assert '<div id="llm-debug-panel" class="llm-debug-panel"' in html
+    assert '<pre class="template-code" id="llm-debug-system"' in html
+    assert '<pre class="template-code" id="llm-debug-user"' in html
+    assert '<pre class="template-code" id="llm-debug-response"' in html
+
+
 @pytest.mark.asyncio
 async def test_page_fill_prefers_persisted_account_owner_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     template_id = uuid.uuid4()
