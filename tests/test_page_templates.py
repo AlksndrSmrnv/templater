@@ -343,6 +343,25 @@ def test_template_code_partial_seeds_dynamic_tokens_for_picker() -> None:
     assert "dropdown-section-header" in html
 
 
+def test_template_code_partial_stops_click_propagation_on_placeholder() -> None:
+    # The dropdown's @click.outside lives on the document and fires for any
+    # click that bubbles past it. The placeholder click MUST stopPropagation
+    # so the same trusted click that opens the picker doesn't immediately
+    # close it via click.outside. Without stopPropagation, Alpine sets
+    # dropdownIdx=2 → renders dropdown → click.outside on the still-bubbling
+    # event fires → resets dropdownIdx=null in the same task. Picker never
+    # appears to the user.
+    html = render_template(
+        "partials/template_code.html",
+        {"rendered_html": "{}", "placeholders": [], "catalog": [], "dynamic_tokens": []},
+    )
+    assert "$event.stopPropagation()" in html
+    # And it must only stop when an actual placeholder was clicked — clicks
+    # on empty pre area must still bubble so click.outside can close an
+    # already-open picker.
+    assert "if (span) { $event.stopPropagation()" in html
+
+
 @pytest.mark.asyncio
 async def test_page_fill_detects_account_owner_from_placeholders_despite_false_meta(
     monkeypatch: pytest.MonkeyPatch,

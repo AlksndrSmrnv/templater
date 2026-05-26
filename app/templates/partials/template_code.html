@@ -88,7 +88,7 @@
     <input type="hidden" x-ref="dynamicTokensSeed" value="{{ (dynamic_tokens | default([])) | tojson | forceescape }}">
     <input type="hidden" name="{{ input_name | default('placeholders') }}" :value="JSON.stringify(placeholders)">
     <pre class="template-code"
-         @click="const span = $event.target.closest('.placeholder'); if (span) open(span, Number(span.dataset.idx));">{{ rendered_html | safe }}</pre>
+         @click="const span = $event.target.closest('.placeholder'); if (span) { $event.stopPropagation(); open(span, Number(span.dataset.idx)); }">{{ rendered_html | safe }}</pre>
     <template x-if="dropdownIdx !== null">
         <div class="dropdown" :style="dropdownStyle" @click.outside="dropdownIdx = null; dynamicSuggestion = null;" x-cloak>
             <input type="search" x-model="search" placeholder="Поиск поля..." autocomplete="off">
