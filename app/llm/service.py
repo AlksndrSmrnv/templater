@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from app.llm.coordinator import LLMCoordinator
@@ -40,7 +41,11 @@ class LLMService:
         }
         parsed = self._parse_json(response.text)
         if not isinstance(parsed, dict):
-            log.warning("LLM analyze_template returned non-dict; using empty result")
+            log.warning(
+                "LLM analyze_template returned non-dict; using empty result. "
+                "response_text[:200]=%r",
+                response.text[:200],
+            )
             return {"placeholders": [], "meta": {}, "debug": debug}
         placeholders = parsed.get("placeholders") or []
         meta = parsed.get("meta") or {}
@@ -64,16 +69,64 @@ class LLMService:
 
     @staticmethod
     def _parse_json(text: str) -> Any:
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            # try to extract first JSON object from the text
-            start = text.find("{")
-            end = text.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                fragment = text[start : end + 1]
+        """Parse a JSON object from an LLM response.
+
+        GigaChat regularly wraps its answer in a markdown code fence
+        (``` ```json ... ``` ```) and occasionally emits trailing commas before
+        ``}``/``]``. Both make ``json.loads`` fail outright; without recovery
+        the caller drops *all* placeholders and meta. This tries multiple
+        repair strategies before giving up.
+        """
+
+        candidates: list[str] = []
+        raw = text.strip()
+        fence_stripped = LLMService._strip_code_fence(raw)
+        if fence_stripped:
+            candidates.append(fence_stripped)
+        if raw and raw not in candidates:
+            candidates.append(raw)
+        # As a last resort, take the widest brace-delimited substring — this
+        # handles models that wrap the JSON in prose ("Извините, вот ответ: {…}").
+        haystack = fence_stripped or raw
+        start = haystack.find("{")
+        end = haystack.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            fragment = haystack[start : end + 1]
+            if fragment not in candidates:
+                candidates.append(fragment)
+
+        for candidate in candidates:
+            for variant in (candidate, LLMService._strip_trailing_commas(candidate)):
                 try:
-                    return json.loads(fragment)
+                    return json.loads(variant)
                 except json.JSONDecodeError:
-                    return None
-            return None
+                    continue
+        return None
+
+    @staticmethod
+    def _strip_code_fence(text: str) -> str:
+        """Strip a leading ``` / ```json fence and matching trailing ``` if present.
+
+        Tolerates a missing closing fence (truncated responses) — the opening
+        line is still removed so the JSON body becomes parseable.
+        """
+
+        if not text.startswith("```"):
+            return ""
+        lines = text.splitlines()
+        # First line is the opening fence (``` or ```json or ```JSON ...).
+        lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        return "\n".join(lines).strip()
+
+    @staticmethod
+    def _strip_trailing_commas(text: str) -> str:
+        """Remove trailing commas before ``}``/``]`` — a common LLM JSON mistake."""
+
+        prev = None
+        out = text
+        while prev != out:
+            prev = out
+            out = re.sub(r",(\s*[}\]])", r"\1", out)
+        return out
