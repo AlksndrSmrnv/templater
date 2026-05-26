@@ -253,9 +253,11 @@ def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
     assert 'id="sender-client"' not in html
     assert "pickFromList(event, role, kind)" in html
     assert "event.stopPropagation();" in html
-    assert "switch (kind)" in html
+    assert "this.selectClient(role, id);" in html
+    assert "this.selectAccount(role, id);" in html
+    assert "this.selectCard(role, id);" in html
+    assert "console.warn('pickFromList: unknown kind', kind);" in html
     assert "if (this.state[role].clientId === id) return;" in html
-    assert "Account/card choices are optional toggles" in html
     for role in ("sender", "receiver", "accountOwner"):
         client_list = start_tag_by_id(html, "div", f"{role}-clients")
         account_list = start_tag_by_id(html, "div", f"{role}-accounts")

@@ -26,21 +26,35 @@
         });
     },
     pickFromList(event, role, kind) {
-        const button = event.target.closest(`button[data-${kind}-id]`);
+        const selectors = {
+            client: 'button[data-client-id]',
+            account: 'button[data-account-id]',
+            card: 'button[data-card-id]',
+        };
+        const selector = selectors[kind];
+        if (!selector) {
+            console.warn('pickFromList: unknown kind', kind);
+            return;
+        }
+        const button = event.target.closest(selector);
         if (!button || !event.currentTarget.contains(button)) return;
         const id = button.dataset[`${kind}Id`];
         if (!id) return;
-        event.stopPropagation();
         switch (kind) {
             case 'client':
+                event.stopPropagation();
                 this.selectClient(role, id);
                 break;
             case 'account':
+                event.stopPropagation();
                 this.selectAccount(role, id);
                 break;
             case 'card':
+                event.stopPropagation();
                 this.selectCard(role, id);
                 break;
+            default:
+                console.warn('pickFromList: unknown kind', kind);
         }
     },
     /* Account/card choices are optional toggles; picking one clears the other for the same role. */
