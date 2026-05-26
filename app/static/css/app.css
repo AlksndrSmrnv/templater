@@ -486,6 +486,8 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 .dropdown li { padding: 6px 10px; cursor: pointer; font-size: 13px; }
 .dropdown li:hover, .dropdown li.active { background: var(--surface-2); }
 .dropdown li .path { color: var(--muted); font-size: 11px; }
+.dropdown li.dropdown-section-header { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); cursor: default; padding: 8px 10px 2px; }
+.dropdown li.dropdown-section-header:hover { background: transparent; }
 
 /* Settings sections */
 .settings-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 18px; }

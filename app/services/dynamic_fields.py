@@ -10,6 +10,26 @@ DYNAMIC_FIELD_TOKENS: dict[str, str] = {
 }
 DYNAMIC_TOKENS: frozenset[str] = frozenset(DYNAMIC_FIELD_TOKENS.values())
 
+# Stable, UI-ready ordering of envelope tokens. The placeholder dropdown shows
+# them in this exact sequence; ``DYNAMIC_TOKENS`` is a frozenset and would
+# render in non-deterministic order if used directly.
+_DYNAMIC_TOKEN_CATALOG: tuple[dict[str, str], ...] = (
+    {"name": "rqUID", "label": "ID запроса (rqUID)"},
+    {"name": "operUID", "label": "ID операции (operUID)"},
+    {"name": "rqTm", "label": "Время запроса (rqTm)"},
+    {"name": "channelDateTime", "label": "Дата/время канала (channelDateTime)"},
+)
+
+
+def dynamic_token_catalog() -> list[dict[str, str]]:
+    """Return UI catalog of dynamic envelope tokens for placeholder dropdown.
+
+    Each entry: ``{"name": <canonical token>, "label": <human-readable>}``.
+    Order is stable and matches the order users see in the picker.
+    """
+
+    return [dict(entry) for entry in _DYNAMIC_TOKEN_CATALOG]
+
 _XML_INDEX_RE = re.compile(r"\[\d+\]$")
 _INDEX_SEGMENT_RE = re.compile(r"\d+|\[\d+\]")
 _NON_ALNUM_RE = re.compile(r"[^0-9A-Za-z]+")
