@@ -6,7 +6,7 @@
         {% set account_id = account.id | string %}
         <button type="button"
                 class="picker-row picker-row--stacked"
-                @click="selectAccount('{{ role }}', '{{ account_id }}')"
+                data-account-id="{{ account_id }}"
                 :class="{ selected: state.{{ role }}.accountId === '{{ account_id }}' }">
             <span class="picker-row-main">{{ labels.account.get(account_id, account_id) }}</span>
             <span class="picker-row-sub">{{ account.description or "Без описания" }}</span>

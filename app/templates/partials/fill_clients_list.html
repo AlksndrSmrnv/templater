@@ -4,7 +4,7 @@
         {% set row_client_id = client.id | string %}
         <button type="button"
                 class="picker-row"
-                @click="selectClient('{{ role }}', '{{ row_client_id }}')"
+                data-client-id="{{ row_client_id }}"
                 :class="{ selected: state.{{ role }}.clientId === '{{ row_client_id }}' }">
             <span class="picker-row-main">{{ labels.client.get(row_client_id, row_client_id) }}</span>
             <span class="picker-row-sub">{{ client.id }}</span>

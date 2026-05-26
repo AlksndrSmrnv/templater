@@ -227,6 +227,52 @@ def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
     assert "accountOwner: { clientId: '', accountId: '', cardId: '' }" in html
     assert 'hx-post="/templates-htmx/3db678b1-1111-2222-3333-444444444444/fill/render"' in html
     assert 'id="sender-client"' not in html
+    assert html.count("button[data-client-id]") == 3
+    assert html.count("button[data-account-id]") == 3
+    assert html.count("button[data-card-id]") == 3
+    for role in ("sender", "receiver", "accountOwner"):
+        assert f"selectClient('{role}', btn.dataset.clientId)" in html
+        assert f"selectAccount('{role}', btn.dataset.accountId)" in html
+        assert f"selectCard('{role}', btn.dataset.cardId)" in html
+
+
+def test_template_fill_partials_use_data_attributes_for_delegated_selection() -> None:
+    client_id = "11111111-1111-1111-1111-111111111111"
+    account_id = "22222222-2222-2222-2222-222222222222"
+    card_id = "33333333-3333-3333-3333-333333333333"
+    clients_html = render_template(
+        "partials/fill_clients_list.html",
+        {
+            "role": "sender",
+            "clients": [SimpleNamespace(id=client_id)],
+            "labels": {"client": {client_id: "Client One"}, "account": {}, "card": {}},
+        },
+    )
+    accounts_html = render_template(
+        "partials/fill_accounts_list.html",
+        {
+            "role": "sender",
+            "client_id": client_id,
+            "accounts": [SimpleNamespace(id=account_id, description="Primary account")],
+            "labels": {"client": {}, "account": {account_id: "Account One"}, "card": {}},
+        },
+    )
+    cards_html = render_template(
+        "partials/fill_cards_list.html",
+        {
+            "role": "sender",
+            "client_id": client_id,
+            "cards": [SimpleNamespace(id=card_id, account_id=account_id, description="Primary card")],
+            "labels": {"client": {}, "account": {account_id: "Account One"}, "card": {card_id: "Card One"}},
+        },
+    )
+
+    assert f'data-client-id="{client_id}"' in clients_html
+    assert f'data-account-id="{account_id}"' in accounts_html
+    assert f'data-card-id="{card_id}"' in cards_html
+    assert "@click=" not in clients_html
+    assert "@click=" not in accounts_html
+    assert "@click=" not in cards_html
 
 
 def test_template_upload_uses_htmx_preview_form() -> None:

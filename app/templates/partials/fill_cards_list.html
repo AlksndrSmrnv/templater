@@ -6,7 +6,7 @@
         {% set card_id = card.id | string %}
         <button type="button"
                 class="picker-row picker-row--stacked"
-                @click="selectCard('{{ role }}', '{{ card_id }}')"
+                data-card-id="{{ card_id }}"
                 :class="{ selected: state.{{ role }}.cardId === '{{ card_id }}' }">
             <span class="picker-row-main">{{ labels.card.get(card_id, card_id) }}</span>
             <span class="picker-row-sub">{{ card.description or "Без описания" }}</span>

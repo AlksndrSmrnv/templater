@@ -52,7 +52,11 @@
                            hx-trigger="input changed delay:200ms"
                            hx-target="#{{ role }}-clients"
                            hx-swap="innerHTML">
-                    <div id="{{ role }}-clients" class="picker-list" role="listbox" aria-label="{{ title }}: клиенты">
+                    <div id="{{ role }}-clients"
+                         class="picker-list"
+                         role="listbox"
+                         aria-label="{{ title }}: клиенты"
+                         @click="const btn = $event.target.closest('button[data-client-id]'); if (btn) selectClient('{{ role }}', btn.dataset.clientId)">
                         {% include "partials/fill_clients_list.html" %}
                     </div>
                 </div>
@@ -61,6 +65,7 @@
                         <label>Счета</label>
                         <div class="picker-list picker-list--stacked"
                              id="{{ role }}-accounts"
+                             @click="const btn = $event.target.closest('button[data-account-id]'); if (btn) selectAccount('{{ role }}', btn.dataset.accountId)"
                              hx-get="/templates-htmx/{{ template.id }}/fill/accounts?role={{ role }}"
                              hx-trigger="client-changed from:closest section"
                              hx-include="closest section"
@@ -74,6 +79,7 @@
                         <label>Карты</label>
                         <div class="picker-list picker-list--stacked"
                              id="{{ role }}-cards"
+                             @click="const btn = $event.target.closest('button[data-card-id]'); if (btn) selectCard('{{ role }}', btn.dataset.cardId)"
                              hx-get="/templates-htmx/{{ template.id }}/fill/cards?role={{ role }}"
                              hx-trigger="client-changed from:closest section"
                              hx-include="closest section"
@@ -106,7 +112,11 @@
                            hx-trigger="input changed delay:200ms"
                            hx-target="#{{ role }}-clients"
                            hx-swap="innerHTML">
-                    <div id="{{ role }}-clients" class="picker-list" role="listbox" aria-label="{{ title }}: клиенты">
+                    <div id="{{ role }}-clients"
+                         class="picker-list"
+                         role="listbox"
+                         aria-label="{{ title }}: клиенты"
+                         @click="const btn = $event.target.closest('button[data-client-id]'); if (btn) selectClient('{{ role }}', btn.dataset.clientId)">
                         {% include "partials/fill_clients_list.html" %}
                     </div>
                 </div>
@@ -115,6 +125,7 @@
                         <label>Счета</label>
                         <div class="picker-list picker-list--stacked"
                              id="{{ role }}-accounts"
+                             @click="const btn = $event.target.closest('button[data-account-id]'); if (btn) selectAccount('{{ role }}', btn.dataset.accountId)"
                              hx-get="/templates-htmx/{{ template.id }}/fill/accounts?role={{ role }}"
                              hx-trigger="client-changed from:closest section"
                              hx-include="closest section"
@@ -128,6 +139,7 @@
                         <label>Карты</label>
                         <div class="picker-list picker-list--stacked"
                              id="{{ role }}-cards"
+                             @click="const btn = $event.target.closest('button[data-card-id]'); if (btn) selectCard('{{ role }}', btn.dataset.cardId)"
                              hx-get="/templates-htmx/{{ template.id }}/fill/cards?role={{ role }}"
                              hx-trigger="client-changed from:closest section"
                              hx-include="closest section"
