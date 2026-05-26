@@ -30,11 +30,20 @@
         if (!button || !event.currentTarget.contains(button)) return;
         const id = button.dataset[`${kind}Id`];
         if (!id) return;
-        if (kind === 'client') this.selectClient(role, id);
-        if (kind === 'account') this.selectAccount(role, id);
-        if (kind === 'card') this.selectCard(role, id);
+        event.stopPropagation();
+        switch (kind) {
+            case 'client':
+                this.selectClient(role, id);
+                break;
+            case 'account':
+                this.selectAccount(role, id);
+                break;
+            case 'card':
+                this.selectCard(role, id);
+                break;
+        }
     },
-    /* A role is filled from either an account or a card; choosing one clears the other. */
+    /* Account/card choices are optional toggles; picking one clears the other for the same role. */
     selectAccount(role, id) {
         this.state[role].accountId = this.state[role].accountId === id ? '' : id;
         if (this.state[role].accountId) this.state[role].cardId = '';

@@ -252,8 +252,10 @@ def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
     assert 'hx-post="/templates-htmx/3db678b1-1111-2222-3333-444444444444/fill/render"' in html
     assert 'id="sender-client"' not in html
     assert "pickFromList(event, role, kind)" in html
+    assert "event.stopPropagation();" in html
+    assert "switch (kind)" in html
     assert "if (this.state[role].clientId === id) return;" in html
-    assert "choosing one clears the other" in html
+    assert "Account/card choices are optional toggles" in html
     for role in ("sender", "receiver", "accountOwner"):
         client_list = start_tag_by_id(html, "div", f"{role}-clients")
         account_list = start_tag_by_id(html, "div", f"{role}-accounts")
