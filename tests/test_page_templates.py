@@ -313,6 +313,34 @@ def test_app_css_defines_htmx_indicator_states() -> None:
     assert ".htmx-request .btn[disabled]" in css
     assert "cursor: wait" in css
     assert "cursor: not-allowed" in css
+    assert ".dropdown li.dropdown-section-header" in css
+
+
+def test_template_code_partial_seeds_dynamic_tokens_for_picker() -> None:
+    # The placeholder dropdown reads its dynamic-token list from a hidden seed
+    # input. Both routes that render this partial (preview + view) must pass
+    # ``dynamic_tokens`` so the picker offers rqUID/operUID/rqTm/channelDateTime
+    # as explicit options for any field — see services.dynamic_fields.
+    from app.services.dynamic_fields import dynamic_token_catalog
+
+    html = render_template(
+        "partials/template_code.html",
+        {
+            "rendered_html": "{}",
+            "placeholders": [],
+            "catalog": [],
+            "dynamic_tokens": dynamic_token_catalog(),
+        },
+    )
+
+    assert 'x-ref="dynamicTokensSeed"' in html
+    # Token names appear inside the JSON-encoded seed value.
+    for token_name in ("rqUID", "operUID", "rqTm", "channelDateTime"):
+        assert token_name in html
+    # Visible label and the picker handler are wired into the dropdown UI.
+    assert "Динамические параметры" in html
+    assert "chooseDynamic(token)" in html
+    assert "dropdown-section-header" in html
 
 
 @pytest.mark.asyncio

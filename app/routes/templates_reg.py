@@ -21,6 +21,7 @@ from app.routes.entities_htmx import entity_label
 from app.routes.htmx_utils import form_errors_response, form_str, toast_header, validation_errors_response
 from app.routes.uow import commit_and_refresh, commit_or_409
 from app.schemas.template import TemplateCreate, TemplateFillRequest, TemplateUpdate
+from app.services.dynamic_fields import dynamic_token_catalog
 from app.services.entities import AccountService, CardService, ClientService
 from app.services.placeholders import PlaceholderFiller
 from app.services.template_render import render_filled_html, render_template_html
@@ -131,6 +132,7 @@ async def preview_template(data: TemplateCreate, session: AsyncSession) -> dict[
         "llm_error": llm_error,
         "llm_debug": result.get("llm_debug"),
         "catalog": await svc.build_field_catalog(),
+        "dynamic_tokens": dynamic_token_catalog(),
     }
 
 
@@ -161,6 +163,7 @@ async def _template_code_context(session: AsyncSession, template: Any) -> dict[s
         "rendered_html": render_template_html(template),
         "placeholders": template.placeholders,
         "catalog": await TemplateService(session).build_field_catalog(),
+        "dynamic_tokens": dynamic_token_catalog(),
         "llm_active": get_settings().llm_active,
     }
 

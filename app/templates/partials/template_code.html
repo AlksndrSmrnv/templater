@@ -3,6 +3,7 @@
      x-data="{
          placeholders: [],
          catalog: [],
+         dynamicTokens: [],
          dropdownIdx: null,
          dynamicSuggestion: null,
          search: '',
@@ -10,6 +11,7 @@
          init() {
              this.placeholders = JSON.parse(this.$refs.placeholdersSeed.value || '[]');
              this.catalog = JSON.parse(this.$refs.catalogSeed.value || '[]');
+             this.dynamicTokens = JSON.parse(this.$refs.dynamicTokensSeed.value || '[]');
              this.$nextTick(() => this.refresh());
          },
          display(idx) {
@@ -65,6 +67,16 @@
              this.dynamicSuggestion = null;
              this.refresh();
          },
+         chooseDynamic(token) {
+             const ph = this.placeholders[this.dropdownIdx];
+             if (!ph || !token || !token.name) return;
+             ph.mode = 'dynamic';
+             {% raw %}ph.value = '{{' + token.name + '}}';{% endraw %}
+             ph.suggestion = token.name;
+             this.dropdownIdx = null;
+             this.dynamicSuggestion = null;
+             this.refresh();
+         },
          filteredCatalog() {
              const q = this.search.trim().toLowerCase();
              if (!q) return this.catalog;
@@ -73,6 +85,7 @@
      }">
     <input type="hidden" x-ref="placeholdersSeed" value="{{ (placeholders | default([])) | tojson | forceescape }}">
     <input type="hidden" x-ref="catalogSeed" value="{{ (catalog | default([])) | tojson | forceescape }}">
+    <input type="hidden" x-ref="dynamicTokensSeed" value="{{ (dynamic_tokens | default([])) | tojson | forceescape }}">
     <input type="hidden" name="{{ input_name | default('placeholders') }}" :value="JSON.stringify(placeholders)">
     <pre class="template-code"
          @click="const span = $event.target.closest('.placeholder'); if (span) open(span, Number(span.dataset.idx));">{{ rendered_html | safe }}</pre>
@@ -90,6 +103,15 @@
                     <strong>Оставить исходное значение</strong>
                     <div class="path" x-text="(placeholders[dropdownIdx] || {}).original || ''"></div>
                 </li>
+                <template x-if="dynamicTokens.length">
+                    <li class="dropdown-section-header">Динамические параметры</li>
+                </template>
+                <template x-for="token in dynamicTokens" :key="token.name">
+                    <li @click="chooseDynamic(token)">
+                        <span x-text="token.label"></span>
+                        <span class="path" {% raw %}x-text="'{{' + token.name + '}}'"{% endraw %}></span>
+                    </li>
+                </template>
                 <template x-for="entry in filteredCatalog()" :key="entry.path">
                     <li @click="choose(entry)">
                         <span x-text="entry.label"></span>
