@@ -629,7 +629,7 @@ async def htmx_fill_render(
 ) -> Response:
     try:
         data, raw_values = await _fill_request_from_form(request)
-        template, rendered, rendered_html, unresolved, _changed = await _render_fill(
+        template, rendered, rendered_html, unresolved, changed = await _render_fill(
             session, template_id, data
         )
     except ValueError:
@@ -642,6 +642,11 @@ async def htmx_fill_render(
             "content": rendered,
             "rendered_html": rendered_html,
             "unresolved": unresolved,
+            # ``changed_json`` / ``unresolved_json`` go straight into the save
+            # form as hidden inputs so saving persists exactly the snapshot the
+            # user just reviewed — no re-render server-side.
+            "changed_json": json.dumps(changed, ensure_ascii=False),
+            "unresolved_json": json.dumps(unresolved, ensure_ascii=False),
             "fill_values": raw_values,
         },
     )
@@ -675,29 +680,50 @@ async def htmx_fill_save(
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
 ) -> Response:
-    """Persist a filled-template snapshot from the current fill form.
+    """Persist the snapshot the user just reviewed in the result panel.
 
-    Re-runs ``_render_fill`` so the saved snapshot matches exactly what the
-    user sees in the result panel, then writes a ``FilledTemplate`` row and
-    returns a small partial with a link to the detail page (rendered into
-    ``#save-feedback`` in ``fill_result.html``).
+    The save form embeds the rendered ``content`` / ``changed`` / ``unresolved``
+    as hidden fields (see ``partials/fill_result.html``). We persist those
+    verbatim instead of re-running ``_render_fill`` — otherwise any change to
+    the template, the picked client/account/card attributes, or the implicit
+    first account/card *between* «Заполнить» and «Сохранить» would silently
+    diverge the saved snapshot from what the user actually saw.
+
+    Role IDs are still re-parsed from the form so the audit FK columns get
+    validated UUIDs (or NULLs); the snapshot fields are trusted as-is from
+    the same response that produced the visible result.
     """
 
     from app.services.filled_templates import FilledTemplateService
 
+    form = await request.form()
     try:
         data, _raw = await _fill_request_from_form(request)
-        template, rendered, _html, unresolved, changed = await _render_fill(
-            session, template_id, data
-        )
     except ValueError:
         return form_errors_response(request, templates, "Проверьте выбранные записи")
+
+    filled_content = form_str(form, "content")
+    if not filled_content:
+        return form_errors_response(
+            request,
+            templates,
+            "Нет результата для сохранения — сначала нажмите «Заполнить».",
+        )
+    try:
+        changed_locations = json.loads(form_str(form, "changed_json") or "[]")
+        unresolved = json.loads(form_str(form, "unresolved_json") or "[]")
+    except json.JSONDecodeError:
+        return form_errors_response(request, templates, "Повреждённые данные результата")
+    if not isinstance(changed_locations, list) or not isinstance(unresolved, list):
+        return form_errors_response(request, templates, "Повреждённые данные результата")
+
+    template = await TemplateService(session).get(template_id)
     saved = await FilledTemplateService(session).save_from_fill(
         template=template,
         fill_request=data,
-        rendered=rendered,
-        changed=changed,
-        unresolved=unresolved,
+        rendered=filled_content,
+        changed=[str(x) for x in changed_locations],
+        unresolved=[str(x) for x in unresolved],
     )
     saved = await commit_and_refresh(session, saved)
     return templates.TemplateResponse(

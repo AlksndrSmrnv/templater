@@ -21,6 +21,11 @@
                 <input type="hidden" name="{{ key }}" value="{{ value }}">
             {% endif %}
         {% endfor %}
+        {# Snapshot of what the user is looking at right now. The save
+           endpoint persists these verbatim — see htmx_fill_save. #}
+        <textarea name="content" hidden>{{ content }}</textarea>
+        <input type="hidden" name="changed_json" value="{{ changed_json }}">
+        <input type="hidden" name="unresolved_json" value="{{ unresolved_json }}">
         <button class="btn primary" type="submit">Сохранить шаблон</button>
     </form>
 </div>

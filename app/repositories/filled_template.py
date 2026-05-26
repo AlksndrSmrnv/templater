@@ -4,16 +4,46 @@ import uuid
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.db.models import FilledTemplate
+
+# Hard cap on rows returned by the list endpoint. The list page only
+# displays name/format/snapshot labels/created_at — it never touches the
+# heavy ``filled_content`` / ``changed_locations`` columns (those are
+# deferred below) — but we still want a bound so a single search doesn't
+# stream tens of thousands of rows. Bump if you actually need more.
+DEFAULT_LIST_LIMIT = 200
 
 
 class FilledTemplateRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_all(self, *, search: str = "") -> list[FilledTemplate]:
-        stmt = select(FilledTemplate).order_by(FilledTemplate.created_at.desc())
+    async def list_all(
+        self,
+        *,
+        search: str = "",
+        limit: int = DEFAULT_LIST_LIMIT,
+    ) -> list[FilledTemplate]:
+        """Return up to ``limit`` rows with heavy text columns deferred.
+
+        ``filled_content`` (full rendered body) and ``changed_locations``
+        (per-leaf JSONPath/XPath list) are not used by the list page, so
+        they are deferred: accessing them on a returned row would trigger
+        an extra SELECT. Templates rendering this list MUST NOT read those
+        attributes — use ``get()`` for the detail page instead.
+        """
+
+        stmt = (
+            select(FilledTemplate)
+            .options(
+                defer(FilledTemplate.filled_content),
+                defer(FilledTemplate.changed_locations),
+            )
+            .order_by(FilledTemplate.created_at.desc())
+            .limit(limit)
+        )
         term = search.strip()
         if term:
             like = f"%{term}%"

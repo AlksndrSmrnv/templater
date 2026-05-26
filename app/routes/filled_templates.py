@@ -27,6 +27,7 @@ from app.repositories.entity import ClientRepository
 from app.routes.deps import SessionDep, TemplatesDep
 from app.routes.htmx_utils import toast_header
 from app.routes.uow import commit_or_409
+from app.repositories.filled_template import DEFAULT_LIST_LIMIT
 from app.services.filled_templates import FilledTemplateService, iter_role_labels
 from app.services.template_render import render_filled_html
 
@@ -67,6 +68,8 @@ async def page_list(
             "active": "templates",
             "search": search,
             "filled_templates": items,
+            "list_limit": DEFAULT_LIST_LIMIT,
+            "truncated": len(items) >= DEFAULT_LIST_LIMIT,
         },
     )
 
@@ -136,7 +139,11 @@ async def htmx_table(
     return templates.TemplateResponse(
         request,
         "partials/filled_templates_table.html",
-        {"filled_templates": items},
+        {
+            "filled_templates": items,
+            "list_limit": DEFAULT_LIST_LIMIT,
+            "truncated": len(items) >= DEFAULT_LIST_LIMIT,
+        },
     )
 
 

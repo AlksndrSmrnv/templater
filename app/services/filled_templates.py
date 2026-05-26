@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import FilledTemplate, MessageTemplate
 from app.repositories.entity import AccountRepository, CardRepository, ClientRepository
-from app.repositories.filled_template import FilledTemplateRepository
+from app.repositories.filled_template import DEFAULT_LIST_LIMIT, FilledTemplateRepository
 from app.routes.entities_htmx import entity_label
 from app.schemas.template import TemplateFillRequest
 from app.utils.errors import NotFoundError
@@ -122,8 +122,10 @@ class FilledTemplateService:
         self.session = session
         self.repo = FilledTemplateRepository(session)
 
-    async def list_all(self, *, search: str = "") -> list[FilledTemplate]:
-        return await self.repo.list_all(search=search)
+    async def list_all(
+        self, *, search: str = "", limit: int = DEFAULT_LIST_LIMIT
+    ) -> list[FilledTemplate]:
+        return await self.repo.list_all(search=search, limit=limit)
 
     async def get(self, filled_id: uuid.UUID) -> FilledTemplate:
         item = await self.repo.get(filled_id)

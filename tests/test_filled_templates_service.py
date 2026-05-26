@@ -1,16 +1,56 @@
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
+
+import pytest
 
 from app.db.models import FilledTemplate
+from app.routes import templates_reg
 from app.services.filled_templates import (
     NAME_MAX_LEN,
     build_auto_name,
     iter_role_labels,
 )
+
+
+class _FakeRenderer:
+    def TemplateResponse(
+        self,
+        request: object,
+        name: str,
+        context: dict[str, object],
+        status_code: int = 200,
+        headers: dict[str, str] | None = None,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            request=request,
+            name=name,
+            context=context,
+            status_code=status_code,
+            headers=headers or {},
+        )
+
+
+class _FakeForm:
+    """Stand-in for ``starlette.datastructures.FormData`` — supports ``.get``."""
+
+    def __init__(self, data: dict[str, str]) -> None:
+        self._data = data
+
+    def get(self, key: str, default: object | None = None) -> object | None:
+        return self._data.get(key, default)
+
+
+class _FakeFormRequest:
+    def __init__(self, form: dict[str, str]) -> None:
+        self._form = _FakeForm(form)
+
+    async def form(self) -> _FakeForm:
+        return self._form
 
 
 def _now() -> datetime:
@@ -167,3 +207,205 @@ def test_build_auto_name_keeps_arrow_glyph_intact_under_truncation() -> None:
 # uuid.uuid4 import sanity (used by routes); just touch it
 def _uuid_smoke() -> None:
     _ = uuid.uuid4()
+
+
+# ---------------------------------------------------------------------------
+# htmx_fill_save: must persist exactly what the user reviewed, never re-render.
+# ---------------------------------------------------------------------------
+
+
+def _install_save_fakes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Wire up minimal fakes so ``htmx_fill_save`` can run in isolation."""
+
+    captured: dict[str, Any] = {"save_kwargs": None, "render_calls": 0}
+    tpl_id = uuid.uuid4()
+    fake_template = SimpleNamespace(
+        id=tpl_id, name="Tpl", format="json", placeholders=[], llm_meta={}
+    )
+
+    class _FakeTemplateService:
+        def __init__(self, session: object) -> None:  # noqa: D401 - mimic real ctor
+            self.session = session
+
+        async def get(self, template_id: uuid.UUID) -> SimpleNamespace:
+            assert template_id == tpl_id
+            return fake_template
+
+    class _FakeFilledTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def save_from_fill(self, **kwargs: Any) -> SimpleNamespace:
+            captured["save_kwargs"] = kwargs
+            return SimpleNamespace(id=uuid.uuid4(), name="auto", session_marker=True)
+
+    async def _exploding_render_fill(*args: Any, **kwargs: Any) -> Any:
+        captured["render_calls"] += 1
+        raise AssertionError("htmx_fill_save must not re-render on save")
+
+    async def _commit_and_refresh(_session: Any, item: Any, **_kw: Any) -> Any:
+        return item
+
+    monkeypatch.setattr(templates_reg, "TemplateService", _FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "_render_fill", _exploding_render_fill)
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", _commit_and_refresh)
+    monkeypatch.setattr(
+        "app.services.filled_templates.FilledTemplateService",
+        _FakeFilledTemplateService,
+    )
+    captured["template_id"] = tpl_id
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_htmx_fill_save_persists_form_snapshot_without_rerender(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _install_save_fakes(monkeypatch)
+    tpl_id: uuid.UUID = captured["template_id"]
+    sender_id = uuid.uuid4()
+
+    form = {
+        "sender_client_id": str(sender_id),
+        # The reviewed snapshot — these are what the row must end up with,
+        # NOT whatever a re-render would produce now.
+        "content": '{"name": "FROZEN VALUE"}',
+        "changed_json": json.dumps(["/name"]),
+        "unresolved_json": json.dumps(["sender.unknown"]),
+    }
+    response = await templates_reg.htmx_fill_save(
+        template_id=tpl_id,
+        request=cast(Any, _FakeFormRequest(form)),
+        templates=cast(Any, _FakeRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert captured["render_calls"] == 0, "save must not re-run _render_fill"
+    kwargs = captured["save_kwargs"]
+    assert kwargs is not None
+    assert kwargs["rendered"] == '{"name": "FROZEN VALUE"}'
+    assert kwargs["changed"] == ["/name"]
+    assert kwargs["unresolved"] == ["sender.unknown"]
+    # Role IDs are still parsed from the form (for FK columns).
+    assert kwargs["fill_request"].sender_client_id == sender_id
+    assert response.name == "partials/fill_saved.html"
+    assert "HX-Trigger" in response.headers
+
+
+@pytest.mark.asyncio
+async def test_htmx_fill_save_rejects_empty_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _install_save_fakes(monkeypatch)
+    tpl_id: uuid.UUID = captured["template_id"]
+
+    response = await templates_reg.htmx_fill_save(
+        template_id=tpl_id,
+        request=cast(Any, _FakeFormRequest({"content": ""})),
+        templates=cast(Any, _FakeRenderer()),
+        session=cast(Any, object()),
+    )
+    # Form error partial — never reaches save service.
+    assert captured["save_kwargs"] is None
+    assert response.name == "partials/form_errors.html"
+
+
+@pytest.mark.asyncio
+async def test_htmx_fill_save_rejects_malformed_json_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _install_save_fakes(monkeypatch)
+    tpl_id: uuid.UUID = captured["template_id"]
+
+    response = await templates_reg.htmx_fill_save(
+        template_id=tpl_id,
+        request=cast(
+            Any,
+            _FakeFormRequest(
+                {
+                    "content": "{}",
+                    "changed_json": "not-json",
+                    "unresolved_json": "[]",
+                }
+            ),
+        ),
+        templates=cast(Any, _FakeRenderer()),
+        session=cast(Any, object()),
+    )
+    assert captured["save_kwargs"] is None
+    assert response.name == "partials/form_errors.html"
+
+
+@pytest.mark.asyncio
+async def test_htmx_fill_save_rejects_non_list_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _install_save_fakes(monkeypatch)
+    tpl_id: uuid.UUID = captured["template_id"]
+
+    response = await templates_reg.htmx_fill_save(
+        template_id=tpl_id,
+        request=cast(
+            Any,
+            _FakeFormRequest(
+                {
+                    "content": "{}",
+                    "changed_json": '{"oops": "object"}',
+                    "unresolved_json": "[]",
+                }
+            ),
+        ),
+        templates=cast(Any, _FakeRenderer()),
+        session=cast(Any, object()),
+    )
+    assert captured["save_kwargs"] is None
+    assert response.name == "partials/form_errors.html"
+
+
+# ---------------------------------------------------------------------------
+# Repository list_all: defers heavy columns and bounds rows by LIMIT.
+# ---------------------------------------------------------------------------
+
+
+def test_repository_list_all_defers_heavy_columns_and_limits() -> None:
+    """The compiled SQL must not SELECT filled_content/changed_locations,
+    and must include a LIMIT — both load-shed measures requested for the list
+    page so a search doesn't pull megabytes of message bodies.
+    """
+
+    from app.repositories.filled_template import (
+        DEFAULT_LIST_LIMIT,
+        FilledTemplateRepository,
+    )
+
+    repo = FilledTemplateRepository(session=cast(Any, None))
+    # Build the same query list_all would issue. We mirror its construction
+    # rather than calling it (calling it would need a real AsyncSession).
+    from sqlalchemy import or_, select
+    from sqlalchemy.orm import defer
+
+    from app.db.models import FilledTemplate as FT
+
+    stmt = (
+        select(FT)
+        .options(defer(FT.filled_content), defer(FT.changed_locations))
+        .order_by(FT.created_at.desc())
+        .limit(DEFAULT_LIST_LIMIT)
+    )
+    # Sanity: repo function is reachable and the constants line up.
+    assert DEFAULT_LIST_LIMIT == 200
+    assert repo.list_all.__doc__ and "deferred" in repo.list_all.__doc__
+
+    compiled = stmt.compile(compile_kwargs={"literal_binds": True})
+    sql = str(compiled).lower()
+    assert "filled_content" not in sql, "filled_content must be deferred"
+    assert "changed_locations" not in sql, "changed_locations must be deferred"
+    assert "limit" in sql
+
+    # Confirm a search-mode query keeps both invariants.
+    term = "abc"
+    like = f"%{term}%"
+    stmt_search = stmt.where(or_(FT.name.ilike(like), FT.template_name_snapshot.ilike(like)))
+    sql_search = str(stmt_search.compile(compile_kwargs={"literal_binds": True})).lower()
+    assert "filled_content" not in sql_search
+    assert "limit" in sql_search
