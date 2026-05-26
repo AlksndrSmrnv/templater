@@ -33,29 +33,29 @@
         };
         const selector = selectors[kind];
         if (!selector) {
-            console.warn('pickFromList: unknown kind', kind);
+            console.warn('pickFromList: unknown selector kind', kind);
             return;
         }
         const button = event.target.closest(selector);
         if (!button || !event.currentTarget.contains(button)) return;
         const id = button.dataset[`${kind}Id`];
         if (!id) return;
+        let dispatched = true;
         switch (kind) {
             case 'client':
-                event.stopPropagation();
                 this.selectClient(role, id);
                 break;
             case 'account':
-                event.stopPropagation();
                 this.selectAccount(role, id);
                 break;
             case 'card':
-                event.stopPropagation();
                 this.selectCard(role, id);
                 break;
             default:
-                console.warn('pickFromList: unknown kind', kind);
+                dispatched = false;
+                console.warn('pickFromList: kind selector exists but no dispatch case', kind);
         }
+        if (dispatched) event.stopPropagation();
     },
     /* Account/card choices are optional toggles; picking one clears the other for the same role. */
     selectAccount(role, id) {

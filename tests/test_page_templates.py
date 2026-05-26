@@ -256,7 +256,8 @@ def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
     assert "this.selectClient(role, id);" in html
     assert "this.selectAccount(role, id);" in html
     assert "this.selectCard(role, id);" in html
-    assert "console.warn('pickFromList: unknown kind', kind);" in html
+    assert "unknown selector kind" in html
+    assert "kind selector exists but no dispatch case" in html
     assert "if (this.state[role].clientId === id) return;" in html
     for role in ("sender", "receiver", "accountOwner"):
         client_list = start_tag_by_id(html, "div", f"{role}-clients")
