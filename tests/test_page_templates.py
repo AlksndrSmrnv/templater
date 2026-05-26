@@ -290,17 +290,54 @@ def test_template_view_disables_regenerate_when_llm_inactive() -> None:
             "rendered_html": "{}",
             "placeholders": [],
             "catalog": [],
+            "dynamic_tokens": [],
             "llm_active": False,
+            "llm_debug": None,
         },
     )
 
     assert 'disabled title="LLM не настроена"' in html
+    assert 'type="submit" form="template-editor-form">Сохранить изменения</button>' in html
     assert 'hx-indicator="#regen-indicator"' in html
     assert 'hx-disabled-elt="this"' in html
     assert 'id="regen-indicator"' in html
+    assert "Описание (для LLM)" not in html
+    assert "Метаинформация LLM" in html
     assert "Генерация" in html
     assert html.index('hx-delete="/templates-htmx/') < html.index('id="regen-indicator"')
     assert "Наведите на подсвеченное значение" in html
+
+
+def test_template_view_shows_llm_debug_toggle_when_present() -> None:
+    html = render_template(
+        "templates_reg/view.html",
+        {
+            "active": "templates",
+            "template": SimpleNamespace(
+                id="3db678b1-1111-2222-3333-444444444444",
+                name="Template",
+                description="",
+                llm_meta={"summary": "ok"},
+            ),
+            "rendered_html": "{}",
+            "placeholders": [],
+            "catalog": [],
+            "dynamic_tokens": [],
+            "llm_active": True,
+            "llm_debug": {
+                "system_prompt": "sys",
+                "user_prompt": "usr",
+                "response_text": "resp",
+            },
+        },
+    )
+
+    assert 'id="template-llm-panel"' in html
+    assert 'name="llm_meta"' in html
+    assert "Показать запрос и ответ LLM" in html
+    assert 'id="llm-debug-system"' in html
+    assert 'id="llm-debug-user"' in html
+    assert 'id="llm-debug-response"' in html
 
 
 def test_app_css_defines_htmx_indicator_states() -> None:

@@ -5,6 +5,7 @@
     <h1>{{ template.name }}</h1>
     <div class="actions">
         <a class="btn" href="/templates">Назад</a>
+        <button class="btn primary" type="submit" form="template-editor-form">Сохранить изменения</button>
         <a class="btn primary" href="/templates/{{ template.id }}/fill">Заполнить</a>
         <button class="btn"
                 type="button"
@@ -32,15 +33,8 @@
       hx-put="/templates-htmx/{{ template.id }}"
       hx-target="#template-code-wrap"
       hx-swap="outerHTML">
-    <div style="display:flex; gap:24px; margin-bottom:14px; flex-wrap: wrap;">
-        <div style="flex:1; min-width:260px;">
-            <h3>Описание (для LLM)</h3>
-            <textarea name="description" rows="3" style="width:100%;">{{ template.description }}</textarea>
-        </div>
-        <div style="flex:1; min-width:260px;">
-            <h3>Метаинформация LLM</h3>
-            {% include "partials/template_meta.html" %}
-        </div>
+    <div style="margin-bottom:14px;">
+        {% include "partials/template_edit_llm_panel.html" %}
     </div>
 
     <h3>Содержимое</h3>
@@ -48,9 +42,5 @@
         Наведите на подсвеченное значение и выберите поле из тестовых данных, либо оставьте исходное.
     </p>
     {% include "partials/template_code.html" %}
-
-    <div class="form-actions" style="margin-top:14px;">
-        <button class="btn primary" type="submit">Сохранить изменения</button>
-    </div>
 </form>
 {% endblock %}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -200,3 +201,136 @@ async def test_preview_template_marks_llm_unused_when_no_debug_returned(
 
     assert response["llm_debug"] is None
     assert response["llm_used"] is False
+
+
+@pytest.mark.asyncio
+async def test_htmx_regenerate_returns_preview_without_committing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    template_id = uuid.uuid4()
+    analyzed = {
+        "content": '{"a":"{{sender.fullName}}"}',
+        "placeholders": [{"location": "/a", "mode": "mapped", "value": "{{sender.fullName}}"}],
+        "llm_meta": {"summary": "LLM summary"},
+        "llm_debug": {"system_prompt": "sys", "user_prompt": "usr", "response_text": "resp"},
+    }
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            assert requested_id == template_id
+            return SimpleNamespace(
+                id=template_id,
+                name="T",
+                description="",
+                format="json",
+                content='{"a":"x"}',
+                original_content='{"a":"x"}',
+                placeholders=[],
+                llm_meta={},
+            )
+
+        async def analyze_content(
+            self,
+            *,
+            fmt: str,
+            original_content: str,
+            llm_service: Any | None = None,
+        ) -> dict[str, Any]:
+            assert fmt == "json"
+            assert original_content == '{"a":"x"}'
+            return analyzed
+
+        async def build_field_catalog(self) -> list[dict[str, str]]:
+            return []
+
+    class FakeLlmContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "get_settings", lambda: SimpleNamespace(llm_active=True))
+    monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
+    monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
+
+    response = await templates_reg.htmx_regenerate(
+        template_id=template_id,
+        request=cast(Any, FakeFormRequest({})),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert response.name == "partials/template_editor_response.html"
+    assert response.context["llm_debug"] == analyzed["llm_debug"]
+    assert response.context["template"].llm_meta == analyzed["llm_meta"]
+    assert "Предпросмотр LLM обновлён" in response.headers["HX-Trigger"]
+
+
+@pytest.mark.asyncio
+async def test_htmx_update_persists_llm_meta_only_on_save(monkeypatch: pytest.MonkeyPatch) -> None:
+    template_id = uuid.uuid4()
+    calls: list[tuple[str, Any]] = []
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def update(self, requested_id: uuid.UUID, data: Any) -> Any:
+            assert requested_id == template_id
+            calls.append(("update", data))
+            return SimpleNamespace()
+
+        async def update_placeholders(
+            self,
+            requested_id: uuid.UUID,
+            placeholders: list[dict[str, Any]],
+        ) -> Any:
+            assert requested_id == template_id
+            calls.append(("update_placeholders", placeholders))
+            return SimpleNamespace(
+                id=template_id,
+                name="T",
+                description="",
+                format="json",
+                content='{"a":"{{sender.fullName}}"}',
+                original_content='{"a":"x"}',
+                placeholders=placeholders,
+                llm_meta={"summary": "saved"},
+            )
+
+        async def build_field_catalog(self) -> list[dict[str, str]]:
+            return []
+
+    async def fake_commit_and_refresh(session: object, template: Any) -> Any:
+        calls.append(("commit_and_refresh", template))
+        return template
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit_and_refresh)
+    monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
+
+    response = await templates_reg.htmx_update(
+        template_id=template_id,
+        request=cast(
+            Any,
+            FakeFormRequest(
+                {
+                    "placeholders": '[{"location":"/a","mode":"mapped","value":"{{sender.fullName}}"}]',
+                    "llm_meta": '{"summary":"preview"}',
+                }
+            ),
+        ),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert response.name == "partials/template_editor_response.html"
+    assert calls[0][0] == "update"
+    assert calls[0][1].llm_meta == {"summary": "preview"}
+    assert calls[1][0] == "update_placeholders"
+    assert calls[2][0] == "commit_and_refresh"
