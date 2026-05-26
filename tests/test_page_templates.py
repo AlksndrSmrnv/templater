@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html.parser import HTMLParser
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +17,29 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 def render_template(name: str, context: dict[str, object]) -> str:
     return get_templates().env.get_template(name).render(context)
+
+
+class StartTagCollector(HTMLParser):
+    def __init__(self, tag_name: str) -> None:
+        super().__init__()
+        self.tag_name = tag_name
+        self.tags: list[dict[str, str | None]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == self.tag_name:
+            self.tags.append(dict(attrs))
+
+
+def start_tags(html: str, tag_name: str) -> list[dict[str, str | None]]:
+    collector = StartTagCollector(tag_name)
+    collector.feed(html)
+    return collector.tags
+
+
+def start_tag_by_id(html: str, tag_name: str, element_id: str) -> dict[str, str | None]:
+    matches = [tag for tag in start_tags(html, tag_name) if tag.get("id") == element_id]
+    assert len(matches) == 1
+    return matches[0]
 
 
 def install_page_fill_fakes(monkeypatch: pytest.MonkeyPatch, template: Any) -> None:
@@ -227,6 +251,76 @@ def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
     assert "accountOwner: { clientId: '', accountId: '', cardId: '' }" in html
     assert 'hx-post="/templates-htmx/3db678b1-1111-2222-3333-444444444444/fill/render"' in html
     assert 'id="sender-client"' not in html
+    assert "pickFromList(event, role, kind)" in html
+    assert "event.stopPropagation();" in html
+    assert "this.selectClient(role, id);" in html
+    assert "this.selectAccount(role, id);" in html
+    assert "this.selectCard(role, id);" in html
+    assert "unknown selector kind" in html
+    assert "kind selector exists but no dispatch case" in html
+    assert "if (this.state[role].clientId === id) return;" in html
+    for role in ("sender", "receiver", "accountOwner"):
+        client_list = start_tag_by_id(html, "div", f"{role}-clients")
+        account_list = start_tag_by_id(html, "div", f"{role}-accounts")
+        card_list = start_tag_by_id(html, "div", f"{role}-cards")
+
+        assert client_list.get("@click") == f"pickFromList($event, '{role}', 'client')"
+        assert account_list.get("@click") == f"pickFromList($event, '{role}', 'account')"
+        assert card_list.get("@click") == f"pickFromList($event, '{role}', 'card')"
+        assert client_list.get("role") == "listbox"
+        assert account_list.get("role") == "listbox"
+        assert card_list.get("role") == "listbox"
+        assert account_list.get("hx-params") == "client_id"
+        assert card_list.get("hx-params") == "client_id"
+
+
+def test_template_fill_partials_use_data_attributes_for_delegated_selection() -> None:
+    client_id = "11111111-1111-1111-1111-111111111111"
+    account_id = "22222222-2222-2222-2222-222222222222"
+    card_id = "33333333-3333-3333-3333-333333333333"
+    clients_html = render_template(
+        "partials/fill_clients_list.html",
+        {
+            "role": "sender",
+            "clients": [SimpleNamespace(id=client_id)],
+            "labels": {"client": {client_id: "Client One"}, "account": {}, "card": {}},
+        },
+    )
+    accounts_html = render_template(
+        "partials/fill_accounts_list.html",
+        {
+            "role": "sender",
+            "client_id": client_id,
+            "accounts": [SimpleNamespace(id=account_id, description="Primary account")],
+            "labels": {"client": {}, "account": {account_id: "Account One"}, "card": {}},
+        },
+    )
+    cards_html = render_template(
+        "partials/fill_cards_list.html",
+        {
+            "role": "sender",
+            "client_id": client_id,
+            "cards": [SimpleNamespace(id=card_id, account_id=account_id, description="Primary card")],
+            "labels": {"client": {}, "account": {account_id: "Account One"}, "card": {card_id: "Card One"}},
+        },
+    )
+
+    client_button = start_tags(clients_html, "button")[0]
+    account_button = start_tags(accounts_html, "button")[0]
+    card_button = start_tags(cards_html, "button")[0]
+
+    assert client_button.get("data-client-id") == client_id
+    assert account_button.get("data-account-id") == account_id
+    assert card_button.get("data-card-id") == card_id
+    assert client_button.get("role") == "option"
+    assert account_button.get("role") == "option"
+    assert card_button.get("role") == "option"
+    assert client_button.get(":aria-selected") == f"state.sender.clientId === '{client_id}'"
+    assert account_button.get(":aria-selected") == f"state.sender.accountId === '{account_id}'"
+    assert card_button.get(":aria-selected") == f"state.sender.cardId === '{card_id}'"
+    assert "@click" not in client_button
+    assert "@click" not in account_button
+    assert "@click" not in card_button
 
 
 def test_template_upload_uses_htmx_preview_form() -> None:
