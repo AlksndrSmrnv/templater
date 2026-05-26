@@ -6,6 +6,35 @@ from __future__ import annotations
 import json
 
 
+def _compact_json_for_prompt(content: str) -> str:
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return content
+
+    cleaned = _remove_none_object_keys(parsed)
+    return json.dumps(cleaned, ensure_ascii=False, separators=(",", ":"))
+
+
+def _remove_none_object_keys(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _remove_none_object_keys(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    if isinstance(value, list):
+        return [_remove_none_object_keys(item) for item in value]
+    return value
+
+
+def _slim_catalog(catalog: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [
+        {key: value for key, value in entry.items() if key in ("path", "label")}
+        for entry in catalog
+    ]
+
+
 class PromptBuilder:
     """Builds system + user prompts for tasks we ask the LLM to perform."""
 
@@ -43,8 +72,10 @@ class PromptBuilder:
             "owner/holder/accountOwner) — его поля ОБЯЗАТЕЛЬНО размечай как accountOwner.*.\n"
             "Не сворачивай такого участника в sender или receiver: это разные стороны.\n"
             "\n"
-            "Твоя задача: для каждого литерального значения предположить, какое поле из каталога\n"
-            "его заменяет, если такое есть. Если очевидной замены нет — пропусти.\n"
+            "Твоя задача: для литеральных значений выбрать подходящее поле из каталога,\n"
+            "если оно есть. В ответе `placeholders` включай ТОЛЬКО те `location`,\n"
+            "для которых ты выбрал поле из каталога. Если подходящего поля нет — "
+            "НЕ возвращай эту запись вовсе, не присылай её с пустым `suggestion`.\n"
             "Служебные поля конверта rqUID, operUID, rqTm, channelDateTime обрабатываются\n"
             "отдельно как динамические параметры ({{rqUID}}, {{operUID}}, {{rqTm}},\n"
             "{{channelDateTime}}). Не предлагай для них замену на поля участников.\n"
@@ -60,14 +91,15 @@ class PromptBuilder:
             "Отвечай СТРОГО в виде валидного JSON без пояснений:\n"
             "{\n"
             "  \"meta\": {\"summary\": str, \"category\": str, \"scenarios\": [str]},\n"
-            "  \"placeholders\": [{\"location\": str, \"suggestion\": str | null}]\n"
+            "  \"placeholders\": [{\"location\": str, \"suggestion\": str}]\n"
             "}\n"
         )
+        prompt_content = _compact_json_for_prompt(content) if fmt == "json" else content
         user_payload = {
             "format": fmt,
-            "template": content,
+            "template": prompt_content,
             "leaves": leaves,
-            "catalog": catalog,
+            "catalog": _slim_catalog(catalog),
         }
         user_prompt = json.dumps(user_payload, ensure_ascii=False, indent=2)
         return system_prompt, user_prompt
