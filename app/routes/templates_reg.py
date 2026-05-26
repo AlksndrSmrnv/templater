@@ -168,6 +168,17 @@ async def _template_code_context(session: AsyncSession, template: Any) -> dict[s
     }
 
 
+async def _template_editor_context(
+    session: AsyncSession,
+    template: Any,
+    *,
+    llm_debug: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    context = await _template_code_context(session, template)
+    context["llm_debug"] = llm_debug
+    return context
+
+
 def _json_form_value(form: Any, key: str, default: Any) -> Any:
     raw = form_str(form, key)
     if not raw:
@@ -318,7 +329,7 @@ async def page_view(
     return templates.TemplateResponse(
         request,
         "templates_reg/view.html",
-        {"active": "templates", **await _template_code_context(session, template)},
+        {"active": "templates", **await _template_editor_context(session, template)},
     )
 
 
@@ -447,18 +458,24 @@ async def htmx_update(
     form = await request.form()
     try:
         placeholders = _json_form_value(form, "placeholders", [])
+        llm_meta = _json_form_value(form, "llm_meta", None)
+        if llm_meta is not None and not isinstance(llm_meta, dict):
+            raise ValidationFailed("Поле llm_meta должно быть JSON-объектом")
         svc = TemplateService(session)
-        await svc.update(template_id, TemplateUpdate(description=form_str(form, "description")))
+        if llm_meta is not None:
+            await svc.update(template_id, TemplateUpdate(llm_meta=llm_meta))
         template = await svc.update_placeholders(template_id, placeholders)
         template = await commit_and_refresh(session, template)
+    except ValidationError as exc:
+        return validation_errors_response(request, templates, exc, status_code=200)
     except DomainError as exc:
         return form_errors_response(
             request, templates, exc.message, details=exc.details, status_code=exc.status_code
         )
     return templates.TemplateResponse(
         request,
-        "partials/template_code.html",
-        await _template_code_context(session, template),
+        "partials/template_editor_response.html",
+        await _template_editor_context(session, template),
         headers={"HX-Trigger": toast_header("Шаблон обновлён")},
     )
 
@@ -472,21 +489,46 @@ async def htmx_regenerate(
 ) -> Response:
     svc = TemplateService(session)
     template = await svc.get(template_id)
+    source = template.original_content or template.content
+    llm_debug: dict[str, Any] | None = None
     if get_settings().llm_active:
         try:
             async with llm_service() as llm_svc:
-                template = await svc.analyze(template, llm_service=llm_svc)
+                result = await svc.analyze_content(
+                    fmt=template.format,
+                    original_content=source,
+                    llm_service=llm_svc,
+                )
         except Exception:
             log.warning("LLM template regeneration failed; falling back to heuristic analysis", exc_info=True)
-            template = await svc.analyze(template, llm_service=None)
+            result = await svc.analyze_content(
+                fmt=template.format,
+                original_content=source,
+                llm_service=None,
+            )
     else:
-        template = await svc.analyze(template, llm_service=None)
-    template = await commit_and_refresh(session, template)
+        result = await svc.analyze_content(
+            fmt=template.format,
+            original_content=source,
+            llm_service=None,
+        )
+
+    llm_debug = result.get("llm_debug")
+    preview_template = SimpleNamespace(
+        id=template.id,
+        name=template.name,
+        description=template.description,
+        format=template.format,
+        content=result["content"],
+        original_content=template.original_content,
+        placeholders=result["placeholders"],
+        llm_meta=result["llm_meta"],
+    )
     return templates.TemplateResponse(
         request,
-        "partials/template_code.html",
-        await _template_code_context(session, template),
-        headers={"HX-Trigger": toast_header("Шаблон перегенерирован")},
+        "partials/template_editor_response.html",
+        await _template_editor_context(session, preview_template, llm_debug=llm_debug),
+        headers={"HX-Trigger": toast_header("Предпросмотр LLM обновлён. Нажмите «Сохранить изменения»")},
     )
 
 

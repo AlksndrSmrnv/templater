@@ -1,0 +1,20 @@
+{% set meta_json = (template.llm_meta if template is defined else llm_meta | default({})) or {} %}
+<div id="template-llm-panel" {% if oob_swap | default(false) %}hx-swap-oob="outerHTML"{% endif %}>
+    <input type="hidden" name="llm_meta" value="{{ meta_json | tojson | forceescape }}">
+    <h3>Метаинформация LLM</h3>
+    {% include "partials/template_meta.html" %}
+
+    {% if llm_debug %}
+        <div style="margin-top:10px;" x-data="{ open: false }">
+            <button class="btn" type="button" @click="open = !open" x-text="open ? 'Скрыть запрос и ответ LLM' : 'Показать запрос и ответ LLM'"></button>
+            <div id="llm-debug-panel" class="llm-debug-panel" style="margin-top:8px;" x-show="open" x-cloak>
+                <h4 style="margin:0 0 4px;">System prompt</h4>
+                <pre class="template-code" id="llm-debug-system" style="white-space:pre-wrap;">{{ llm_debug.get("system_prompt", "") }}</pre>
+                <h4 style="margin:8px 0 4px;">User prompt</h4>
+                <pre class="template-code" id="llm-debug-user" style="white-space:pre-wrap;">{{ llm_debug.get("user_prompt", "") }}</pre>
+                <h4 style="margin:8px 0 4px;">Ответ LLM</h4>
+                <pre class="template-code" id="llm-debug-response" style="white-space:pre-wrap;">{{ llm_debug.get("response_text", "") }}</pre>
+            </div>
+        </div>
+    {% endif %}
+</div>
