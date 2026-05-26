@@ -92,6 +92,72 @@ def test_build_template_field_mapping_requests_precise_transfer_summary() -> Non
     assert "Комиссию" in sys_p
 
 
+def test_build_template_field_mapping_compacts_json_and_removes_null_object_keys() -> None:
+    _, user_p = PromptBuilder.build_template_field_mapping(
+        content=(
+            '{\r\n'
+            '\t"fullName": "X",\r\n'
+            '\t"empty": null,\r\n'
+            '\t"nested": {"dropMe": null, "keepMe": "Y"},\r\n'
+            '\t"items": [null, {"dropMe": null, "keepMe": "Z"}]\r\n'
+            '}'
+        ),
+        fmt="json",
+        leaves=["/fullName", "/nested/keepMe", "/items/0", "/items/1/keepMe"],
+        catalog=[],
+    )
+    payload = json.loads(user_p)
+
+    assert payload["template"] == (
+        '{"fullName":"X","nested":{"keepMe":"Y"},"items":[null,{"keepMe":"Z"}]}'
+    )
+    assert "\t" not in payload["template"]
+    assert "\r\n" not in payload["template"]
+
+
+def test_build_template_field_mapping_keeps_invalid_json_as_is() -> None:
+    content = '{"fullName": "X",'
+
+    _, user_p = PromptBuilder.build_template_field_mapping(
+        content=content,
+        fmt="json",
+        leaves=["/fullName"],
+        catalog=[],
+    )
+    payload = json.loads(user_p)
+
+    assert payload["template"] == content
+
+
+def test_build_template_field_mapping_slims_catalog_for_prompt() -> None:
+    _, user_p = PromptBuilder.build_template_field_mapping(
+        content='{"fullName":"X"}',
+        fmt="json",
+        leaves=["/fullName"],
+        catalog=[
+            {"path": "sender.fullName", "label": "Sender — ФИО", "data_type": "string"},
+        ],
+    )
+    payload = json.loads(user_p)
+
+    assert payload["catalog"] == [{"path": "sender.fullName", "label": "Sender — ФИО"}]
+    assert "data_type" not in user_p
+
+
+def test_build_template_field_mapping_requires_only_successful_suggestions() -> None:
+    sys_p, _ = PromptBuilder.build_template_field_mapping(
+        content='{"fullName":"X"}',
+        fmt="json",
+        leaves=["/fullName"],
+        catalog=[],
+    )
+
+    assert "включай ТОЛЬКО те `location`" in sys_p
+    assert "НЕ возвращай эту запись вовсе" in sys_p
+    assert "null" not in sys_p
+    assert '"suggestion": str' in sys_p
+
+
 def test_build_template_meta_returns_strings() -> None:
     sys_p, user_p = PromptBuilder.build_template_meta(content="<a/>", fmt="xml")
     assert isinstance(sys_p, str) and sys_p
