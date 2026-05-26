@@ -46,9 +46,13 @@
         <a href="/references" class="{% if active == 'references' %}active{% endif %}" title="Справочники">
             <span class="nav-icon">📚</span><span class="nav-label">Справочники</span>
         </a>
-        <a href="/templates" class="{% if active == 'templates' %}active{% endif %}" title="Шаблоны сообщений">
+        <span class="nav-group{% if active == 'templates' %} active{% endif %}" title="Шаблоны сообщений">
             <span class="nav-icon">✉️</span><span class="nav-label">Шаблоны сообщений</span>
-        </a>
+            <div class="nav-submenu">
+                <a href="/templates">📄 Шаблоны</a>
+                <a href="/filled-templates">📦 Заполненные шаблоны</a>
+            </div>
+        </span>
         <a href="/send" class="{% if active == 'send' %}active{% endif %} disabled" title="Отправка сообщений — в разработке">
             <span class="nav-icon">📨</span><span class="nav-label">Отправка сообщений</span>
         </a>

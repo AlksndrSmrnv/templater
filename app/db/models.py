@@ -191,3 +191,68 @@ class AppSetting(Base):
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
     value: Mapped[Any] = mapped_column(JSONB, nullable=False)
     updated_at: Mapped[datetime] = _updated_at()
+
+
+class FilledTemplate(Base):
+    """Snapshot of a rendered template filled with concrete client data.
+
+    Stores both the rendered ``filled_content`` (for fidelity after upstream
+    deletes) and audit FKs to the source template/clients/accounts/cards.
+    All FKs use ``ON DELETE SET NULL`` so deleting an upstream entity never
+    blocks; the UI falls back to ``*_snapshot`` columns to keep the row
+    readable.
+    """
+
+    __tablename__ = "filled_templates"
+    __table_args__ = (
+        Index("ix_filled_templates_template_id", "message_template_id"),
+        Index("ix_filled_templates_created_at", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    format: Mapped[str] = mapped_column(String(16), nullable=False)  # 'json' | 'xml'
+    filled_content: Mapped[str] = mapped_column(Text, nullable=False)
+    changed_locations: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    unresolved: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+
+    message_template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("message_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    template_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+    sender_client_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="SET NULL"), nullable=True
+    )
+    sender_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    sender_card_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cards.id", ondelete="SET NULL"), nullable=True
+    )
+    receiver_client_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="SET NULL"), nullable=True
+    )
+    receiver_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    receiver_card_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cards.id", ondelete="SET NULL"), nullable=True
+    )
+    account_owner_client_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="SET NULL"), nullable=True
+    )
+    account_owner_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    account_owner_card_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cards.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # {"sender": "Иванов · ACC-001", "receiver": "...", "accountOwner": "..."}
+    role_labels_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()

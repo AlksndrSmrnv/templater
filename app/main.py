@@ -17,6 +17,7 @@ from app.routes import (
     clients,
     entities_htmx,
     export_import,
+    filled_templates,
     home,
     references,
     send,
@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
     app.include_router(entities_htmx.router)
     app.include_router(references.router)
     app.include_router(templates_reg.router)
+    app.include_router(filled_templates.router)
     app.include_router(send.router)
     app.include_router(settings_routes.router)
     app.include_router(export_import.router)

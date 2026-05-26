@@ -281,7 +281,7 @@ async def _render_fill(
     session: AsyncSession,
     template_id: uuid.UUID,
     data: TemplateFillRequest,
-) -> tuple[Any, str, str, list[str]]:
+) -> tuple[Any, str, str, list[str], list[str]]:
     template = await TemplateService(session).get(template_id)
     rendered, unresolved, changed = await PlaceholderFiller(session).fill_template(
         template,
@@ -295,7 +295,8 @@ async def _render_fill(
         account_owner_account_id=data.account_owner_account_id,
         account_owner_card_id=data.account_owner_card_id,
     )
-    return template, rendered, render_filled_html(template.format, rendered, changed), unresolved
+    rendered_html = render_filled_html(template.format, rendered, changed)
+    return template, rendered, rendered_html, unresolved, changed
 
 
 # ---------- HTML pages ----------
@@ -628,7 +629,9 @@ async def htmx_fill_render(
 ) -> Response:
     try:
         data, raw_values = await _fill_request_from_form(request)
-        template, rendered, rendered_html, unresolved = await _render_fill(session, template_id, data)
+        template, rendered, rendered_html, unresolved, _changed = await _render_fill(
+            session, template_id, data
+        )
     except ValueError:
         return form_errors_response(request, templates, "Проверьте выбранные записи")
     return templates.TemplateResponse(
@@ -651,7 +654,7 @@ async def htmx_fill_download(
     session: AsyncSession = SessionDep,
 ) -> StreamingResponse:
     data, _ = await _fill_request_from_form(request)
-    template, rendered, _, _ = await _render_fill(session, template_id, data)
+    template, rendered, _, _, _ = await _render_fill(session, template_id, data)
     payload = rendered.encode("utf-8")
     ext = "xml" if template.format == "xml" else "json"
 
@@ -662,4 +665,44 @@ async def htmx_fill_download(
         stream(),
         media_type="application/xml" if ext == "xml" else "application/json",
         headers={"Content-Disposition": f'attachment; filename="filled-{template.id}.{ext}"'},
+    )
+
+
+@router.post("/templates-htmx/{template_id}/fill/save")
+async def htmx_fill_save(
+    template_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    """Persist a filled-template snapshot from the current fill form.
+
+    Re-runs ``_render_fill`` so the saved snapshot matches exactly what the
+    user sees in the result panel, then writes a ``FilledTemplate`` row and
+    returns a small partial with a link to the detail page (rendered into
+    ``#save-feedback`` in ``fill_result.html``).
+    """
+
+    from app.services.filled_templates import FilledTemplateService
+
+    try:
+        data, _raw = await _fill_request_from_form(request)
+        template, rendered, _html, unresolved, changed = await _render_fill(
+            session, template_id, data
+        )
+    except ValueError:
+        return form_errors_response(request, templates, "Проверьте выбранные записи")
+    saved = await FilledTemplateService(session).save_from_fill(
+        template=template,
+        fill_request=data,
+        rendered=rendered,
+        changed=changed,
+        unresolved=unresolved,
+    )
+    saved = await commit_and_refresh(session, saved)
+    return templates.TemplateResponse(
+        request,
+        "partials/fill_saved.html",
+        {"saved": saved},
+        headers={"HX-Trigger": toast_header("Заполненный шаблон сохранён")},
     )
