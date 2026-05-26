@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}{{ ft.name }} — Template Maker{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>📦 {{ ft.name }}</h1>
+    <div class="actions">
+        <a class="btn" href="/filled-templates">← К списку</a>
+        {% if ft.message_template_id %}
+            <a class="btn" href="/templates/{{ ft.message_template_id }}">К исходному шаблону</a>
+        {% endif %}
+        <a class="btn" href="/filled-templates/{{ ft.id }}/raw?download=1">⬇️ Скачать</a>
+        <button class="btn danger"
+                type="button"
+                hx-delete="/filled-templates-htmx/{{ ft.id }}?redirect=1"
+                hx-confirm="Удалить заполненный шаблон?">Удалить</button>
+    </div>
+</div>
+
+<div x-data="{
+    /*
+     * Copy the *original* filled body from /raw, NOT textContent of the
+     * highlighted <pre>: render_filled_html() re-serializes JSON/XML for
+     * display, which would drop original whitespace, XML declarations and
+     * comments. The /raw endpoint serves the exact stored filled_content.
+     */
+    copy() {
+        fetch('/filled-templates/{{ ft.id }}/raw')
+            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+            .then(t => navigator.clipboard.writeText(t))
+            .then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Скопировано' } })))
+            .catch(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Не удалось скопировать', type: 'error' } })));
+    }
+}">
+
+    <section style="margin-top:14px;">
+        <h3>Параметры подстановки</h3>
+        <table class="data-table">
+            <thead><tr><th>Роль</th><th>Сущность</th></tr></thead>
+            <tbody>
+                <tr>
+                    <td>Шаблон</td>
+                    <td>
+                        {% if ft.message_template_id %}
+                            <a href="/templates/{{ ft.message_template_id }}">{{ ft.template_name_snapshot or '—' }}</a>
+                        {% else %}
+                            <span class="muted">{{ ft.template_name_snapshot or '—' }} (удалён)</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% for role, title, label in role_rows %}
+                    <tr>
+                        <td>{{ title }}</td>
+                        <td>
+                            {% set cid = role_client_ids.get(role) %}
+                            {% if cid and cid in alive_client_ids %}
+                                <a href="/clients/{{ cid }}">{{ label or '—' }}</a>
+                            {% elif cid %}
+                                <span class="muted">{{ label or '—' }} (удалён)</span>
+                            {% else %}
+                                <span class="muted">{{ label or '—' }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+                <tr>
+                    <td>Создан</td>
+                    <td>{{ ft.created_at.strftime('%d.%m.%Y %H:%M:%S') if ft.created_at else '' }}</td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+
+    {% if ft.unresolved %}
+        <div class="errors" style="margin-top:14px;">
+            <strong>Не подставлено:</strong> {{ ft.unresolved | join(", ") }}
+        </div>
+    {% endif %}
+
+    <div class="form-actions" style="margin-top:18px;">
+        <button class="btn primary" type="button" @click="copy()">📋 Копировать</button>
+    </div>
+
+    <h3 style="margin-top:18px;">Результат</h3>
+    <pre class="template-code">{{ rendered_html | safe }}</pre>
+
+</div>
+{% endblock %}

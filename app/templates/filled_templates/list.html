@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Заполненные шаблоны — Template Maker{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>📦 Заполненные шаблоны</h1>
+    <div class="actions">
+        <a class="btn" href="/templates">К шаблонам</a>
+    </div>
+</div>
+<div class="filters">
+    <form class="filters-inline"
+          hx-get="/filled-templates-htmx/table"
+          hx-target="#ft-body"
+          hx-swap="innerHTML"
+          hx-trigger="input changed delay:200ms">
+        <label>Поиск:
+            <input id="search" name="search" type="search" value="{{ search | default('') }}" placeholder="по имени / шаблону">
+        </label>
+    </form>
+</div>
+<div class="table-wrap">
+    <table class="data-table" id="ft-table">
+        <thead><tr>
+            <th>Имя</th>
+            <th>Шаблон</th>
+            <th>Формат</th>
+            <th>Отправитель</th>
+            <th>Получатель</th>
+            <th>Создан</th>
+            <th class="no-sort"></th>
+        </tr></thead>
+        <tbody id="ft-body">
+            {% include "partials/filled_templates_table.html" %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -3,8 +3,8 @@
         <strong>Не подставлено:</strong> {{ unresolved | join(", ") }}
     </div>
 {% endif %}
-<div class="form-actions" style="margin-top:14px;">
-    <form action="/templates-htmx/{{ template.id }}/fill/download" method="post">
+<div class="form-actions" style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
+    <form action="/templates-htmx/{{ template.id }}/fill/download" method="post" style="margin:0;">
         {% for key, value in fill_values.items() %}
             {% if value %}
                 <input type="hidden" name="{{ key }}" value="{{ value }}">
@@ -12,6 +12,23 @@
         {% endfor %}
         <button class="btn" type="submit">Скачать</button>
     </form>
+    <form hx-post="/templates-htmx/{{ template.id }}/fill/save"
+          hx-target="#save-feedback"
+          hx-swap="innerHTML"
+          style="margin:0;">
+        {% for key, value in fill_values.items() %}
+            {% if value %}
+                <input type="hidden" name="{{ key }}" value="{{ value }}">
+            {% endif %}
+        {% endfor %}
+        {# Snapshot of what the user is looking at right now. The save
+           endpoint persists these verbatim — see htmx_fill_save. #}
+        <textarea name="content" hidden>{{ content }}</textarea>
+        <input type="hidden" name="changed_json" value="{{ changed_json }}">
+        <input type="hidden" name="unresolved_json" value="{{ unresolved_json }}">
+        <button class="btn primary" type="submit">Сохранить шаблон</button>
+    </form>
 </div>
+<div id="save-feedback"></div>
 <h3 style="margin-top:18px;">Результат</h3>
 <pre class="template-code">{{ rendered_html | safe }}</pre>
