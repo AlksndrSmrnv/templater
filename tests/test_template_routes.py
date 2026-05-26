@@ -334,3 +334,25 @@ async def test_htmx_update_persists_llm_meta_only_on_save(monkeypatch: pytest.Mo
     assert calls[0][1].llm_meta == {"summary": "preview"}
     assert calls[1][0] == "update_placeholders"
     assert calls[2][0] == "commit_and_refresh"
+
+
+@pytest.mark.asyncio
+async def test_htmx_update_rejects_non_object_llm_meta() -> None:
+    response = await templates_reg.htmx_update(
+        template_id=uuid.uuid4(),
+        request=cast(
+            Any,
+            FakeFormRequest(
+                {
+                    "placeholders": "[]",
+                    "llm_meta": "[]",
+                }
+            ),
+        ),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert response.name == "partials/form_errors.html"
+    assert response.status_code == 422
+    assert response.context["message"] == "Поле llm_meta должно быть JSON-объектом"

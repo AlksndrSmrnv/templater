@@ -459,11 +459,15 @@ async def htmx_update(
     try:
         placeholders = _json_form_value(form, "placeholders", [])
         llm_meta = _json_form_value(form, "llm_meta", None)
+        if llm_meta is not None and not isinstance(llm_meta, dict):
+            raise ValidationFailed("Поле llm_meta должно быть JSON-объектом")
         svc = TemplateService(session)
         if llm_meta is not None:
             await svc.update(template_id, TemplateUpdate(llm_meta=llm_meta))
         template = await svc.update_placeholders(template_id, placeholders)
         template = await commit_and_refresh(session, template)
+    except ValidationError as exc:
+        return validation_errors_response(request, templates, exc, status_code=200)
     except DomainError as exc:
         return form_errors_response(
             request, templates, exc.message, details=exc.details, status_code=exc.status_code
