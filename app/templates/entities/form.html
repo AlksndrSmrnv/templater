@@ -7,6 +7,7 @@
         <a class="btn" href="/templater/{{ entity_type }}s">Назад к списку</a>
     </div>
 </div>
+{% include "partials/saved_banner.html" %}
 
 {% set item = entity | default(none) %}
 {% set attrs = item.attributes if item else {} %}

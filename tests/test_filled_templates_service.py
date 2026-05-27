@@ -288,8 +288,9 @@ async def test_htmx_fill_save_persists_form_snapshot_without_rerender(
     assert kwargs["unresolved"] == ["sender.unknown"]
     # Role IDs are still parsed from the form (for FK columns).
     assert kwargs["fill_request"].sender_client_id == sender_id
-    assert response.name == "partials/fill_saved.html"
-    assert "HX-Trigger" in response.headers
+    assert response.status_code == 204
+    assert response.headers["HX-Redirect"].startswith("/templater/filled-templates/")
+    assert response.headers["HX-Redirect"].endswith("?saved=1")
 
 
 @pytest.mark.asyncio

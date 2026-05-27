@@ -1,0 +1,3 @@
+{% if request is defined and request.query_params.get("saved") == "1" %}
+    <div class="saved-banner" role="status">✅ Сохранено</div>
+{% endif %}

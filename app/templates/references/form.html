@@ -7,6 +7,7 @@
         <a class="btn" href="/templater/references/{{ entity_type }}">Назад</a>
     </div>
 </div>
+{% include "partials/saved_banner.html" %}
 {% set attrs = item.attributes if item else {} %}
 <form id="ref-form"
       class="form"

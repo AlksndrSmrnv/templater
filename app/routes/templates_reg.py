@@ -726,9 +726,7 @@ async def htmx_fill_save(
         unresolved=[str(x) for x in unresolved],
     )
     saved = await commit_and_refresh(session, saved)
-    return templates.TemplateResponse(
-        request,
-        "partials/fill_saved.html",
-        {"saved": saved},
-        headers={"HX-Trigger": toast_header("Заполненный шаблон сохранён")},
+    return Response(
+        status_code=204,
+        headers={"HX-Redirect": f"/templater/filled-templates/{saved.id}?saved=1"},
     )

@@ -13,8 +13,7 @@
         <button class="btn" type="submit">Скачать</button>
     </form>
     <form hx-post="/templater/templates-htmx/{{ template.id }}/fill/save"
-          hx-target="#save-feedback"
-          hx-swap="innerHTML"
+          hx-swap="none"
           style="margin:0;">
         {% for key, value in fill_values.items() %}
             {% if value %}
@@ -29,6 +28,5 @@
         <button class="btn primary" type="submit">Сохранить шаблон</button>
     </form>
 </div>
-<div id="save-feedback"></div>
 <h3 style="margin-top:18px;">Результат</h3>
 <pre class="template-code">{{ rendered_html | safe }}</pre>

@@ -413,7 +413,7 @@ async def htmx_create(
     check_entity_type(entity_type)
     try:
         data = await _entity_payload(entity_type, request, session, include_deprecated=False)
-        await commit_and_refresh(
+        created = await commit_and_refresh(
             session,
             await _create_entity(session, entity_type, cast(ClientCreate | AccountCreate | CardCreate, data)),
         )
@@ -428,8 +428,7 @@ async def htmx_create(
     return Response(
         status_code=204,
         headers={
-            "HX-Redirect": f"/templater/{entity_type}s",
-            "HX-Trigger": toast_header("Сохранено"),
+            "HX-Redirect": f"/templater/{entity_type}s/{created.id}/edit?saved=1",
         },
     )
 
@@ -465,8 +464,7 @@ async def htmx_update(
     return Response(
         status_code=204,
         headers={
-            "HX-Redirect": f"/templater/{entity_type}s",
-            "HX-Trigger": toast_header("Сохранено"),
+            "HX-Redirect": f"/templater/{entity_type}s/{entity_id}/edit?saved=1",
         },
     )
 
