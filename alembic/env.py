@@ -17,10 +17,9 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Take the connection URL straight from the app settings. It is deliberately
-# NOT routed through Alembic's ConfigParser (set_main_option / get_section):
-# ConfigParser treats ``%`` as its interpolation character, so a percent-encoded
-# password (e.g. ``%40`` for ``@``, ``%24`` for ``$``) would break it.
+# Build the SQLAlchemy URL from libpq-style DATABASE_DSN in app settings.
+# Password stays as a plain value inside the URL object, so percent-encoding
+# is not involved.
 _settings = get_settings()
 DATABASE_URL = _settings.database_url
 DB_SCHEMA = _settings.db_schema

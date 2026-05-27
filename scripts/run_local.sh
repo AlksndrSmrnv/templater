@@ -31,8 +31,8 @@ if [ ! -f .env ]; then
     cp .env.example .env
     echo
     echo ">> Создан .env из шаблона. Заполните его РЕАЛЬНЫМИ значениями:"
-    echo "   - DATABASE_URL  — адрес и креды вашего PostgreSQL"
-    echo "     (пароль со спецсимволами percent-encode: @->%40, \$->%24, |->%7C)"
+    echo "   - DATABASE_DSN  — libpq DSN с адресом и кредами PostgreSQL"
+    echo "     (пример: host=... port=5432 dbname=... user=... password='p@ss w\$rd')"
     echo "   - DB_SCHEMA     — схема (по умолчанию templater)"
     echo "   - GIGACHAT_*    — URL и сертификаты GigaChat (base64 PEM)"
     echo "   Затем запустите ./scripts/run_local.sh снова."
@@ -42,7 +42,7 @@ fi
 
 # 3. Миграции Alembic в настоящую БД.
 echo ">> Применяю миграции Alembic..."
-echo "   (ошибка подключения здесь = PostgreSQL недоступен или неверный DATABASE_URL)"
+echo "   (ошибка подключения здесь = PostgreSQL недоступен или неверный DATABASE_DSN)"
 uv run alembic upgrade head
 
 # 4. Сидинг базовых справочников (идемпотентно).

@@ -1,15 +1,37 @@
 from __future__ import annotations
 
 import re
+import shlex
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import URL
 
 # A safe, lowercase PostgreSQL identifier — needs no quoting and has no
 # case-folding surprises between CREATE SCHEMA and search_path.
 _DB_SCHEMA_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+_DSN_REQUIRED_KEYS = frozenset({"host", "port", "dbname", "user", "password"})
+_DSN_CORE_KEYS = frozenset({"host", "hostaddr", "port", "dbname", "user", "password"})
+_DRIVERNAME = "postgresql+asyncpg"
+
+
+def _parse_libpq_dsn(dsn: str) -> dict[str, str]:
+    # posix=True parses shell-style quoting; comments=False keeps '#'
+    # as a literal inside values (libpq does not use '#' comments here).
+    tokens = shlex.split(dsn, posix=True, comments=False)
+    out: dict[str, str] = {}
+    for token in tokens:
+        if "=" not in token:
+            raise ValueError(f"DATABASE_DSN: токен без '=': {token!r}")
+        key, _, value = token.partition("=")
+        out[key.strip().lower()] = value
+
+    missing = _DSN_REQUIRED_KEYS - out.keys()
+    if missing:
+        raise ValueError(f"DATABASE_DSN: отсутствуют обязательные ключи: {sorted(missing)}")
+    return out
 
 
 class Settings(BaseSettings):
@@ -26,7 +48,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = True
 
-    database_url: str = "postgresql+asyncpg://template_maker:template_maker@localhost:5432/template_maker"
+    database_dsn: str = (
+        "host=localhost port=5432 dbname=template_maker "
+        "user=template_maker password=template_maker"
+    )
     # Dedicated PostgreSQL schema the app lives in. Set as the connection
     # search_path, so every table / query is isolated to it.
     db_schema: str = "templater"
@@ -58,6 +83,12 @@ class Settings(BaseSettings):
             )
         return value
 
+    @field_validator("database_dsn")
+    @classmethod
+    def _check_database_dsn(cls, value: str) -> str:
+        _parse_libpq_dsn(value)
+        return value
+
     @property
     def llm_active(self) -> bool:
         return bool(self.gigachat_base_url and self.gigachat_cert_b64 and self.gigachat_key_b64)
@@ -69,6 +100,20 @@ class Settings(BaseSettings):
     @property
     def static_dir(self) -> Path:
         return self.base_dir / "static"
+
+    @property
+    def database_url(self) -> URL:
+        parts = _parse_libpq_dsn(self.database_dsn)
+        query = {key: value for key, value in parts.items() if key not in _DSN_CORE_KEYS}
+        return URL.create(
+            drivername=_DRIVERNAME,
+            username=parts["user"],
+            password=parts["password"],
+            host=parts.get("hostaddr") or parts["host"],
+            port=int(parts["port"]),
+            database=parts["dbname"],
+            query=query,
+        )
 
 
 @lru_cache(maxsize=1)
