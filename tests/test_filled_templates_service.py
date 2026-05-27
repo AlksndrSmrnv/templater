@@ -288,8 +288,9 @@ async def test_htmx_fill_save_persists_form_snapshot_without_rerender(
     assert kwargs["unresolved"] == ["sender.unknown"]
     # Role IDs are still parsed from the form (for FK columns).
     assert kwargs["fill_request"].sender_client_id == sender_id
-    assert response.name == "partials/fill_saved.html"
-    assert "HX-Trigger" in response.headers
+    assert response.status_code == 204
+    assert response.headers["HX-Redirect"].startswith("/templater/filled-templates/")
+    assert response.headers["HX-Redirect"].endswith("?saved=1")
 
 
 @pytest.mark.asyncio
@@ -308,6 +309,9 @@ async def test_htmx_fill_save_rejects_empty_snapshot(
     # Form error partial — never reaches save service.
     assert captured["save_kwargs"] is None
     assert response.name == "partials/form_errors.html"
+    assert response.status_code == 200
+    assert response.headers["HX-Retarget"] == "#save-feedback"
+    assert response.headers["HX-Reswap"] == "innerHTML"
 
 
 @pytest.mark.asyncio
@@ -334,6 +338,9 @@ async def test_htmx_fill_save_rejects_malformed_json_fields(
     )
     assert captured["save_kwargs"] is None
     assert response.name == "partials/form_errors.html"
+    assert response.status_code == 200
+    assert response.headers["HX-Retarget"] == "#save-feedback"
+    assert response.headers["HX-Reswap"] == "innerHTML"
 
 
 @pytest.mark.asyncio
@@ -360,6 +367,9 @@ async def test_htmx_fill_save_rejects_non_list_json(
     )
     assert captured["save_kwargs"] is None
     assert response.name == "partials/form_errors.html"
+    assert response.status_code == 200
+    assert response.headers["HX-Retarget"] == "#save-feedback"
+    assert response.headers["HX-Reswap"] == "innerHTML"
 
 
 # ---------------------------------------------------------------------------

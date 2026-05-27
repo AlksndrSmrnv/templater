@@ -238,4 +238,4 @@ async def htmx_import_policy(request: Request, session: AsyncSession = SessionDe
         policy = "skip"
     await SettingsRepository(session).set("import_policy", policy)
     await commit_or_409(session)
-    return Response(status_code=204, headers={"HX-Trigger": toast_header("Настройки сохранены")})
+    return Response(status_code=204, headers={"HX-Redirect": "/templater/settings?saved=1"})

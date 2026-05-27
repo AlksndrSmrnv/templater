@@ -1,0 +1,13 @@
+{% if request is defined and request.query_params.get("saved") == "1" %}
+    <div class="saved-banner" role="status">✅ Сохранено</div>
+    <script>
+        (() => {
+            const url = new URL(window.location.href);
+            if (url.searchParams.get("saved") !== "1") return;
+            url.searchParams.delete("saved");
+            const query = url.searchParams.toString();
+            const next = `${url.pathname}${query ? `?${query}` : ""}${url.hash}`;
+            window.history.replaceState(null, "", next);
+        })();
+    </script>
+{% endif %}

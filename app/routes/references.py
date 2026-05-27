@@ -233,7 +233,7 @@ async def htmx_create(
     _check_ref_type(entity_type)
     try:
         data = await _reference_create_payload(entity_type, request, session)
-        await commit_and_refresh(session, await ReferenceService(session).create(data))
+        created = await commit_and_refresh(session, await ReferenceService(session).create(data))
     except ValidationError as exc:
         return validation_errors_response(request, templates, exc)
     except DomainError as exc:
@@ -243,8 +243,7 @@ async def htmx_create(
     return Response(
         status_code=204,
         headers={
-            "HX-Redirect": f"/templater/references/{entity_type}",
-            "HX-Trigger": toast_header("Сохранено"),
+            "HX-Redirect": f"/templater/references/{entity_type}/{created.id}/edit?saved=1",
         },
     )
 
@@ -273,8 +272,7 @@ async def htmx_update(
     return Response(
         status_code=204,
         headers={
-            "HX-Redirect": f"/templater/references/{entity_type}",
-            "HX-Trigger": toast_header("Сохранено"),
+            "HX-Redirect": f"/templater/references/{entity_type}/{value_id}/edit?saved=1",
         },
     )
 
