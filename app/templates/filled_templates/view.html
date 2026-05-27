@@ -24,7 +24,7 @@
      * comments. The /raw endpoint serves the exact stored filled_content.
      */
     copy() {
-        fetch('/filled-templates/{{ ft.id }}/raw')
+        fetch('/templater/filled-templates/{{ ft.id }}/raw')
             .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
             .then(t => navigator.clipboard.writeText(t))
             .then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Скопировано' } })))

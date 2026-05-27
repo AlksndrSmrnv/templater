@@ -204,6 +204,61 @@ def test_import_page_uses_htmx_upload_form() -> None:
     assert "/api/import" not in html
 
 
+def test_filled_template_view_copy_fetch_uses_templater_prefix() -> None:
+    html = render_template(
+        "filled_templates/view.html",
+        {
+            "active": "filled_templates",
+            "ft": SimpleNamespace(
+                id="3db678b1-1111-2222-3333-444444444444",
+                name="Filled",
+                message_template_id=None,
+                template_name_snapshot=None,
+                created_at=None,
+                unresolved=[],
+            ),
+            "role_rows": [],
+            "role_client_ids": {},
+            "alive_client_ids": set(),
+            "rendered_html": "{}",
+        },
+    )
+
+    assert "fetch('/templater/filled-templates/3db678b1-1111-2222-3333-444444444444/raw')" in html
+    assert "fetch('/filled-templates/" not in html
+
+
+def test_filled_templates_table_copy_fetch_uses_templater_prefix() -> None:
+    html = render_template(
+        "partials/filled_templates_table.html",
+        {
+            "filled_templates": [
+                SimpleNamespace(
+                    id="3db678b1-1111-2222-3333-444444444444",
+                    name="Filled",
+                    unresolved=[],
+                    message_template_id=None,
+                    template_name_snapshot=None,
+                    format="json",
+                    role_labels_snapshot={},
+                    created_at=None,
+                )
+            ],
+            "truncated": False,
+        },
+    )
+
+    assert "fetch('/templater/filled-templates/3db678b1-1111-2222-3333-444444444444/raw')" in html
+    assert "fetch('/filled-templates/" not in html
+
+
+def test_references_index_displays_templater_prefixed_paths() -> None:
+    html = render_template("references/index.html", {"active": "references", "references": {"currency": "Валюты"}})
+
+    assert '<p class="muted">/templater/references/currency</p>' in html
+    assert '<p class="muted">/references/currency</p>' not in html
+
+
 def test_entity_list_has_table_meta_and_detail_drawer() -> None:
     html = render_template(
         "entities/list.html",

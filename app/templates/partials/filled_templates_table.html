@@ -32,7 +32,7 @@
                 <button class="btn"
                         type="button"
                         @click="
-                          fetch('/filled-templates/{{ ft.id }}/raw')
+                          fetch('/templater/filled-templates/{{ ft.id }}/raw')
                             .then(r => r.text())
                             .then(t => navigator.clipboard.writeText(t))
                             .then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Скопировано' } })))
