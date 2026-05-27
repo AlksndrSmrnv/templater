@@ -309,6 +309,9 @@ async def test_htmx_fill_save_rejects_empty_snapshot(
     # Form error partial — never reaches save service.
     assert captured["save_kwargs"] is None
     assert response.name == "partials/form_errors.html"
+    assert response.status_code == 200
+    assert response.headers["HX-Retarget"] == "#save-feedback"
+    assert response.headers["HX-Reswap"] == "innerHTML"
 
 
 @pytest.mark.asyncio
@@ -335,6 +338,9 @@ async def test_htmx_fill_save_rejects_malformed_json_fields(
     )
     assert captured["save_kwargs"] is None
     assert response.name == "partials/form_errors.html"
+    assert response.status_code == 200
+    assert response.headers["HX-Retarget"] == "#save-feedback"
+    assert response.headers["HX-Reswap"] == "innerHTML"
 
 
 @pytest.mark.asyncio
@@ -361,6 +367,9 @@ async def test_htmx_fill_save_rejects_non_list_json(
     )
     assert captured["save_kwargs"] is None
     assert response.name == "partials/form_errors.html"
+    assert response.status_code == 200
+    assert response.headers["HX-Retarget"] == "#save-feedback"
+    assert response.headers["HX-Reswap"] == "innerHTML"
 
 
 # ---------------------------------------------------------------------------

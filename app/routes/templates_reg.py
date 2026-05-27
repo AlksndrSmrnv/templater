@@ -48,6 +48,7 @@ FILL_KEYS = (
     "account_owner_card_id",
 )
 FILL_ROLES = {"sender", "receiver", "accountOwner"}
+FILL_SAVE_ERROR_HEADERS = {"HX-Retarget": "#save-feedback", "HX-Reswap": "innerHTML"}
 
 
 def _llm_ssl_message(exc: BaseException) -> str:
@@ -700,7 +701,13 @@ async def htmx_fill_save(
     try:
         data, _raw = await _fill_request_from_form(request)
     except ValueError:
-        return form_errors_response(request, templates, "Проверьте выбранные записи")
+        return form_errors_response(
+            request,
+            templates,
+            "Проверьте выбранные записи",
+            status_code=200,
+            headers=FILL_SAVE_ERROR_HEADERS,
+        )
 
     filled_content = form_str(form, "content")
     if not filled_content:
@@ -708,14 +715,28 @@ async def htmx_fill_save(
             request,
             templates,
             "Нет результата для сохранения — сначала нажмите «Заполнить».",
+            status_code=200,
+            headers=FILL_SAVE_ERROR_HEADERS,
         )
     try:
         changed_locations = json.loads(form_str(form, "changed_json") or "[]")
         unresolved = json.loads(form_str(form, "unresolved_json") or "[]")
     except json.JSONDecodeError:
-        return form_errors_response(request, templates, "Повреждённые данные результата")
+        return form_errors_response(
+            request,
+            templates,
+            "Повреждённые данные результата",
+            status_code=200,
+            headers=FILL_SAVE_ERROR_HEADERS,
+        )
     if not isinstance(changed_locations, list) or not isinstance(unresolved, list):
-        return form_errors_response(request, templates, "Повреждённые данные результата")
+        return form_errors_response(
+            request,
+            templates,
+            "Повреждённые данные результата",
+            status_code=200,
+            headers=FILL_SAVE_ERROR_HEADERS,
+        )
 
     template = await TemplateService(session).get(template_id)
     saved = await FilledTemplateService(session).save_from_fill(
