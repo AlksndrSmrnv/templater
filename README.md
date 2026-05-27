@@ -70,8 +70,8 @@ cp .env.example .env
 ```
 
 В `.env` указать:
-- `DATABASE_URL` — адрес и креды вашего PostgreSQL.
-  Пароль со спецсимволами percent-encode (`@`→`%40`, `$`→`%24`, `|`→`%7C`).
+- `DATABASE_DSN` — libpq-style DSN для вашего PostgreSQL (одной строкой):
+  `host=... port=5432 dbname=... user=... password='p@ss w$rd'`.
 - `DB_SCHEMA` — выделенная схема (по умолчанию `templater`, создаётся автоматически).
 - `GIGACHAT_BASE_URL`, `GIGACHAT_CERT_B64`, `GIGACHAT_KEY_B64` — для GigaChat.
   Сертификат и ключ кодируются в base64:
