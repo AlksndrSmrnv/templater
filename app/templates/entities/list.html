@@ -145,23 +145,29 @@
             </tbody>
         </table>
     </div>
-    <aside class="detail-drawer"
-           id="detail-drawer"
-           :class="{ open: drawerOpen }"
-           :aria-hidden="(!drawerOpen).toString()"
-           @keydown.escape.window="closeDrawer()">
-        <div x-show="!drawerHasContent">
-            <div class="drawer-header">
-                <h2>Запись</h2>
-                <button class="drawer-close" type="button" aria-label="Закрыть" @click="closeDrawer()">&times;</button>
+    <div class="detail-drawer"
+         id="detail-drawer"
+         :class="{ open: drawerOpen }"
+         :aria-hidden="(!drawerOpen).toString()"
+         role="dialog"
+         aria-modal="true"
+         x-cloak
+         @keydown.escape.window="closeDrawer()"
+         @click.self="closeDrawer()">
+        <div class="drawer-panel" @click.stop>
+            <div x-show="!drawerHasContent">
+                <div class="drawer-header">
+                    <h2>Запись</h2>
+                    <button class="drawer-close" type="button" aria-label="Закрыть" @click="closeDrawer()">&times;</button>
+                </div>
+                <div class="drawer-body muted">Выберите строку.</div>
             </div>
-            <div class="drawer-body muted">Выберите строку.</div>
+            <div x-show="drawerHasContent && drawerLoading" class="drawer-body muted">Загрузка...</div>
+            <div id="drawer-content"
+                 x-ref="drawerContent"
+                 x-show="drawerHasContent && !drawerLoading"
+                 @htmx:after-swap="drawerLoading = false"></div>
         </div>
-        <div x-show="drawerHasContent && drawerLoading" class="drawer-body muted">Загрузка...</div>
-        <div id="drawer-content"
-             x-ref="drawerContent"
-             x-show="drawerHasContent && !drawerLoading"
-             @htmx:after-swap="drawerLoading = false"></div>
-    </aside>
+    </div>
 </div>
 {% endblock %}
