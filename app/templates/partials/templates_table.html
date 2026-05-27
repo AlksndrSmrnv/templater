@@ -2,16 +2,16 @@
 {% if rows %}
     {% for template in rows %}
         <tr>
-            <td><a href="/templates/{{ template.id }}">{{ template.name }}</a></td>
+            <td><a href="/templater/templates/{{ template.id }}">{{ template.name }}</a></td>
             <td>{{ template.format }}</td>
             <td>{{ (template.llm_meta or {}).get("category", "") }}</td>
             <td>{{ template.description or (template.llm_meta or {}).get("summary", "") }}</td>
             <td>{{ template.updated_at }}</td>
             <td class="row-actions">
-                <a class="btn" href="/templates/{{ template.id }}/fill">Заполнить</a>
+                <a class="btn" href="/templater/templates/{{ template.id }}/fill">Заполнить</a>
                 <button class="btn danger"
                         type="button"
-                        hx-delete="/templates-htmx/{{ template.id }}"
+                        hx-delete="/templater/templates-htmx/{{ template.id }}"
                         hx-target="closest tr"
                         hx-swap="outerHTML swap:300ms"
                         hx-confirm="Удалить шаблон?">Удалить</button>

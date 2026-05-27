@@ -5,9 +5,9 @@
       autocomplete="off"
       x-data="{ dataType: {{ (attribute.data_type if is_edit else 'string') | tojson | forceescape }} }"
       {% if is_edit %}
-      hx-put="/settings-htmx/attributes/{{ attribute.id }}"
+      hx-put="/templater/settings-htmx/attributes/{{ attribute.id }}"
       {% else %}
-      hx-post="/settings-htmx/attributes"
+      hx-post="/templater/settings-htmx/attributes"
       {% endif %}
       hx-target="#attr-errors"
       hx-swap="innerHTML">

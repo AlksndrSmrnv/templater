@@ -10,7 +10,7 @@
     {% for ft in rows %}
         <tr>
             <td>
-                <a href="/filled-templates/{{ ft.id }}">{{ ft.name }}</a>
+                <a href="/templater/filled-templates/{{ ft.id }}">{{ ft.name }}</a>
                 {% if ft.unresolved %}
                     <span title="Остались неподставленные токены: {{ ft.unresolved | join(', ') }}"
                           style="display:inline-block; margin-left:6px; padding:1px 6px; font-size:11px; border-radius:8px; background: rgba(255,200,0,0.18); color:#a8741a;">не дозаполнено</span>
@@ -18,7 +18,7 @@
             </td>
             <td>
                 {% if ft.message_template_id %}
-                    <a href="/templates/{{ ft.message_template_id }}">{{ ft.template_name_snapshot or '—' }}</a>
+                    <a href="/templater/templates/{{ ft.message_template_id }}">{{ ft.template_name_snapshot or '—' }}</a>
                 {% else %}
                     <span class="muted">{{ ft.template_name_snapshot or '—' }} (удалён)</span>
                 {% endif %}
@@ -28,11 +28,11 @@
             <td>{{ (ft.role_labels_snapshot or {}).get('receiver', '—') }}</td>
             <td>{{ ft.created_at.strftime('%d.%m.%Y %H:%M') if ft.created_at else '' }}</td>
             <td class="row-actions">
-                <a class="btn" href="/filled-templates/{{ ft.id }}">Открыть</a>
+                <a class="btn" href="/templater/filled-templates/{{ ft.id }}">Открыть</a>
                 <button class="btn"
                         type="button"
                         @click="
-                          fetch('/filled-templates/{{ ft.id }}/raw')
+                          fetch('/templater/filled-templates/{{ ft.id }}/raw')
                             .then(r => r.text())
                             .then(t => navigator.clipboard.writeText(t))
                             .then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Скопировано' } })))
@@ -40,7 +40,7 @@
                         ">Копировать</button>
                 <button class="btn danger"
                         type="button"
-                        hx-delete="/filled-templates-htmx/{{ ft.id }}"
+                        hx-delete="/templater/filled-templates-htmx/{{ ft.id }}"
                         hx-target="closest tr"
                         hx-swap="outerHTML swap:300ms"
                         hx-confirm="Удалить заполненный шаблон?">Удалить</button>

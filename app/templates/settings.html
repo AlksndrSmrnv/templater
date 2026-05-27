@@ -24,7 +24,7 @@
 <div class="settings-section">
     <h2>📥 Политика импорта</h2>
     <form class="filters-inline"
-          hx-put="/settings-htmx/import_policy"
+          hx-put="/templater/settings-htmx/import_policy"
           hx-swap="none">
         <label>По умолчанию:
             <select name="import_policy">
@@ -47,7 +47,7 @@
         <label>Тип сущности:
             <select id="entity-filter"
                     name="entity_type"
-                    hx-get="/settings-htmx/attributes/table"
+                    hx-get="/templater/settings-htmx/attributes/table"
                     hx-target="#attrs-body"
                     hx-swap="innerHTML"
                     hx-trigger="change">
@@ -57,7 +57,7 @@
         </label>
         <button class="btn primary"
                 type="button"
-                hx-get="/settings-htmx/attributes/new"
+                hx-get="/templater/settings-htmx/attributes/new"
                 hx-include="#entity-filter"
                 hx-target="#attr-modal-content"
                 hx-swap="innerHTML">Добавить атрибут</button>
@@ -69,7 +69,7 @@
                 <th>Required</th><th>Deprecated</th><th>Порядок</th><th>Описание</th><th class="no-sort"></th>
             </tr></thead>
             <tbody id="attrs-body"
-                   hx-get="/settings-htmx/attributes/table"
+                   hx-get="/templater/settings-htmx/attributes/table"
                    hx-trigger="refresh-attributes from:body"
                    hx-include="#entity-filter"
                    hx-swap="innerHTML">

@@ -60,21 +60,21 @@
     <div class="page-header">
         <h1>{{ title }}</h1>
         <div class="actions">
-            <a class="btn primary" href="/{{ entity_type }}s/new">Создать</a>
-            <form id="entity-export-form" action="/entities-htmx/{{ entity_type }}/export" method="post">
+            <a class="btn primary" href="/templater/{{ entity_type }}s/new">Создать</a>
+            <form id="entity-export-form" action="/templater/entities-htmx/{{ entity_type }}/export" method="post">
                 <template x-for="id in selected" :key="'export-' + id">
                     <input type="hidden" name="ids" :value="id">
                 </template>
                 <button class="btn" type="submit" :disabled="selected.length === 0">Экспорт выбранных</button>
             </form>
-            <a class="btn" href="/import">Импорт</a>
+            <a class="btn" href="/templater/import">Импорт</a>
         </div>
     </div>
     <div class="filters">
         <form id="entity-controls"
               class="filters-inline"
               x-ref="controls"
-              hx-get="/entities-htmx/{{ entity_type }}/table"
+              hx-get="/templater/entities-htmx/{{ entity_type }}/table"
               hx-target="#entities-body"
               hx-swap="innerHTML"
               hx-trigger="input changed delay:200ms, refresh">
@@ -137,7 +137,7 @@
                 </tr>
             </thead>
             <tbody id="entities-body"
-                   hx-get="/entities-htmx/{{ entity_type }}/table"
+                   hx-get="/templater/entities-htmx/{{ entity_type }}/table"
                    hx-trigger="refresh-entities from:body"
                    hx-include="#entity-controls"
                    hx-swap="innerHTML">

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from html.parser import HTMLParser
 import uuid
+from html.parser import HTMLParser
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -10,7 +10,6 @@ import pytest
 
 from app.routes import templates_reg
 from app.routes.deps import get_templates
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -79,11 +78,11 @@ def test_entity_form_uses_htmx_update_without_static_js() -> None:
         },
     )
 
-    assert 'hx-put="/entities-htmx/client/3db678b1-1111-2222-3333-444444444444"' in html
+    assert 'hx-put="/templater/entities-htmx/client/3db678b1-1111-2222-3333-444444444444"' in html
     assert 'x-data="' in html
     assert "tags: [&#34;vip \\&#34;quoted\\&#34;&#34;]" in html
     assert "window.PAGE" not in html
-    assert "/static/js/entity-form.js" not in html
+    assert "/templater/static/js/entity-form.js" not in html
 
 
 def test_entity_form_uses_htmx_create_without_static_js() -> None:
@@ -102,9 +101,9 @@ def test_entity_form_uses_htmx_create_without_static_js() -> None:
         },
     )
 
-    assert 'hx-post="/entities-htmx/client"' in html
+    assert 'hx-post="/templater/entities-htmx/client"' in html
     assert "window.PAGE" not in html
-    assert "/static/js/entity-form.js" not in html
+    assert "/templater/static/js/entity-form.js" not in html
 
 
 def test_reference_form_serializes_page_context_as_json_literals() -> None:
@@ -122,7 +121,7 @@ def test_reference_form_serializes_page_context_as_json_literals() -> None:
 
     assert page_line == 'window.PAGE = { entityType: "currency", valueId: "5f9a67c4-1111-2222-3333-444444444444" };'
     assert "&#34;" not in page_line
-    assert 'hx-put="/references-htmx/currency/5f9a67c4-1111-2222-3333-444444444444"' in html
+    assert 'hx-put="/templater/references-htmx/currency/5f9a67c4-1111-2222-3333-444444444444"' in html
     assert "reference-form.js" not in html
 
 
@@ -161,11 +160,11 @@ def test_list_pages_serialize_string_context_as_json_literals() -> None:
     assert "&#34;" not in reference_page_line
     assert "sort: &#34;created_at&#34;" in entity_html
     assert "direction: &#34;desc&#34;" in entity_html
-    assert 'hx-get="/entities-htmx/client/table"' in entity_html
+    assert 'hx-get="/templater/entities-htmx/client/table"' in entity_html
     assert 'hx-trigger="input changed delay:200ms, refresh"' in entity_html
     assert '@input.debounce.200ms="dispatchFilters()"' in entity_html
     assert "window.PAGE" not in entity_html
-    assert 'hx-get="/references-htmx/currency/table"' in reference_html
+    assert 'hx-get="/templater/references-htmx/currency/table"' in reference_html
     assert "reference-list.js" not in reference_html
 
 
@@ -193,7 +192,7 @@ def test_import_page_uses_htmx_upload_form() -> None:
         },
     )
 
-    assert 'hx-post="/import-htmx"' in html
+    assert 'hx-post="/templater/import-htmx"' in html
     assert 'hx-encoding="multipart/form-data"' in html
     assert "htmx.org@2.0.4" in html
     assert "alpinejs@3.14.1" in html
@@ -203,6 +202,61 @@ def test_import_page_uses_htmx_upload_form() -> None:
     assert "htmx:afterSwap" not in html
     assert "htmx:oobAfterSwap" not in html
     assert "/api/import" not in html
+
+
+def test_filled_template_view_copy_fetch_uses_templater_prefix() -> None:
+    html = render_template(
+        "filled_templates/view.html",
+        {
+            "active": "filled_templates",
+            "ft": SimpleNamespace(
+                id="3db678b1-1111-2222-3333-444444444444",
+                name="Filled",
+                message_template_id=None,
+                template_name_snapshot=None,
+                created_at=None,
+                unresolved=[],
+            ),
+            "role_rows": [],
+            "role_client_ids": {},
+            "alive_client_ids": set(),
+            "rendered_html": "{}",
+        },
+    )
+
+    assert "fetch('/templater/filled-templates/3db678b1-1111-2222-3333-444444444444/raw')" in html
+    assert "fetch('/filled-templates/" not in html
+
+
+def test_filled_templates_table_copy_fetch_uses_templater_prefix() -> None:
+    html = render_template(
+        "partials/filled_templates_table.html",
+        {
+            "filled_templates": [
+                SimpleNamespace(
+                    id="3db678b1-1111-2222-3333-444444444444",
+                    name="Filled",
+                    unresolved=[],
+                    message_template_id=None,
+                    template_name_snapshot=None,
+                    format="json",
+                    role_labels_snapshot={},
+                    created_at=None,
+                )
+            ],
+            "truncated": False,
+        },
+    )
+
+    assert "fetch('/templater/filled-templates/3db678b1-1111-2222-3333-444444444444/raw')" in html
+    assert "fetch('/filled-templates/" not in html
+
+
+def test_references_index_displays_templater_prefixed_paths() -> None:
+    html = render_template("references/index.html", {"active": "references", "references": {"currency": "Валюты"}})
+
+    assert '<p class="muted">/templater/references/currency</p>' in html
+    assert '<p class="muted">/references/currency</p>' not in html
 
 
 def test_entity_list_has_table_meta_and_detail_drawer() -> None:
@@ -227,8 +281,8 @@ def test_entity_list_has_table_meta_and_detail_drawer() -> None:
     assert 'id="table-meta"' in html
     assert 'id="detail-drawer"' in html
     assert "drawerHasContent: false" in html
-    assert 'hx-get="/entities-htmx/client/table"' in html
-    assert '<script src="/static/js/entity-list.js">' not in html
+    assert 'hx-get="/templater/entities-htmx/client/table"' in html
+    assert '<script src="/templater/static/js/entity-list.js">' not in html
 
 
 def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
@@ -249,7 +303,7 @@ def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
 
     assert 'id="role-panels"' in html
     assert "accountOwner: { clientId: '', accountId: '', cardId: '' }" in html
-    assert 'hx-post="/templates-htmx/3db678b1-1111-2222-3333-444444444444/fill/render"' in html
+    assert 'hx-post="/templater/templates-htmx/3db678b1-1111-2222-3333-444444444444/fill/render"' in html
     assert 'id="sender-client"' not in html
     assert "pickFromList(event, role, kind)" in html
     assert "event.stopPropagation();" in html
@@ -332,7 +386,7 @@ def test_template_upload_uses_htmx_preview_form() -> None:
         },
     )
 
-    assert 'hx-post="/templates-htmx/preview"' in html
+    assert 'hx-post="/templater/templates-htmx/preview"' in html
     assert 'hx-encoding="multipart/form-data"' in html
     assert 'hx-indicator="#upload-indicator"' in html
     assert 'hx-disabled-elt="find button[type=submit]"' in html
@@ -340,7 +394,7 @@ def test_template_upload_uses_htmx_preview_form() -> None:
     assert "Обработка LLM" in html
     assert "showFormErrors" in html
     assert "$refs.errors.replaceChildren" not in html
-    assert "/static/js/placeholder-editor.js" not in html
+    assert "/templater/static/js/placeholder-editor.js" not in html
 
 
 def test_template_review_llm_debug_panel_keeps_headings_outside_code_blocks() -> None:
@@ -398,7 +452,7 @@ def test_template_view_disables_regenerate_when_llm_inactive() -> None:
     assert "Описание (для LLM)" not in html
     assert "Метаинформация LLM" in html
     assert "Генерация" in html
-    assert html.index('hx-delete="/templates-htmx/') < html.index('id="regen-indicator"')
+    assert html.index('hx-delete="/templater/templates-htmx/') < html.index('id="regen-indicator"')
     assert "Наведите на подсвеченное значение" in html
 
 

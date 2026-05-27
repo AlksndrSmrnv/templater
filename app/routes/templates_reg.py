@@ -443,7 +443,7 @@ async def htmx_create(
     return Response(
         status_code=204,
         headers={
-            "HX-Redirect": f"/templates/{template.id}",
+            "HX-Redirect": f"/templater/templates/{template.id}",
             "HX-Trigger": toast_header("Шаблон сохранён"),
         },
     )
@@ -543,7 +543,7 @@ async def htmx_delete(
     await commit_or_409(session)
     headers = {"HX-Trigger": toast_header("Шаблон удалён")}
     if redirect:
-        headers["HX-Redirect"] = "/templates"
+        headers["HX-Redirect"] = "/templater/templates"
     return Response(status_code=204 if redirect else 200, headers=headers)
 
 

@@ -24,10 +24,10 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.entity import ClientRepository
+from app.repositories.filled_template import DEFAULT_LIST_LIMIT
 from app.routes.deps import SessionDep, TemplatesDep
 from app.routes.htmx_utils import toast_header
 from app.routes.uow import commit_or_409
-from app.repositories.filled_template import DEFAULT_LIST_LIMIT
 from app.services.filled_templates import FilledTemplateService, iter_role_labels
 from app.services.template_render import render_filled_html
 
@@ -157,5 +157,5 @@ async def htmx_delete(
     await commit_or_409(session)
     headers = {"HX-Trigger": toast_header("Заполненный шаблон удалён")}
     if redirect:
-        headers["HX-Redirect"] = "/filled-templates"
+        headers["HX-Redirect"] = "/templater/filled-templates"
     return Response(status_code=204 if redirect else 200, headers=headers)

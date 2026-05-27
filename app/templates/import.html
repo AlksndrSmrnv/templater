@@ -4,13 +4,13 @@
 <div class="page-header">
     <h1>📥 Импорт данных</h1>
     <div class="actions">
-        <a class="btn" href="/clients">Клиенты</a>
-        <a class="btn" href="/templates">Шаблоны</a>
+        <a class="btn" href="/templater/clients">Клиенты</a>
+        <a class="btn" href="/templater/templates">Шаблоны</a>
     </div>
 </div>
 <form id="import-form"
       class="form"
-      hx-post="/import-htmx"
+      hx-post="/templater/import-htmx"
       hx-encoding="multipart/form-data"
       hx-target="#result"
       hx-swap="innerHTML">

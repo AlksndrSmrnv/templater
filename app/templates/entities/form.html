@@ -4,7 +4,7 @@
 <div class="page-header">
     <h1>{{ title }}</h1>
     <div class="actions">
-        <a class="btn" href="/{{ entity_type }}s">Назад к списку</a>
+        <a class="btn" href="/templater/{{ entity_type }}s">Назад к списку</a>
     </div>
 </div>
 
@@ -23,9 +23,9 @@
           }
       }"
       {% if entity_id %}
-      hx-put="/entities-htmx/{{ entity_type }}/{{ entity_id }}"
+      hx-put="/templater/entities-htmx/{{ entity_type }}/{{ entity_id }}"
       {% else %}
-      hx-post="/entities-htmx/{{ entity_type }}"
+      hx-post="/templater/entities-htmx/{{ entity_type }}"
       {% endif %}
       hx-target="#form-errors"
       hx-swap="innerHTML">
@@ -125,7 +125,7 @@
         {% if entity_id %}
             <button class="btn danger"
                     type="button"
-                    hx-delete="/entities-htmx/{{ entity_type }}/{{ entity_id }}?redirect=true"
+                    hx-delete="/templater/entities-htmx/{{ entity_type }}/{{ entity_id }}?redirect=true"
                     hx-confirm="Удалить запись?"
                     hx-swap="none">Удалить</button>
         {% endif %}
