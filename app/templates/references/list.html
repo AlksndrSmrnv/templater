@@ -4,14 +4,14 @@
 <div class="page-header">
     <h1>{{ title }}</h1>
     <div class="actions">
-        <a class="btn primary" href="/references/{{ entity_type }}/new">Создать</a>
-        <a class="btn" href="/references">Все справочники</a>
+        <a class="btn primary" href="/templater/references/{{ entity_type }}/new">Создать</a>
+        <a class="btn" href="/templater/references">Все справочники</a>
     </div>
 </div>
 <div class="filters">
     <form id="reference-controls"
           class="filters-inline"
-          hx-get="/references-htmx/{{ entity_type }}/table"
+          hx-get="/templater/references-htmx/{{ entity_type }}/table"
           hx-target="#reference-table-body"
           hx-swap="innerHTML"
           hx-trigger="input changed delay:200ms, change">

@@ -243,7 +243,7 @@ async def htmx_create(
     return Response(
         status_code=204,
         headers={
-            "HX-Redirect": f"/references/{entity_type}",
+            "HX-Redirect": f"/templater/references/{entity_type}",
             "HX-Trigger": toast_header("Сохранено"),
         },
     )
@@ -273,7 +273,7 @@ async def htmx_update(
     return Response(
         status_code=204,
         headers={
-            "HX-Redirect": f"/references/{entity_type}",
+            "HX-Redirect": f"/templater/references/{entity_type}",
             "HX-Trigger": toast_header("Сохранено"),
         },
     )
@@ -291,5 +291,5 @@ async def htmx_delete(
     await commit_or_409(session, message="Не удалось удалить запись справочника — есть связанные данные")
     headers = {"HX-Trigger": toast_header("Удалено")}
     if redirect:
-        headers["HX-Redirect"] = f"/references/{entity_type}"
+        headers["HX-Redirect"] = f"/templater/references/{entity_type}"
     return Response(status_code=204 if redirect else 200, headers=headers)

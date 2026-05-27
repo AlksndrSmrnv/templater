@@ -44,20 +44,21 @@ def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_json)
     app = FastAPI(title="Template Maker", debug=settings.app_debug, lifespan=lifespan)
+    app_prefix = "/templater"
 
-    app.mount("/static", StaticFiles(directory=settings.static_dir), name="static")
+    app.mount(f"{app_prefix}/static", StaticFiles(directory=settings.static_dir), name="static")
 
-    app.include_router(home.router)
-    app.include_router(clients.router)
-    app.include_router(accounts.router)
-    app.include_router(cards.router)
-    app.include_router(entities_htmx.router)
-    app.include_router(references.router)
-    app.include_router(templates_reg.router)
-    app.include_router(filled_templates.router)
-    app.include_router(send.router)
-    app.include_router(settings_routes.router)
-    app.include_router(export_import.router)
+    app.include_router(home.router, prefix=app_prefix)
+    app.include_router(clients.router, prefix=app_prefix)
+    app.include_router(accounts.router, prefix=app_prefix)
+    app.include_router(cards.router, prefix=app_prefix)
+    app.include_router(entities_htmx.router, prefix=app_prefix)
+    app.include_router(references.router, prefix=app_prefix)
+    app.include_router(templates_reg.router, prefix=app_prefix)
+    app.include_router(filled_templates.router, prefix=app_prefix)
+    app.include_router(send.router, prefix=app_prefix)
+    app.include_router(settings_routes.router, prefix=app_prefix)
+    app.include_router(export_import.router, prefix=app_prefix)
 
     @app.exception_handler(DomainError)
     async def _domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:

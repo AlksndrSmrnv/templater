@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Template Maker{% endblock %}</title>
-    <link rel="stylesheet" href="/static/css/app.css">
+    <link rel="stylesheet" href="/templater/static/css/app.css">
     <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"
             integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+"
             crossorigin="anonymous"
@@ -30,33 +30,33 @@
     }
 }" @show-toast.window="showToast($event)" @showToast.window="showToast($event)">
 <header class="topbar">
-    <div class="brand"><a href="/">📝 Template Maker</a></div>
+    <div class="brand"><a href="/templater/">📝 Template Maker</a></div>
     <nav class="topnav">
-        <a href="/" class="{% if active == 'home' %}active{% endif %}" title="Главная">
+        <a href="/templater/" class="{% if active == 'home' %}active{% endif %}" title="Главная">
             <span class="nav-icon">🏠</span><span class="nav-label">Главная</span>
         </a>
         <span class="nav-group{% if active == 'data' %} active{% endif %}" title="Тестовые данные">
             <span class="nav-icon">🗂️</span><span class="nav-label">Тестовые данные</span>
             <div class="nav-submenu">
-                <a href="/clients">👥 Клиенты</a>
-                <a href="/accounts">🏦 Счета</a>
-                <a href="/cards">💳 Карты</a>
+                <a href="/templater/clients">👥 Клиенты</a>
+                <a href="/templater/accounts">🏦 Счета</a>
+                <a href="/templater/cards">💳 Карты</a>
             </div>
         </span>
-        <a href="/references" class="{% if active == 'references' %}active{% endif %}" title="Справочники">
+        <a href="/templater/references" class="{% if active == 'references' %}active{% endif %}" title="Справочники">
             <span class="nav-icon">📚</span><span class="nav-label">Справочники</span>
         </a>
         <span class="nav-group{% if active == 'templates' %} active{% endif %}" title="Шаблоны сообщений">
             <span class="nav-icon">✉️</span><span class="nav-label">Шаблоны сообщений</span>
             <div class="nav-submenu">
-                <a href="/templates">📄 Шаблоны</a>
-                <a href="/filled-templates">📦 Заполненные шаблоны</a>
+                <a href="/templater/templates">📄 Шаблоны</a>
+                <a href="/templater/filled-templates">📦 Заполненные шаблоны</a>
             </div>
         </span>
-        <a href="/send" class="{% if active == 'send' %}active{% endif %} disabled" title="Отправка сообщений — в разработке">
+        <a href="/templater/send" class="{% if active == 'send' %}active{% endif %} disabled" title="Отправка сообщений — в разработке">
             <span class="nav-icon">📨</span><span class="nav-label">Отправка сообщений</span>
         </a>
-        <a href="/settings" class="{% if active == 'settings' %}active{% endif %}" title="Настройки">
+        <a href="/templater/settings" class="{% if active == 'settings' %}active{% endif %}" title="Настройки">
             <span class="nav-icon">⚙️</span><span class="nav-label">Настройки</span>
         </a>
     </nav>

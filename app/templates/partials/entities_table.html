@@ -16,7 +16,7 @@
     {% for row in rows %}
         {% set row_id = row.id | string %}
         <tr data-id="{{ row_id }}"
-            hx-get="/entities-htmx/{{ entity_type }}/{{ row.id }}/detail"
+            hx-get="/templater/entities-htmx/{{ entity_type }}/{{ row.id }}/detail"
             hx-target="#drawer-content"
             hx-swap="innerHTML"
             hx-trigger="click[!event.target.closest('a, button, input, label, select, textarea')]"
@@ -48,7 +48,7 @@
                 <td class="col-relation">
                     <div class="relation-links">
                         {% for account in accounts_by_client.get(row_id, []) %}
-                            <a class="entity-link" href="/accounts?open={{ account.id }}" @click.stop>{{ labels.account.get(account.id|string, account.id|string) }}</a>
+                            <a class="entity-link" href="/templater/accounts?open={{ account.id }}" @click.stop>{{ labels.account.get(account.id|string, account.id|string) }}</a>
                         {% else %}
                             <span class="muted">—</span>
                         {% endfor %}
@@ -57,7 +57,7 @@
                 <td class="col-relation">
                     <div class="relation-links">
                         {% for card in cards_by_client.get(row_id, []) %}
-                            <a class="entity-link" href="/cards?open={{ card.id }}" @click.stop>{{ labels.card.get(card.id|string, card.id|string) }}</a>
+                            <a class="entity-link" href="/templater/cards?open={{ card.id }}" @click.stop>{{ labels.card.get(card.id|string, card.id|string) }}</a>
                         {% else %}
                             <span class="muted">—</span>
                         {% endfor %}
@@ -66,12 +66,12 @@
             {% elif entity_type == "account" %}
                 <td class="col-relation">
                     {% set client_id = row.client_id | string %}
-                    <a class="entity-link" href="/clients?open={{ row.client_id }}" @click.stop>{{ labels.client.get(client_id, client_id) }}</a>
+                    <a class="entity-link" href="/templater/clients?open={{ row.client_id }}" @click.stop>{{ labels.client.get(client_id, client_id) }}</a>
                 </td>
                 <td class="col-relation">
                     <div class="relation-links">
                         {% for card in cards_by_account.get(row_id, []) %}
-                            <a class="entity-link" href="/cards?open={{ card.id }}" @click.stop>{{ labels.card.get(card.id|string, card.id|string) }}</a>
+                            <a class="entity-link" href="/templater/cards?open={{ card.id }}" @click.stop>{{ labels.card.get(card.id|string, card.id|string) }}</a>
                         {% else %}
                             <span class="muted">—</span>
                         {% endfor %}
@@ -82,13 +82,13 @@
                 <td class="col-relation">
                     {% if account %}
                         {% set client_id = account.client_id | string %}
-                        <a class="entity-link" href="/clients?open={{ account.client_id }}" @click.stop>{{ labels.client.get(client_id, client_id) }}</a>
+                        <a class="entity-link" href="/templater/clients?open={{ account.client_id }}" @click.stop>{{ labels.client.get(client_id, client_id) }}</a>
                     {% else %}
                         <span class="muted">—</span>
                     {% endif %}
                 </td>
                 <td class="col-relation">
-                    <a class="entity-link" href="/accounts?open={{ row.account_id }}" @click.stop>{{ labels.account.get(row.account_id|string, row.account_id|string) }}</a>
+                    <a class="entity-link" href="/templater/accounts?open={{ row.account_id }}" @click.stop>{{ labels.account.get(row.account_id|string, row.account_id|string) }}</a>
                 </td>
             {% endif %}
             <td>

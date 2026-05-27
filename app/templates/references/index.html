@@ -4,7 +4,7 @@
 <h1>📚 Справочники</h1>
 <div class="cards">
     {% for code, name in references.items() %}
-    <a class="card" href="/references/{{ code }}">
+    <a class="card" href="/templater/references/{{ code }}">
         <h3>{{ name }}</h3>
         <p class="muted">/references/{{ code }}</p>
     </a>

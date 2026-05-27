@@ -4,14 +4,14 @@
 <div class="page-header">
     <h1>📦 {{ ft.name }}</h1>
     <div class="actions">
-        <a class="btn" href="/filled-templates">← К списку</a>
+        <a class="btn" href="/templater/filled-templates">← К списку</a>
         {% if ft.message_template_id %}
-            <a class="btn" href="/templates/{{ ft.message_template_id }}">К исходному шаблону</a>
+            <a class="btn" href="/templater/templates/{{ ft.message_template_id }}">К исходному шаблону</a>
         {% endif %}
-        <a class="btn" href="/filled-templates/{{ ft.id }}/raw?download=1">⬇️ Скачать</a>
+        <a class="btn" href="/templater/filled-templates/{{ ft.id }}/raw?download=1">⬇️ Скачать</a>
         <button class="btn danger"
                 type="button"
-                hx-delete="/filled-templates-htmx/{{ ft.id }}?redirect=1"
+                hx-delete="/templater/filled-templates-htmx/{{ ft.id }}?redirect=1"
                 hx-confirm="Удалить заполненный шаблон?">Удалить</button>
     </div>
 </div>
@@ -41,7 +41,7 @@
                     <td>Шаблон</td>
                     <td>
                         {% if ft.message_template_id %}
-                            <a href="/templates/{{ ft.message_template_id }}">{{ ft.template_name_snapshot or '—' }}</a>
+                            <a href="/templater/templates/{{ ft.message_template_id }}">{{ ft.template_name_snapshot or '—' }}</a>
                         {% else %}
                             <span class="muted">{{ ft.template_name_snapshot or '—' }} (удалён)</span>
                         {% endif %}
@@ -53,7 +53,7 @@
                         <td>
                             {% set cid = role_client_ids.get(role) %}
                             {% if cid and cid in alive_client_ids %}
-                                <a href="/clients/{{ cid }}">{{ label or '—' }}</a>
+                                <a href="/templater/clients/{{ cid }}">{{ label or '—' }}</a>
                             {% elif cid %}
                                 <span class="muted">{{ label or '—' }} (удалён)</span>
                             {% else %}

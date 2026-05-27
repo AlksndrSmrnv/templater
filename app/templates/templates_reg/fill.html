@@ -4,8 +4,8 @@
 <div class="page-header">
     <h1>🖍️ Заполнить шаблон: {{ template.name }}</h1>
     <div class="actions">
-        <a class="btn" href="/templates/{{ template.id }}">К шаблону</a>
-        <a class="btn" href="/templates">Все шаблоны</a>
+        <a class="btn" href="/templater/templates/{{ template.id }}">К шаблону</a>
+        <a class="btn" href="/templater/templates">Все шаблоны</a>
     </div>
 </div>
 
@@ -82,7 +82,7 @@
                            type="search"
                            name="q"
                            placeholder="Поиск"
-                           hx-get="/templates-htmx/{{ template.id }}/fill/clients?role={{ role }}"
+                           hx-get="/templater/templates-htmx/{{ template.id }}/fill/clients?role={{ role }}"
                            hx-trigger="input changed delay:200ms"
                            hx-target="#{{ role }}-clients"
                            hx-swap="innerHTML">
@@ -102,7 +102,7 @@
                              role="listbox"
                              aria-label="{{ title }}: счета"
                              @click="pickFromList($event, '{{ role }}', 'account')"
-                             hx-get="/templates-htmx/{{ template.id }}/fill/accounts?role={{ role }}"
+                             hx-get="/templater/templates-htmx/{{ template.id }}/fill/accounts?role={{ role }}"
                              hx-trigger="client-changed from:closest section"
                              hx-include="closest section"
                              hx-params="client_id"
@@ -119,7 +119,7 @@
                              role="listbox"
                              aria-label="{{ title }}: карты"
                              @click="pickFromList($event, '{{ role }}', 'card')"
-                             hx-get="/templates-htmx/{{ template.id }}/fill/cards?role={{ role }}"
+                             hx-get="/templater/templates-htmx/{{ template.id }}/fill/cards?role={{ role }}"
                              hx-trigger="client-changed from:closest section"
                              hx-include="closest section"
                              hx-params="client_id"
@@ -148,7 +148,7 @@
                            type="search"
                            name="q"
                            placeholder="Поиск"
-                           hx-get="/templates-htmx/{{ template.id }}/fill/clients?role={{ role }}"
+                           hx-get="/templater/templates-htmx/{{ template.id }}/fill/clients?role={{ role }}"
                            hx-trigger="input changed delay:200ms"
                            hx-target="#{{ role }}-clients"
                            hx-swap="innerHTML">
@@ -168,7 +168,7 @@
                              role="listbox"
                              aria-label="{{ title }}: счета"
                              @click="pickFromList($event, '{{ role }}', 'account')"
-                             hx-get="/templates-htmx/{{ template.id }}/fill/accounts?role={{ role }}"
+                             hx-get="/templater/templates-htmx/{{ template.id }}/fill/accounts?role={{ role }}"
                              hx-trigger="client-changed from:closest section"
                              hx-include="closest section"
                              hx-params="client_id"
@@ -185,7 +185,7 @@
                              role="listbox"
                              aria-label="{{ title }}: карты"
                              @click="pickFromList($event, '{{ role }}', 'card')"
-                             hx-get="/templates-htmx/{{ template.id }}/fill/cards?role={{ role }}"
+                             hx-get="/templater/templates-htmx/{{ template.id }}/fill/cards?role={{ role }}"
                              hx-trigger="client-changed from:closest section"
                              hx-include="closest section"
                              hx-params="client_id"
@@ -202,7 +202,7 @@
 
     <form class="form-actions"
           style="margin-top:14px;"
-          hx-post="/templates-htmx/{{ template.id }}/fill/render"
+          hx-post="/templater/templates-htmx/{{ template.id }}/fill/render"
           hx-target="#fill-result"
           hx-swap="innerHTML">
         <input type="hidden" name="sender_client_id" :value="state.sender.clientId">

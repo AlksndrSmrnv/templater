@@ -13,7 +13,7 @@
             <div class="detail-label">Счета</div>
             <div class="detail-value relation-links">
                 {% for account in accounts_by_client.get(row_id, []) %}
-                    <a class="entity-link" href="/accounts?open={{ account.id }}">{{ labels.account.get(account.id|string, account.id|string) }}</a>
+                    <a class="entity-link" href="/templater/accounts?open={{ account.id }}">{{ labels.account.get(account.id|string, account.id|string) }}</a>
                 {% else %}—{% endfor %}
             </div>
         </div>
@@ -21,7 +21,7 @@
             <div class="detail-label">Карты</div>
             <div class="detail-value relation-links">
                 {% for card in cards_by_client.get(row_id, []) %}
-                    <a class="entity-link" href="/cards?open={{ card.id }}">{{ labels.card.get(card.id|string, card.id|string) }}</a>
+                    <a class="entity-link" href="/templater/cards?open={{ card.id }}">{{ labels.card.get(card.id|string, card.id|string) }}</a>
                 {% else %}—{% endfor %}
             </div>
         </div>
@@ -30,14 +30,14 @@
             <div class="detail-label">Клиент</div>
             <div class="detail-value">
                 {% set client_id = item.client_id | string %}
-                <a class="entity-link" href="/clients?open={{ item.client_id }}">{{ labels.client.get(client_id, client_id) }}</a>
+                <a class="entity-link" href="/templater/clients?open={{ item.client_id }}">{{ labels.client.get(client_id, client_id) }}</a>
             </div>
         </div>
         <div class="detail-field">
             <div class="detail-label">Карты</div>
             <div class="detail-value relation-links">
                 {% for card in cards_by_account.get(row_id, []) %}
-                    <a class="entity-link" href="/cards?open={{ card.id }}">{{ labels.card.get(card.id|string, card.id|string) }}</a>
+                    <a class="entity-link" href="/templater/cards?open={{ card.id }}">{{ labels.card.get(card.id|string, card.id|string) }}</a>
                 {% else %}—{% endfor %}
             </div>
         </div>
@@ -48,14 +48,14 @@
             <div class="detail-value">
                 {% if account %}
                     {% set client_id = account.client_id | string %}
-                    <a class="entity-link" href="/clients?open={{ account.client_id }}">{{ labels.client.get(client_id, client_id) }}</a>
+                    <a class="entity-link" href="/templater/clients?open={{ account.client_id }}">{{ labels.client.get(client_id, client_id) }}</a>
                 {% else %}—{% endif %}
             </div>
         </div>
         <div class="detail-field">
             <div class="detail-label">Счёт</div>
             <div class="detail-value">
-                <a class="entity-link" href="/accounts?open={{ item.account_id }}">{{ labels.account.get(item.account_id|string, item.account_id|string) }}</a>
+                <a class="entity-link" href="/templater/accounts?open={{ item.account_id }}">{{ labels.account.get(item.account_id|string, item.account_id|string) }}</a>
             </div>
         </div>
     {% endif %}
@@ -95,10 +95,10 @@
     </div>
 </div>
 <div class="drawer-footer">
-    <a class="btn primary" href="/{{ entity_type }}s/{{ item.id }}/edit">Редактировать</a>
+    <a class="btn primary" href="/templater/{{ entity_type }}s/{{ item.id }}/edit">Редактировать</a>
     <button class="btn danger"
             type="button"
-            hx-delete="/entities-htmx/{{ entity_type }}/{{ item.id }}"
+            hx-delete="/templater/entities-htmx/{{ entity_type }}/{{ item.id }}"
             hx-confirm="Удалить запись?"
             hx-swap="none">Удалить</button>
 </div>

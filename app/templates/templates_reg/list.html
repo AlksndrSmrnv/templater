@@ -4,12 +4,12 @@
 <div class="page-header">
     <h1>✉️ Шаблоны сообщений</h1>
     <div class="actions">
-        <a class="btn primary" href="/templates/new">Загрузить шаблон</a>
+        <a class="btn primary" href="/templater/templates/new">Загрузить шаблон</a>
     </div>
 </div>
 <div class="filters">
     <form class="filters-inline"
-          hx-get="/templates-htmx/table"
+          hx-get="/templater/templates-htmx/table"
           hx-target="#tpl-body"
           hx-swap="innerHTML"
           hx-trigger="input changed delay:200ms">

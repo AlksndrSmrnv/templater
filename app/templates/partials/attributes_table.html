@@ -18,13 +18,13 @@
             <td class="row-actions">
                 <button class="btn"
                         type="button"
-                        hx-get="/settings-htmx/attributes/{{ attr.id }}/edit"
+                        hx-get="/templater/settings-htmx/attributes/{{ attr.id }}/edit"
                         hx-target="#attr-modal-content"
                         hx-swap="innerHTML">Изменить</button>
                 {% if not attr.is_deprecated %}
                     <button class="btn danger"
                             type="button"
-                            hx-post="/settings-htmx/attributes/{{ attr.id }}/deprecate"
+                            hx-post="/templater/settings-htmx/attributes/{{ attr.id }}/deprecate"
                             hx-swap="none"
                             hx-confirm="Пометить атрибут как устаревший?">В архив</button>
                 {% endif %}

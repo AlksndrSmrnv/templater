@@ -428,7 +428,7 @@ async def htmx_create(
     return Response(
         status_code=204,
         headers={
-            "HX-Redirect": f"/{entity_type}s",
+            "HX-Redirect": f"/templater/{entity_type}s",
             "HX-Trigger": toast_header("Сохранено"),
         },
     )
@@ -465,7 +465,7 @@ async def htmx_update(
     return Response(
         status_code=204,
         headers={
-            "HX-Redirect": f"/{entity_type}s",
+            "HX-Redirect": f"/templater/{entity_type}s",
             "HX-Trigger": toast_header("Сохранено"),
         },
     )
@@ -483,7 +483,7 @@ async def htmx_delete(
     await commit_or_409(session, message="Не удалось удалить запись — есть связанные данные")
     headers = {"HX-Trigger": toast_header("Удалено", refresh_entities=True, close_drawer=True)}
     if redirect:
-        headers["HX-Redirect"] = f"/{entity_type}s"
+        headers["HX-Redirect"] = f"/templater/{entity_type}s"
     return Response(status_code=204, headers=headers)
 
 
