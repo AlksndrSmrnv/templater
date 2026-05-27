@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import shlex
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from pathlib import Path
 
 from pydantic import Field, field_validator
@@ -101,9 +101,13 @@ class Settings(BaseSettings):
     def static_dir(self) -> Path:
         return self.base_dir / "static"
 
+    @cached_property
+    def _database_dsn_parts(self) -> dict[str, str]:
+        return _parse_libpq_dsn(self.database_dsn)
+
     @property
     def database_url(self) -> URL:
-        parts = _parse_libpq_dsn(self.database_dsn)
+        parts = self._database_dsn_parts
         query = {key: value for key, value in parts.items() if key not in _DSN_CORE_KEYS}
         return URL.create(
             drivername=_DRIVERNAME,

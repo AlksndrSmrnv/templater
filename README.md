@@ -70,7 +70,7 @@ cp .env.example .env
 ```
 
 В `.env` указать:
-- `DATABASE_DSN` — libpq-style DSN для вашего PostgreSQL:
+- `DATABASE_DSN` — libpq-style DSN для вашего PostgreSQL (одной строкой):
   `host=... port=5432 dbname=... user=... password='p@ss w$rd'`.
 - `DB_SCHEMA` — выделенная схема (по умолчанию `templater`, создаётся автоматически).
 - `GIGACHAT_BASE_URL`, `GIGACHAT_CERT_B64`, `GIGACHAT_KEY_B64` — для GigaChat.
