@@ -6,7 +6,7 @@
 <div class="drawer-body">
     <div class="detail-field">
         <div class="detail-label">Описание</div>
-        <div class="detail-value">{{ item.description or "—" }}</div>
+        <div class="detail-value detail-value--text">{{ item.description or "—" }}</div>
     </div>
     {% if entity_type == "client" %}
         <div class="detail-field">
@@ -63,7 +63,7 @@
         {% set raw = (item.attributes or {}).get(field.name) %}
         <div class="detail-field">
             <div class="detail-label">{{ field.label }}</div>
-            <div class="detail-value">
+            <div class="detail-value{% if field.data_type == 'text' %} detail-value--text{% endif %}">
                 {% if field.data_type == "bool" %}
                     {% if raw %}✓{% else %}✗{% endif %}
                 {% elif field.data_type == "ref" %}

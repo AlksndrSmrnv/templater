@@ -163,7 +163,7 @@ h3 { font-size: 17px; margin: 0 0 6px; }
     padding: 2px 6px;
     border: 1px solid var(--border);
     border-radius: 6px;
-    font-size: 14px;
+    font-size: 13px;
 }
 .data-table tbody tr { cursor: pointer; }
 .data-table tbody tr:nth-child(even) { background: var(--surface-2); }
@@ -269,7 +269,8 @@ h3 { font-size: 17px; margin: 0 0 6px; }
 }
 .detail-field { margin-bottom: 16px; }
 .detail-label { font-size: 13px; color: var(--muted); margin-bottom: 2px; }
-.detail-value { font-size: 15px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.detail-value { font-size: 15px; overflow-wrap: anywhere; }
+.detail-value--text { white-space: pre-wrap; }
 
 @keyframes detailBackdropIn {
     from { background: rgba(20, 30, 60, 0); }

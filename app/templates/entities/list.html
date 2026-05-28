@@ -152,6 +152,7 @@
          role="dialog"
          aria-modal="true"
          x-cloak
+         x-effect="document.body.style.overflow = drawerOpen ? 'hidden' : ''"
          @keydown.escape.window="closeDrawer()"
          @click.self="closeDrawer()">
         <div class="drawer-panel" @click.stop>

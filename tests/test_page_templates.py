@@ -282,7 +282,42 @@ def test_entity_list_has_table_meta_and_detail_drawer() -> None:
     assert 'id="detail-drawer"' in html
     assert "drawerHasContent: false" in html
     assert 'hx-get="/templater/entities-htmx/client/table"' in html
+    assert 'x-effect="document.body.style.overflow = drawerOpen ? \'hidden\' : \'\'"' in html
     assert '<script src="/templater/static/js/entity-list.js">' not in html
+
+
+def test_entity_detail_preserves_whitespace_only_for_text_values() -> None:
+    html = render_template(
+        "partials/entity_detail.html",
+        {
+            "entity_type": "client",
+            "item": SimpleNamespace(
+                id="3db678b1-1111-2222-3333-444444444444",
+                description="Line 1\nLine 2",
+                attributes={
+                    "notes": "Free\ntext",
+                    "code": "ABC",
+                },
+                tags=["vip", "manual"],
+                created_at="2026-05-28",
+                updated_at="2026-05-28",
+            ),
+            "schema": [
+                SimpleNamespace(name="notes", label="Notes", data_type="text"),
+                SimpleNamespace(name="code", label="Code", data_type="string"),
+            ],
+            "accounts_by_client": {},
+            "cards_by_client": {},
+            "cards_by_account": {},
+            "accounts_by_id": {},
+            "labels": {"client": {}, "account": {}, "card": {}},
+            "ref_options": {},
+        },
+    )
+
+    assert html.count('class="detail-value detail-value--text"') == 2
+    assert '<div class="detail-label">Теги</div>\n        <div class="detail-value">' in html
+    assert '<div class="detail-label">Code</div>\n            <div class="detail-value">' in html
 
 
 def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
