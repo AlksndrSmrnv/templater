@@ -204,8 +204,8 @@ class ExportImportService:
                     if not val:
                         continue
                     try:
-                        # A legacy / deprecated attribute may hold a non-UUID
-                        # value (validation preserves unknown keys unchecked).
+                        # A legacy value of a since-deleted attribute may not be a
+                        # UUID (validation preserves unknown keys unchecked).
                         # Skip it instead of letting uuid.UUID(...) 500 the export.
                         ref_ids[target_type].add(uuid.UUID(str(val)))
                     except (ValueError, AttributeError, TypeError):
