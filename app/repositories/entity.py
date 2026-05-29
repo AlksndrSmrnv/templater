@@ -13,6 +13,21 @@ from app.db.models import Account, Card, Client, MessageTemplate, ReferenceValue
 
 # Real columns (not JSONB attributes) the entity list may sort on.
 _REAL_SORT_COLUMNS = frozenset({"description", "created_at", "updated_at"})
+# Escape char for LIKE patterns (a single backslash).
+_LIKE_ESCAPE = "\\"
+
+
+def _like_escape(text: str) -> str:
+    """Escape LIKE metacharacters so user input matches literally — parity with the
+    previous Python substring search, where ``%``/``_`` had no special meaning.
+    Paired with ``escape=_LIKE_ESCAPE`` on the ``ilike()`` calls.
+    """
+
+    return (
+        text.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
+        .replace("%", f"{_LIKE_ESCAPE}%")
+        .replace("_", f"{_LIKE_ESCAPE}_")
+    )
 
 
 def _entity_filter_conditions(
@@ -32,19 +47,21 @@ def _entity_filter_conditions(
     conditions: list[Any] = []
     needle = search.strip()
     if needle:
-        like = f"%{needle}%"
+        like = f"%{_like_escape(needle)}%"
         conditions.append(
             or_(
-                model.description.ilike(like),
-                sa_cast(model.attributes, Text).ilike(like),
-                func.array_to_string(model.tags, " ").ilike(like),
+                model.description.ilike(like, escape=_LIKE_ESCAPE),
+                sa_cast(model.attributes, Text).ilike(like, escape=_LIKE_ESCAPE),
+                func.array_to_string(model.tags, " ").ilike(like, escape=_LIKE_ESCAPE),
             )
         )
     for name, value in filters.items():
         text = value.strip()
         if not text or name not in attr_names:
             continue
-        conditions.append(model.attributes[name].astext.ilike(f"%{text}%"))
+        conditions.append(
+            model.attributes[name].astext.ilike(f"%{_like_escape(text)}%", escape=_LIKE_ESCAPE)
+        )
     return conditions
 
 
@@ -60,7 +77,10 @@ def _entity_order_by(
     elif sort == "tags":
         col = func.array_to_string(model.tags, " ")
     elif sort in attr_names:
-        col = model.attributes[sort].astext
+        # ``->>`` is NULL for a missing key; coalesce to '' so rows lacking the
+        # attribute sort like the empty string did under the old Python sort
+        # instead of NULLs jumping to the top under DESC.
+        col = func.coalesce(model.attributes[sort].astext, "")
     else:
         col = model.created_at
     return col.desc() if direction == "desc" else col.asc()

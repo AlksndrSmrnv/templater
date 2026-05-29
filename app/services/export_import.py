@@ -529,14 +529,15 @@ class ExportImportService:
             errors.append("references: ожидался объект вида {тип: [...]}")
             references_section = {}
         references_map = cast(dict[str, Any], references_section or {})
-        # Prefetch every existing reference for the types present in the file in a
-        # single query so the per-row id/code lookups below are dict hits instead of
-        # 2-3 queries each (autoflush is off and nothing is committed mid-loop, so a
-        # snapshot taken now matches what live queries would return).
+        # Prefetch existing references so the per-row lookups below are dict hits
+        # instead of 2-3 queries each (autoflush is off and nothing is committed
+        # mid-loop, so a snapshot taken now matches what live queries would return).
         present_ref_types = [t for t in references_map if t in REFERENCE_TYPES]
         existing_ref_by_id: dict[str, ReferenceValue] = {}
         existing_ref_by_code: dict[tuple[str, str], ReferenceValue] = {}
         if present_ref_types:
+            # Codes only ever clash within a type → scan existing rows of the
+            # present types to build the (type, code) index.
             for row in (
                 (
                     await self.session.execute(
@@ -548,8 +549,25 @@ class ExportImportService:
                 .scalars()
                 .all()
             ):
-                existing_ref_by_id[str(row.id)] = row
                 existing_ref_by_code[(row.entity_type, row.code)] = row
+            # The id (PK) guard is cross-type: a UUID may already belong to a row of
+            # ANY type, so the id index must be built by id regardless of type —
+            # otherwise the cross-type collision check below is bypassed and the
+            # duplicate PK only surfaces as a whole-stage rollback on flush.
+            file_ref_ids = {
+                rid for items in references_map.values() for rid in _collect_uuids(items, "id")
+            }
+            if file_ref_ids:
+                for row in (
+                    (
+                        await self.session.execute(
+                            select(ReferenceValue).where(ReferenceValue.id.in_(file_ref_ids))
+                        )
+                    )
+                    .scalars()
+                    .all()
+                ):
+                    existing_ref_by_id[str(row.id)] = row
         for ref_type, items in references_map.items():
             if ref_type not in REFERENCE_TYPES:
                 errors.append(f"references: неизвестный тип справочника '{ref_type}'")
