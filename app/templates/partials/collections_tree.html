@@ -36,7 +36,7 @@
         </div>
         <div class="tree-collection-actions">
             <button class="btn small"
-                    title="{% if llm_active %}Обработать всю коллекцию LLM{% else %}Обработать всю коллекцию (LLM не настроена — будет использована эвристика){% endif %}"
+                    title="Обработать всю коллекцию LLM"
                     hx-post="/templater/collections/{{ cn.collection.id }}/process-llm"
                     hx-target="#collections-tree"
                     hx-swap="innerHTML"

@@ -904,19 +904,19 @@ class ExportImportService:
                     errors.append(f"template {new_name}: description {desc_err}")
                     continue
 
-                # Non-empty content must parse as the declared format. Empty
-                # content is allowed: imported GET/urlencoded/GraphQL requests
-                # carry no parsable body (stored with import_status="unparsed").
-                if new_content:
-                    content_err = _validate_template_body(raw.get("name", "?"), fmt, new_content)
-                    if content_err:
-                        errors.append(content_err.replace("template", "template content"))
-                        continue
+                # A non-empty body should parse as the declared format. If it
+                # does NOT, the template is imported as "unparsed" — kept verbatim
+                # (mirrors the workspace import of GET/urlencoded/GraphQL requests
+                # and the Postman parser's parsable=False bodies). LLM analysis and
+                # fill are guarded elsewhere for such templates, so storing an
+                # unparsable body is safe. Only a wrong *type* is rejected.
+                content_parsable = bool(new_content) and (
+                    _validate_template_body(raw.get("name", "?"), fmt, new_content) is None
+                )
 
-                # Normalize original_content: absent / empty / null → fall back
-                # to content. analyze/regenerate use it as their source, so a
-                # falsy value mustn't reach the DB (null would abort on commit)
-                # and a non-empty value must itself parse as the format.
+                # original_content: absent / empty / null → fall back to content.
+                # A non-empty value is kept verbatim (not re-validated): if the
+                # body is unparsable, so is its source.
                 orig_raw = raw.get("original_content")
                 if orig_raw is None or orig_raw == "":
                     new_original = new_content
@@ -924,11 +924,6 @@ class ExportImportService:
                     errors.append(f"template {raw.get('name')}: original_content должен быть строкой")
                     continue
                 else:
-                    if orig_raw != new_content:
-                        orig_err = _validate_template_body(raw.get("name", "?"), fmt, orig_raw)
-                        if orig_err:
-                            errors.append(orig_err.replace("template", "template original_content"))
-                            continue
                     new_original = orig_raw
 
                 # Validate placeholder structure — a malformed entry would later
@@ -953,6 +948,12 @@ class ExportImportService:
                         errors.append(f"template {new_name}: llm_meta {meta_err}")
                         continue
                     new_llm_meta = parsed_llm_meta
+
+                # Keep the unparsed marker and placeholders consistent: an
+                # unparsable body cannot carry resolvable placeholders.
+                if not content_parsable:
+                    placeholders = []
+                    new_llm_meta = {**new_llm_meta, "import_status": "unparsed"}
 
                 # Workspace metadata (collection import). Optional — degrade to
                 # defaults on absence/bad shape rather than failing the row.

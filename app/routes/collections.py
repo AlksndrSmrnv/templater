@@ -79,8 +79,17 @@ async def htmx_process_collection(
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
 ) -> Response:
-    summary = await CollectionService(session).process_collection_llm(collection_id)
-    await commit_or_409(session)
+    try:
+        summary = await CollectionService(session).process_collection_llm(collection_id)
+        await commit_or_409(session)
+    except DomainError as exc:
+        await session.rollback()
+        return await _tree_response(
+            request,
+            templates,
+            session,
+            headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
+        )
     message = (
         f"Обработано: {summary.processed}"
         f" · пропущено: {summary.skipped}"

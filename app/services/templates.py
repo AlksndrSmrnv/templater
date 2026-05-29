@@ -280,8 +280,9 @@ class TemplateService:
     ) -> MessageTemplate:
         """Analyse the (original) template content and produce placeholders + llm_meta.
 
-        Uses ``llm_service`` when given; otherwise falls back to a heuristic match
-        based on attribute names (so the feature degrades gracefully without LLM).
+        Production always passes a live ``llm_service`` (the tool requires LLM).
+        ``None`` is a test-only path that derives mappings from the heuristic /
+        path-role rules without contacting an LLM.
         """
 
         source = template.original_content or template.content

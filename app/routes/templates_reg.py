@@ -14,7 +14,6 @@ from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.llm.runner import llm_service
 from app.repositories.filled_template import FilledTemplateRepository
 from app.routes.deps import SessionDep, TemplatesDep
@@ -33,7 +32,8 @@ from app.services.templates import (
     placeholders_have_account_owner,
     template_has_account_owner,
 )
-from app.utils.errors import DomainError, LLMUnavailable, ValidationFailed
+from app.utils import walker
+from app.utils.errors import DomainError, LLMResponseError, LLMUnavailable, ValidationFailed
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -73,47 +73,24 @@ def _validate_preview_source(data: TemplateCreate) -> None:
 async def preview_template(data: TemplateCreate, session: AsyncSession) -> dict[str, Any]:
     _validate_preview_source(data)
     svc = TemplateService(session)
-    llm_used = False
-    llm_error: str | None = None
 
-    if get_settings().llm_active:
-        try:
-            async with llm_service() as llm_svc:
-                result = await svc.analyze_content(
-                    fmt=data.format,
-                    original_content=data.content,
-                    llm_service=llm_svc,
-                )
-            llm_used = result.get("llm_debug") is not None
-        except LLMUnavailable as exc:
-            llm_error = str(exc)
+    # LLM is required. A missing/broken configuration or a failed call surfaces
+    # as a DomainError that ``htmx_preview`` renders as a form error — the tool
+    # has no heuristic-only mode.
+    try:
+        async with llm_service() as llm_svc:
             result = await svc.analyze_content(
                 fmt=data.format,
                 original_content=data.content,
-                llm_service=None,
+                llm_service=llm_svc,
             )
-        except (ssl.SSLError, OSError) as exc:
-            llm_error = _llm_ssl_message(exc)
-            result = await svc.analyze_content(
-                fmt=data.format,
-                original_content=data.content,
-                llm_service=None,
-            )
-        except Exception as exc:
-            log.warning("LLM template preview failed; falling back to heuristic analysis", exc_info=True)
-            llm_error = f"LLM не смогла обработать шаблон; использована эвристика. Исходная ошибка: {exc}"
-            result = await svc.analyze_content(
-                fmt=data.format,
-                original_content=data.content,
-                llm_service=None,
-            )
-    else:
-        llm_error = "LLM не настроена; использована эвристика по именам полей."
-        result = await svc.analyze_content(
-            fmt=data.format,
-            original_content=data.content,
-            llm_service=None,
-        )
+    except DomainError:
+        raise
+    except (ssl.SSLError, OSError) as exc:
+        raise LLMUnavailable(_llm_ssl_message(exc)) from exc
+    except Exception as exc:
+        log.warning("LLM template preview failed", exc_info=True)
+        raise LLMResponseError(f"LLM не смогла обработать шаблон: {exc}") from exc
 
     rendered_html = render_template_html(
         SimpleNamespace(
@@ -131,12 +108,34 @@ async def preview_template(data: TemplateCreate, session: AsyncSession) -> dict[
         "placeholders": result["placeholders"],
         "llm_meta": result["llm_meta"],
         "rendered_html": rendered_html,
-        "llm_used": llm_used,
-        "llm_error": llm_error,
+        "llm_used": result.get("llm_debug") is not None,
         "llm_debug": result.get("llm_debug"),
         "catalog": await svc.build_field_catalog(),
         "dynamic_tokens": dynamic_token_catalog(),
     }
+
+
+def _is_parsable(template: Any) -> bool:
+    """True when the body parses as its declared format (so LLM analysis and
+    fill are possible). Imported GET/urlencoded/empty/invalid bodies are not.
+
+    Uses the walker directly (not ``TemplateService``) so it is independent of
+    that class being monkeypatched in tests.
+    """
+
+    source = template.original_content or template.content
+    if not source or not source.strip():
+        return False
+    try:
+        if template.format == "json":
+            walker.walk_json(source)
+        elif template.format == "xml":
+            walker.walk_xml(source)
+        else:
+            return False
+    except Exception:
+        return False
+    return True
 
 
 async def _template_code_context(session: AsyncSession, template: Any) -> dict[str, Any]:
@@ -146,28 +145,13 @@ async def _template_code_context(session: AsyncSession, template: Any) -> dict[s
         "placeholders": template.placeholders,
         "catalog": await TemplateService(session).build_field_catalog(),
         "dynamic_tokens": dynamic_token_catalog(),
-        "llm_active": get_settings().llm_active,
+        "parsable": _is_parsable(template),
     }
-
-
-def _is_parsable(template: Any) -> bool:
-    """True when the body parses as its declared format (so LLM analysis is
-    possible). Imported GET/urlencoded/empty bodies are not parsable."""
-
-    source = template.original_content or template.content
-    if not source or not source.strip():
-        return False
-    try:
-        TemplateService._extract_leaves(template.format, source)
-    except Exception:
-        return False
-    return True
 
 
 async def _template_panel_context(session: AsyncSession, template: Any) -> dict[str, Any]:
     context = await _template_code_context(session, template)
     context["headers"] = template.headers or []
-    context["parsable"] = _is_parsable(template)
     context["has_account_owner"] = template_has_account_owner(template)
     context["filled_links"] = await FilledTemplateRepository(session).list_by_template(template.id)
     return context
@@ -399,19 +383,9 @@ async def htmx_process_llm(
 ) -> Response:
     svc = TemplateService(session)
     template = await svc.get(template_id)
-    llm_svc_active = get_settings().llm_active
     try:
-        if llm_svc_active:
-            try:
-                async with llm_service() as llm_svc:
-                    await svc.analyze_and_persist(template, llm_service=llm_svc)
-            except ValidationFailed:
-                raise
-            except Exception:
-                log.warning("LLM processing failed; heuristic fallback", exc_info=True)
-                await svc.analyze_and_persist(template, llm_service=None)
-        else:
-            await svc.analyze_and_persist(template, llm_service=None)
+        async with llm_service() as llm_svc:
+            await svc.analyze_and_persist(template, llm_service=llm_svc)
         template = await commit_and_refresh(session, template)
     except DomainError as exc:
         return form_errors_response(
@@ -419,7 +393,7 @@ async def htmx_process_llm(
             templates,
             exc.message,
             details=exc.details,
-            status_code=exc.status_code,
+            status_code=200,
             headers={"HX-Retarget": "#panel-errors", "HX-Reswap": "innerHTML"},
         )
     return templates.TemplateResponse(
@@ -548,28 +522,31 @@ async def htmx_regenerate(
 ) -> Response:
     svc = TemplateService(session)
     template = await svc.get(template_id)
+    if not _is_parsable(template):
+        return form_errors_response(
+            request,
+            templates,
+            f"Тело сообщения не разбирается как {template.format.upper()} — "
+            "обработка LLM недоступна",
+            status_code=200,
+            headers={"HX-Retarget": "#template-code-wrap", "HX-Reswap": "outerHTML"},
+        )
     source = template.original_content or template.content
-    llm_debug: dict[str, Any] | None = None
-    if get_settings().llm_active:
-        try:
-            async with llm_service() as llm_svc:
-                result = await svc.analyze_content(
-                    fmt=template.format,
-                    original_content=source,
-                    llm_service=llm_svc,
-                )
-        except Exception:
-            log.warning("LLM template regeneration failed; falling back to heuristic analysis", exc_info=True)
+    try:
+        async with llm_service() as llm_svc:
             result = await svc.analyze_content(
                 fmt=template.format,
                 original_content=source,
-                llm_service=None,
+                llm_service=llm_svc,
             )
-    else:
-        result = await svc.analyze_content(
-            fmt=template.format,
-            original_content=source,
-            llm_service=None,
+    except DomainError as exc:
+        return form_errors_response(
+            request,
+            templates,
+            exc.message,
+            details=exc.details,
+            status_code=200,
+            headers={"HX-Retarget": "#template-code-wrap", "HX-Reswap": "outerHTML"},
         )
 
     llm_debug = result.get("llm_debug")

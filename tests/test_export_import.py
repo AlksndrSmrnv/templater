@@ -273,3 +273,38 @@ async def test_import_reports_wrong_shaped_collections_section() -> None:
     summary = await svc.import_package({"collections": "nope"}, policy="skip")
     joined = " ".join(summary.errors)
     assert "collections" in joined
+
+
+@pytest.mark.asyncio
+async def test_import_keeps_nonempty_unparsable_body_verbatim() -> None:
+    # Mirrors the Postman parser's parsable=False bodies: a non-empty body that
+    # does not parse must still import (verbatim), forced to "unparsed" with no
+    # placeholders — not rejected as invalid JSON.
+    tid = uuid.uuid4()
+    package = {
+        "version": 2,
+        "templates": [
+            {
+                "id": str(tid),
+                "name": "Broken",
+                "format": "json",
+                "content": "{not json",
+                "original_content": "{not json",
+                "llm_meta": {"import_status": "imported"},
+                "placeholders": [{"location": "/a", "mode": "literal", "value": "x"}],
+                "http_method": "POST",
+                "url": "https://api/broken",
+            }
+        ],
+    }
+    session = cast(Any, _RoundTripSession())
+    summary = await ExportImportService(session).import_package(package, policy="skip")
+
+    assert summary.errors == []
+    assert summary.created["templates"] == 1
+    template = next(o for o in session.added if isinstance(o, MessageTemplate))
+    assert template.content == "{not json"
+    assert template.original_content == "{not json"
+    assert template.placeholders == []
+    assert template.llm_meta["import_status"] == "unparsed"
+    assert template.http_method == "POST"

@@ -459,36 +459,41 @@ def test_template_review_llm_debug_panel_keeps_headings_outside_code_blocks() ->
     assert 'id="template-code-wrap"' not in html
 
 
-def test_template_view_disables_regenerate_when_llm_inactive() -> None:
-    html = render_template(
-        "templates_reg/view.html",
-        {
-            "active": "templates",
-            "template": SimpleNamespace(
-                id="3db678b1-1111-2222-3333-444444444444",
-                name="Template",
-                description="",
-                llm_meta={},
-            ),
-            "rendered_html": "{}",
-            "placeholders": [],
-            "catalog": [],
-            "dynamic_tokens": [],
-            "llm_active": False,
-            "llm_debug": None,
-        },
-    )
+def _view_context(*, parsable: bool) -> dict[str, Any]:
+    return {
+        "active": "templates",
+        "template": SimpleNamespace(
+            id="3db678b1-1111-2222-3333-444444444444",
+            name="Template",
+            description="",
+            llm_meta={},
+        ),
+        "rendered_html": "{}",
+        "placeholders": [],
+        "catalog": [],
+        "dynamic_tokens": [],
+        "parsable": parsable,
+        "llm_debug": None,
+    }
 
-    assert 'disabled title="LLM не настроена"' in html
+
+def test_template_view_shows_actions_when_parsable() -> None:
+    html = render_template("templates_reg/view.html", _view_context(parsable=True))
+    # Regenerate is no longer gated by llm_active — it's available for parsable bodies.
+    assert "Перегенерировать с LLM" in html
+    assert 'disabled title="LLM не настроена"' not in html
+    assert ">Заполнить</a>" in html
     assert 'type="submit" form="template-editor-form">Сохранить изменения</button>' in html
-    assert 'hx-indicator="#regen-indicator"' in html
-    assert 'hx-disabled-elt="this"' in html
-    assert 'id="regen-indicator"' in html
-    assert "Описание (для LLM)" not in html
     assert "Метаинформация LLM" in html
-    assert "Генерация" in html
-    assert html.index('hx-delete="/templater/templates-htmx/') < html.index('id="regen-indicator"')
     assert "Наведите на подсвеченное значение" in html
+
+
+def test_template_view_hides_fill_and_regenerate_when_unparsable() -> None:
+    html = render_template("templates_reg/view.html", _view_context(parsable=False))
+    assert "Перегенерировать с LLM" not in html
+    assert "Заполнить" not in html
+    # The editor itself stays available.
+    assert "Сохранить изменения" in html
 
 
 def test_template_view_shows_llm_debug_toggle_when_present() -> None:
@@ -812,15 +817,12 @@ def test_template_panel_unparsable_disables_process_and_hides_editor() -> None:
     assert process and "disabled" in process[0]
 
 
-def test_template_panel_process_enabled_for_heuristic_when_llm_inactive() -> None:
-    # When LLM is off, parsable templates can still be processed heuristically,
-    # so the button must NOT be disabled (only the title changes).
-    ctx = _panel_context(_panel_template(), parsable=True)
-    ctx["llm_active"] = False
-    html = render_template("partials/template_panel.html", ctx)
+def test_template_panel_process_button_enabled_when_parsable() -> None:
+    # The process button is gated only by parsability (LLM is required and
+    # assumed configured); it must be enabled for a parsable template.
+    html = render_template("partials/template_panel.html", _panel_context(_panel_template(), parsable=True))
     process = [tag for tag in start_tags(html, "button") if "/process-llm" in (tag.get("hx-post") or "")]
     assert process and "disabled" not in process[0]
-    assert "эвристика" in html
 
 
 def test_template_panel_lists_filled_links() -> None:

@@ -14,7 +14,7 @@
                     hx-indicator="#panel-llm-indicator"
                     hx-disabled-elt="this"
                     {% if not parsable %}disabled{% endif %}
-                    title="{% if not parsable %}Тело не разбирается как JSON/XML — обработка недоступна{% elif llm_active %}Анализ шаблона LLM{% else %}Анализ шаблона (LLM не настроена — будет использована эвристика){% endif %}">
+                    title="{% if not parsable %}Тело не разбирается как JSON/XML — обработка недоступна{% else %}Анализ шаблона LLM{% endif %}">
                 ✨ Обработать LLM
             </button>
             {% if parsable %}

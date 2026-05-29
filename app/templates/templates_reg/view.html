@@ -6,6 +6,7 @@
     <div class="actions">
         <a class="btn" href="/templater/templates">Назад</a>
         <button class="btn primary" type="submit" form="template-editor-form">Сохранить изменения</button>
+        {% if parsable %}
         <a class="btn primary" href="/templater/templates/{{ template.id }}/fill">Заполнить</a>
         <button class="btn"
                 type="button"
@@ -15,8 +16,8 @@
                 hx-target="#template-code-wrap"
                 hx-swap="outerHTML"
                 hx-indicator="#regen-indicator"
-                hx-disabled-elt="this"
-                {% if not llm_active %}disabled title="LLM не настроена"{% endif %}>Перегенерировать с LLM</button>
+                hx-disabled-elt="this">Перегенерировать с LLM</button>
+        {% endif %}
         <button class="btn danger"
                 type="button"
                 hx-delete="/templater/templates-htmx/{{ template.id }}?redirect=true"

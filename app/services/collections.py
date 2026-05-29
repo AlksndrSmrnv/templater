@@ -15,7 +15,6 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.db.models import Collection, MessageTemplate
 from app.llm.runner import llm_service
 from app.repositories.collection import CollectionRepository
@@ -167,50 +166,26 @@ class CollectionService:
         return removed
 
     async def process_collection_llm(self, collection_id: uuid.UUID) -> ProcessCollectionSummary:
+        """Run LLM analysis across every parsable template of a collection.
+
+        Requires a working LLM: opening :func:`llm_service` raises
+        :class:`LLMUnavailable` when it is not configured, which the route turns
+        into a user-facing error. Per-template outcomes are counted —
+        unparsable bodies are skipped, other failures are recorded.
+        """
+
         await self.get(collection_id)  # 404 if missing
         templates = await self.templates.list_by_collection(collection_id)
         svc = TemplateService(self.session)
         summary = ProcessCollectionSummary()
-        if get_settings().llm_active:
-            try:
-                async with llm_service() as llm_svc:
-                    for template in templates:
-                        await self._process_one(svc, template, llm_svc, summary)
-            except Exception:
-                # LLM context (cert decode / connect) failed for the whole batch —
-                # degrade to heuristic so the import still gets dynamic params.
-                log.warning("LLM unavailable for batch; heuristic fallback", exc_info=True)
-                for template in templates:
-                    await self._process_one(svc, template, None, summary)
-        else:
+        async with llm_service() as llm_svc:
             for template in templates:
-                await self._process_one(svc, template, None, summary)
+                try:
+                    await svc.analyze_and_persist(template, llm_service=llm_svc)
+                    summary.processed += 1
+                except ValidationFailed:
+                    summary.skipped += 1
+                except Exception:
+                    log.warning("LLM analysis failed for template %s", template.id, exc_info=True)
+                    summary.failed += 1
         return summary
-
-    async def _process_one(
-        self,
-        svc: TemplateService,
-        template: MessageTemplate,
-        llm_svc: Any | None,
-        summary: ProcessCollectionSummary,
-    ) -> None:
-        try:
-            try:
-                await svc.analyze_and_persist(template, llm_service=llm_svc)
-            except ValidationFailed:
-                raise
-            except Exception:
-                # Per-template LLM hiccup → retry heuristically so one bad
-                # request doesn't abort the batch.
-                log.warning(
-                    "LLM analysis failed for template %s; heuristic fallback",
-                    template.id,
-                    exc_info=True,
-                )
-                await svc.analyze_and_persist(template, llm_service=None)
-            summary.processed += 1
-        except ValidationFailed:
-            summary.skipped += 1
-        except Exception:
-            log.warning("Processing failed for template %s", template.id, exc_info=True)
-            summary.failed += 1

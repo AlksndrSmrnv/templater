@@ -148,7 +148,6 @@ async def test_preview_template_includes_llm_debug_key(monkeypatch: pytest.Monke
             return []
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
-    monkeypatch.setattr(templates_reg, "get_settings", lambda: SimpleNamespace(llm_active=True))
     monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
     monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
 
@@ -199,7 +198,6 @@ async def test_preview_template_marks_llm_unused_when_no_debug_returned(
             return []
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
-    monkeypatch.setattr(templates_reg, "get_settings", lambda: SimpleNamespace(llm_active=True))
     monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
     monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
 
@@ -263,7 +261,6 @@ async def test_htmx_regenerate_returns_preview_without_committing(
             return None
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
-    monkeypatch.setattr(templates_reg, "get_settings", lambda: SimpleNamespace(llm_active=True))
     monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
     monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
 
