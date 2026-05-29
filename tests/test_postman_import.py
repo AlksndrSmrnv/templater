@@ -101,6 +101,34 @@ def test_string_header_block_parsed() -> None:
     assert keys == ["RqUID", "Content-Type"]
 
 
+def test_node_with_both_request_and_children_keeps_its_own_request() -> None:
+    # A node may act as a folder (nested ``item``) *and* carry its own ``request``.
+    # The parent's request must not be dropped when descending into children.
+    pc = parse_postman_collection(
+        {
+            "info": {"name": "S", "schema": "v2.1.0"},
+            "item": [
+                {
+                    "name": "Parent",
+                    "request": {"method": "GET", "url": "https://api.bank.test/parent"},
+                    "item": [
+                        {
+                            "name": "Child",
+                            "request": {"method": "POST", "url": "https://api.bank.test/child"},
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    by_name = {r.name: r for r in pc.requests}
+    assert set(by_name) == {"Parent", "Child"}
+    assert by_name["Parent"].url == "https://api.bank.test/parent"
+    assert by_name["Parent"].folder_path == []
+    assert by_name["Child"].url == "https://api.bank.test/child"
+    assert by_name["Child"].folder_path == ["Parent"]
+
+
 def test_invalid_top_level_raises() -> None:
     with pytest.raises(ValidationFailed):
         parse_postman_collection([])

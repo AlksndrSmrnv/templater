@@ -5,11 +5,13 @@
     selected: [],
     sort: {{ (sort | default('created_at')) | tojson | forceescape }},
     direction: {{ (direction | default('desc')) | tojson | forceescape }},
+    page: {{ page | default(1) }},
     drawerOpen: false,
     drawerHasContent: false,
     drawerLoading: false,
     detailId: null,
-    dispatchFilters() { this.$nextTick(() => htmx.trigger(this.$refs.controls, 'refresh')); },
+    dispatchFilters() { this.page = 1; this.$nextTick(() => htmx.trigger(this.$refs.controls, 'refresh')); },
+    dispatchPage() { this.$nextTick(() => htmx.trigger(this.$refs.controls, 'refresh')); },
     openDrawer(id) {
         this.drawerOpen = true;
         this.drawerHasContent = true;
@@ -80,8 +82,9 @@
               hx-trigger="input changed delay:200ms, refresh">
             <input type="hidden" name="sort" x-model="sort">
             <input type="hidden" name="direction" x-model="direction">
+            <input type="hidden" name="page" x-model="page">
             <label>Поиск:
-                <input id="search" name="search" type="search" value="{{ search | default('') }}" placeholder="по тегам / значениям">
+                <input id="search" name="search" type="search" value="{{ search | default('') }}" placeholder="по тегам / значениям" @input="page = 1">
             </label>
         </form>
     </div>
@@ -144,6 +147,9 @@
                 {% include "partials/entities_table.html" %}
             </tbody>
         </table>
+    </div>
+    <div class="table-pagination" id="table-pagination">
+        {% include "partials/_entity_pagination.html" %}
     </div>
     <div class="detail-drawer"
          id="detail-drawer"

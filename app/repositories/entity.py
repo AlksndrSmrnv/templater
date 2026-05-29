@@ -5,10 +5,96 @@ from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any, cast
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import Text, func, or_, select
+from sqlalchemy import cast as sa_cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account, Card, Client, MessageTemplate, ReferenceValue
+
+# Real columns (not JSONB attributes) the entity list may sort on.
+_REAL_SORT_COLUMNS = frozenset({"description", "created_at", "updated_at"})
+
+
+def _entity_filter_conditions(
+    model: Any,
+    *,
+    search: str,
+    filters: dict[str, str],
+    attr_names: set[str],
+) -> list[Any]:
+    """WHERE conditions for the entity list: a free-text search across
+    description / attributes / tags, plus per-attribute substring filters.
+
+    The attributes search casts the JSONB column to text (preserves UTF-8, covers
+    keys and values) — the SQL equivalent of the previous ``json.dumps`` sweep.
+    """
+
+    conditions: list[Any] = []
+    needle = search.strip()
+    if needle:
+        like = f"%{needle}%"
+        conditions.append(
+            or_(
+                model.description.ilike(like),
+                sa_cast(model.attributes, Text).ilike(like),
+                func.array_to_string(model.tags, " ").ilike(like),
+            )
+        )
+    for name, value in filters.items():
+        text = value.strip()
+        if not text or name not in attr_names:
+            continue
+        conditions.append(model.attributes[name].astext.ilike(f"%{text}%"))
+    return conditions
+
+
+def _entity_order_by(
+    model: Any,
+    *,
+    sort: str,
+    direction: str,
+    attr_names: set[str],
+) -> Any:
+    if sort in _REAL_SORT_COLUMNS:
+        col = getattr(model, sort)
+    elif sort == "tags":
+        col = func.array_to_string(model.tags, " ")
+    elif sort in attr_names:
+        col = model.attributes[sort].astext
+    else:
+        col = model.created_at
+    return col.desc() if direction == "desc" else col.asc()
+
+
+async def _query_entity_page(
+    session: AsyncSession,
+    model: Any,
+    *,
+    search: str,
+    filters: dict[str, str],
+    sort: str,
+    direction: str,
+    attr_names: set[str],
+    limit: int,
+    offset: int,
+) -> tuple[list[Any], int]:
+    """Return ``(page_rows, total_matching)`` for the entity list, doing search,
+    filtering, sorting and pagination in SQL (bounded result set, no Python sweep)."""
+
+    conditions = _entity_filter_conditions(
+        model, search=search, filters=filters, attr_names=attr_names
+    )
+    count_stmt = select(func.count()).select_from(model)
+    page_stmt = select(model)
+    if conditions:
+        count_stmt = count_stmt.where(*conditions)
+        page_stmt = page_stmt.where(*conditions)
+    total = int((await session.execute(count_stmt)).scalar_one())
+    order = _entity_order_by(model, sort=sort, direction=direction, attr_names=attr_names)
+    # ``model.id`` is a stable tiebreaker so paging is deterministic.
+    page_stmt = page_stmt.order_by(order, model.id).limit(limit).offset(offset)
+    rows = list((await session.execute(page_stmt)).scalars().all())
+    return rows, total
 
 
 class ClientRepository:
@@ -18,6 +104,22 @@ class ClientRepository:
     async def list_all(self) -> list[Client]:
         stmt = select(Client).order_by(Client.created_at.desc())
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_page(
+        self,
+        *,
+        search: str,
+        filters: dict[str, str],
+        sort: str,
+        direction: str,
+        attr_names: set[str],
+        limit: int,
+        offset: int,
+    ) -> tuple[list[Client], int]:
+        return await _query_entity_page(
+            self.session, Client, search=search, filters=filters, sort=sort,
+            direction=direction, attr_names=attr_names, limit=limit, offset=offset,
+        )
 
     async def get(self, client_id: uuid.UUID) -> Client | None:
         return await self.session.get(Client, client_id)
@@ -50,6 +152,22 @@ class AccountRepository:
         if client_id is not None:
             stmt = stmt.where(Account.client_id == client_id)
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_page(
+        self,
+        *,
+        search: str,
+        filters: dict[str, str],
+        sort: str,
+        direction: str,
+        attr_names: set[str],
+        limit: int,
+        offset: int,
+    ) -> tuple[list[Account], int]:
+        return await _query_entity_page(
+            self.session, Account, search=search, filters=filters, sort=sort,
+            direction=direction, attr_names=attr_names, limit=limit, offset=offset,
+        )
 
     async def get(self, account_id: uuid.UUID) -> Account | None:
         return await self.session.get(Account, account_id)
@@ -99,6 +217,22 @@ class CardRepository:
         if account_id is not None:
             stmt = stmt.where(Card.account_id == account_id)
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_page(
+        self,
+        *,
+        search: str,
+        filters: dict[str, str],
+        sort: str,
+        direction: str,
+        attr_names: set[str],
+        limit: int,
+        offset: int,
+    ) -> tuple[list[Card], int]:
+        return await _query_entity_page(
+            self.session, Card, search=search, filters=filters, sort=sort,
+            direction=direction, attr_names=attr_names, limit=limit, offset=offset,
+        )
 
     async def get(self, card_id: uuid.UUID) -> Card | None:
         return await self.session.get(Card, card_id)
