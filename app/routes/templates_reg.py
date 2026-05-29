@@ -61,6 +61,19 @@ def _llm_ssl_message(exc: BaseException) -> str:
     )
 
 
+def _llm_failure_text(exc: BaseException) -> str:
+    """User-facing message for a failed LLM call.
+
+    The GigaChat client re-raises a plain ``Exception`` after exhausting
+    retries; SSL/OS errors get the cert-specific hint. Used by the regenerate /
+    process routes to render a form error instead of bubbling up a 500.
+    """
+
+    if isinstance(exc, (ssl.SSLError, OSError)):
+        return _llm_ssl_message(exc)
+    return f"LLM не смогла обработать шаблон: {exc}"
+
+
 def _validate_preview_source(data: TemplateCreate) -> None:
     if not data.content.strip():
         raise ValidationFailed("Пустой шаблон")
@@ -383,6 +396,7 @@ async def htmx_process_llm(
 ) -> Response:
     svc = TemplateService(session)
     template = await svc.get(template_id)
+    panel_error_headers = {"HX-Retarget": "#panel-errors", "HX-Reswap": "innerHTML"}
     try:
         async with llm_service() as llm_svc:
             await svc.analyze_and_persist(template, llm_service=llm_svc)
@@ -394,7 +408,19 @@ async def htmx_process_llm(
             exc.message,
             details=exc.details,
             status_code=200,
-            headers={"HX-Retarget": "#panel-errors", "HX-Reswap": "innerHTML"},
+            headers=panel_error_headers,
+        )
+    except Exception as exc:
+        # The GigaChat client raises a plain Exception after exhausting retries;
+        # surface it as a form error rather than a global 500.
+        log.warning("LLM processing failed for template %s", template_id, exc_info=True)
+        await session.rollback()
+        return form_errors_response(
+            request,
+            templates,
+            _llm_failure_text(exc),
+            status_code=200,
+            headers=panel_error_headers,
         )
     return templates.TemplateResponse(
         request,
@@ -532,6 +558,7 @@ async def htmx_regenerate(
             headers={"HX-Retarget": "#template-code-wrap", "HX-Reswap": "outerHTML"},
         )
     source = template.original_content or template.content
+    regen_error_headers = {"HX-Retarget": "#template-code-wrap", "HX-Reswap": "outerHTML"}
     try:
         async with llm_service() as llm_svc:
             result = await svc.analyze_content(
@@ -546,7 +573,18 @@ async def htmx_regenerate(
             exc.message,
             details=exc.details,
             status_code=200,
-            headers={"HX-Retarget": "#template-code-wrap", "HX-Reswap": "outerHTML"},
+            headers=regen_error_headers,
+        )
+    except Exception as exc:
+        # The GigaChat client raises a plain Exception after exhausting retries;
+        # surface it as a form error rather than a global 500.
+        log.warning("LLM regeneration failed for template %s", template_id, exc_info=True)
+        return form_errors_response(
+            request,
+            templates,
+            _llm_failure_text(exc),
+            status_code=200,
+            headers=regen_error_headers,
         )
 
     llm_debug = result.get("llm_debug")

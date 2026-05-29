@@ -381,3 +381,84 @@ async def test_htmx_fill_render_reports_unparsable_body(monkeypatch: pytest.Monk
     assert response.name == "partials/form_errors.html"
     assert response.status_code == 200
     assert "не парсится" in response.context["message"]
+
+
+@pytest.mark.asyncio
+async def test_htmx_process_llm_reports_plain_llm_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    template_id = uuid.uuid4()
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            return SimpleNamespace(id=requested_id, name="T")
+
+        async def analyze_and_persist(self, template: Any, *, llm_service: Any | None = None) -> Any:
+            raise RuntimeError("client failed after retries")
+
+    class FakeLlmContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    class FakeSession:
+        async def rollback(self) -> None:
+            return None
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
+
+    response = await templates_reg.htmx_process_llm(
+        template_id=template_id,
+        request=cast(Any, FakeFormRequest({})),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, FakeSession()),
+    )
+
+    assert response.name == "partials/form_errors.html"
+    assert response.status_code == 200
+    assert "LLM не смогла" in response.context["message"]
+    assert response.headers["HX-Retarget"] == "#panel-errors"
+
+
+@pytest.mark.asyncio
+async def test_htmx_regenerate_reports_plain_llm_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    template_id = uuid.uuid4()
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            return SimpleNamespace(
+                id=requested_id, name="T", description="", format="json",
+                content='{"a":"x"}', original_content='{"a":"x"}', placeholders=[], llm_meta={},
+            )
+
+        async def analyze_content(self, *, fmt: str, original_content: str, llm_service: Any | None = None) -> Any:
+            raise RuntimeError("client failed after retries")
+
+    class FakeLlmContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
+
+    response = await templates_reg.htmx_regenerate(
+        template_id=template_id,
+        request=cast(Any, FakeFormRequest({})),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert response.name == "partials/form_errors.html"
+    assert response.status_code == 200
+    assert "LLM не смогла" in response.context["message"]
+    assert response.headers["HX-Retarget"] == "#template-code-wrap"
