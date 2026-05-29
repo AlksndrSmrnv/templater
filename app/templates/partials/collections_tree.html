@@ -1,0 +1,80 @@
+{% macro render_node(node) %}
+    {% for folder_name, child in node.folders.items() %}
+    <li class="tree-folder" x-data="{ open: true }">
+        <div class="tree-folder-label" @click="open = !open">
+            <span class="tree-caret" x-text="open ? '▾' : '▸'"></span>
+            <span class="tree-folder-icon">📁</span>
+            <span class="tree-folder-name">{{ folder_name }}</span>
+        </div>
+        <ul class="tree-list" x-show="open">
+            {{ render_node(child) }}
+        </ul>
+    </li>
+    {% endfor %}
+    {% for t in node.templates %}
+    <li class="tree-item"
+        :class="{ active: selected === '{{ t.id }}' }"
+        @click="selected = '{{ t.id }}'"
+        hx-get="/templater/templates-htmx/{{ t.id }}/panel"
+        hx-target="#template-panel"
+        hx-swap="innerHTML">
+        <span class="tree-method method-{{ (t.http_method or '')|lower }}">{{ t.http_method or '·' }}</span>
+        <span class="tree-name">{{ t.name }}</span>
+        {% if (t.llm_meta or {}).get('import_status') == 'unparsed' %}<span class="tree-flag" title="Тело не разбирается как JSON/XML">⚠</span>{% endif %}
+    </li>
+    {% endfor %}
+{% endmacro %}
+
+{% for cn in collection_nodes %}
+<div class="tree-collection" x-data="{ open: true }">
+    <div class="tree-collection-head">
+        <div class="tree-collection-title" @click="open = !open">
+            <span class="tree-caret" x-text="open ? '▾' : '▸'"></span>
+            <span class="tree-collection-icon">📦</span>
+            <span class="tree-collection-name">{{ cn.collection.name }}</span>
+            <span class="tree-count">{{ cn.count }}</span>
+        </div>
+        <div class="tree-collection-actions">
+            <button class="btn small"
+                    title="Обработать всю коллекцию LLM"
+                    hx-post="/templater/collections/{{ cn.collection.id }}/process-llm"
+                    hx-target="#collections-tree"
+                    hx-swap="innerHTML"
+                    hx-indicator="#tree-indicator"
+                    hx-disabled-elt="this"
+                    {% if not llm_active %}disabled title="LLM не настроена"{% endif %}>✨</button>
+            <button class="btn small danger"
+                    title="Удалить коллекцию"
+                    hx-delete="/templater/collections/{{ cn.collection.id }}"
+                    hx-confirm="Удалить коллекцию «{{ cn.collection.name }}» и все её шаблоны?"
+                    hx-target="#collections-tree"
+                    hx-swap="innerHTML">🗑</button>
+        </div>
+    </div>
+    <ul class="tree-list tree-root" x-show="open">
+        {{ render_node(cn.tree) }}
+    </ul>
+</div>
+{% endfor %}
+
+{% if ungrouped_count %}
+<div class="tree-collection" x-data="{ open: true }">
+    <div class="tree-collection-head">
+        <div class="tree-collection-title" @click="open = !open">
+            <span class="tree-caret" x-text="open ? '▾' : '▸'"></span>
+            <span class="tree-collection-icon">🗂️</span>
+            <span class="tree-collection-name">Без коллекции</span>
+            <span class="tree-count">{{ ungrouped_count }}</span>
+        </div>
+    </div>
+    <ul class="tree-list tree-root" x-show="open">
+        {{ render_node(ungrouped_tree) }}
+    </ul>
+</div>
+{% endif %}
+
+{% if not collection_nodes and not ungrouped_count %}
+<p class="muted tree-empty">
+    {% if search %}Ничего не найдено.{% else %}Пока нет шаблонов. Импортируйте коллекцию или создайте шаблон.{% endif %}
+</p>
+{% endif %}

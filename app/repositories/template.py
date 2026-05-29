@@ -17,6 +17,20 @@ class TemplateRepository:
         stmt = select(MessageTemplate).order_by(MessageTemplate.created_at.desc())
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def list_by_collection(self, collection_id: uuid.UUID) -> list[MessageTemplate]:
+        stmt = (
+            select(MessageTemplate)
+            .where(MessageTemplate.collection_id == collection_id)
+            .order_by(MessageTemplate.display_order, MessageTemplate.created_at)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def delete_by_collection(self, collection_id: uuid.UUID) -> int:
+        templates = await self.list_by_collection(collection_id)
+        for template in templates:
+            await self.session.delete(template)
+        return len(templates)
+
     async def get(self, template_id: uuid.UUID) -> MessageTemplate | None:
         return await self.session.get(MessageTemplate, template_id)
 

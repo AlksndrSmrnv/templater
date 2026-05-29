@@ -16,11 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.llm.runner import llm_service
+from app.repositories.filled_template import FilledTemplateRepository
 from app.routes.deps import SessionDep, TemplatesDep
 from app.routes.entities_htmx import entity_label
 from app.routes.htmx_utils import form_errors_response, form_str, toast_header, validation_errors_response
 from app.routes.uow import commit_and_refresh, commit_or_409
 from app.schemas.template import TemplateCreate, TemplateFillRequest, TemplateUpdate
+from app.services.collections import CollectionService
 from app.services.dynamic_fields import dynamic_token_catalog
 from app.services.entities import AccountService, CardService, ClientService
 from app.services.placeholders import PlaceholderFiller
@@ -137,27 +139,6 @@ async def preview_template(data: TemplateCreate, session: AsyncSession) -> dict[
     }
 
 
-async def _template_table_context(session: AsyncSession, *, search: str = "") -> dict[str, Any]:
-    rows = await TemplateService(session).list_all()
-    query = search.strip().lower()
-    if query:
-        rows = [
-            row
-            for row in rows
-            if query
-            in (
-                row.name
-                + " "
-                + row.description
-                + " "
-                + str((row.llm_meta or {}).get("summary", ""))
-                + " "
-                + str((row.llm_meta or {}).get("category", ""))
-            ).lower()
-        ]
-    return {"templates_list": rows, "search": search}
-
-
 async def _template_code_context(session: AsyncSession, template: Any) -> dict[str, Any]:
     return {
         "template": template,
@@ -167,6 +148,29 @@ async def _template_code_context(session: AsyncSession, template: Any) -> dict[s
         "dynamic_tokens": dynamic_token_catalog(),
         "llm_active": get_settings().llm_active,
     }
+
+
+def _is_parsable(template: Any) -> bool:
+    """True when the body parses as its declared format (so LLM analysis is
+    possible). Imported GET/urlencoded/empty bodies are not parsable."""
+
+    source = template.original_content or template.content
+    if not source or not source.strip():
+        return False
+    try:
+        TemplateService._extract_leaves(template.format, source)
+    except Exception:
+        return False
+    return True
+
+
+async def _template_panel_context(session: AsyncSession, template: Any) -> dict[str, Any]:
+    context = await _template_code_context(session, template)
+    context["headers"] = template.headers or []
+    context["parsable"] = _is_parsable(template)
+    context["has_account_owner"] = template_has_account_owner(template)
+    context["filled_links"] = await FilledTemplateRepository(session).list_by_template(template.id)
+    return context
 
 
 async def _template_editor_context(
@@ -308,10 +312,11 @@ async def page_list(
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
 ) -> Response:
+    tree = await CollectionService(session).build_workspace_tree()
     return templates.TemplateResponse(
         request,
-        "templates_reg/list.html",
-        {"active": "templates", **await _template_table_context(session)},
+        "templates_reg/workspace.html",
+        {"active": "templates", **tree},
     )
 
 
@@ -359,17 +364,69 @@ async def page_fill(
 
 # ---------- HTMX ----------
 
-@router.get("/templates-htmx/table")
-async def htmx_table(
+@router.get("/templates-htmx/tree")
+async def htmx_tree(
     request: Request,
     search: str = "",
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
 ) -> Response:
+    context = await CollectionService(session).build_workspace_tree(search=search)
+    return templates.TemplateResponse(request, "partials/collections_tree.html", context)
+
+
+@router.get("/templates-htmx/{template_id}/panel")
+async def htmx_panel(
+    template_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    template = await TemplateService(session).get(template_id)
     return templates.TemplateResponse(
         request,
-        "partials/templates_table.html",
-        await _template_table_context(session, search=search),
+        "partials/template_panel.html",
+        await _template_panel_context(session, template),
+    )
+
+
+@router.post("/templates-htmx/{template_id}/process-llm")
+async def htmx_process_llm(
+    template_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    svc = TemplateService(session)
+    template = await svc.get(template_id)
+    llm_svc_active = get_settings().llm_active
+    try:
+        if llm_svc_active:
+            try:
+                async with llm_service() as llm_svc:
+                    await svc.analyze_and_persist(template, llm_service=llm_svc)
+            except ValidationFailed:
+                raise
+            except Exception:
+                log.warning("LLM processing failed; heuristic fallback", exc_info=True)
+                await svc.analyze_and_persist(template, llm_service=None)
+        else:
+            await svc.analyze_and_persist(template, llm_service=None)
+        template = await commit_and_refresh(session, template)
+    except DomainError as exc:
+        return form_errors_response(
+            request,
+            templates,
+            exc.message,
+            details=exc.details,
+            status_code=exc.status_code,
+            headers={"HX-Retarget": "#panel-errors", "HX-Reswap": "innerHTML"},
+        )
+    return templates.TemplateResponse(
+        request,
+        "partials/template_panel.html",
+        await _template_panel_context(session, template),
+        headers={"HX-Trigger": toast_header("Шаблон обработан LLM")},
     )
 
 

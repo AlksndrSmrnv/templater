@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+import json
+import uuid
+
+from fastapi import APIRouter, File, Request, UploadFile
+from fastapi.responses import Response
+from fastapi.templating import Jinja2Templates
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.routes.deps import SessionDep, TemplatesDep
+from app.routes.htmx_utils import toast_header
+from app.routes.uow import commit_or_409
+from app.services.collections import CollectionService
+from app.utils.errors import DomainError
+
+router = APIRouter()
+
+
+async def _tree_response(
+    request: Request,
+    templates: Jinja2Templates,
+    session: AsyncSession,
+    *,
+    headers: dict[str, str] | None = None,
+) -> Response:
+    context = await CollectionService(session).build_workspace_tree()
+    return templates.TemplateResponse(
+        request,
+        "partials/collections_tree.html",
+        context,
+        headers=headers,
+    )
+
+
+@router.post("/collections/import-htmx")
+async def htmx_import_collection(
+    request: Request,
+    file: UploadFile = File(...),
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    try:
+        raw = await file.read()
+        data = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        return await _tree_response(
+            request,
+            templates,
+            session,
+            headers={"HX-Trigger": toast_header(f"Не удалось прочитать файл: {exc}", toast_type="error")},
+        )
+    try:
+        summary = await CollectionService(session).import_postman(data)
+        await commit_or_409(session)
+    except DomainError as exc:
+        await session.rollback()
+        return await _tree_response(
+            request,
+            templates,
+            session,
+            headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
+        )
+    message = f"Импортирована коллекция «{summary.name}»: {summary.templates_created} шаблон(ов)"
+    if summary.unparsable:
+        message += f", из них без разбираемого тела: {summary.unparsable}"
+    return await _tree_response(
+        request,
+        templates,
+        session,
+        headers={"HX-Trigger": toast_header(message)},
+    )
+
+
+@router.post("/collections/{collection_id}/process-llm")
+async def htmx_process_collection(
+    collection_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    summary = await CollectionService(session).process_collection_llm(collection_id)
+    await commit_or_409(session)
+    message = (
+        f"Обработано: {summary.processed}"
+        f" · пропущено: {summary.skipped}"
+        f" · ошибок: {summary.failed}"
+    )
+    return await _tree_response(
+        request,
+        templates,
+        session,
+        headers={"HX-Trigger": toast_header(message)},
+    )
+
+
+@router.delete("/collections/{collection_id}")
+async def htmx_delete_collection(
+    collection_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    removed = await CollectionService(session).delete(collection_id)
+    await commit_or_409(session)
+    return await _tree_response(
+        request,
+        templates,
+        session,
+        headers={"HX-Trigger": toast_header(f"Коллекция удалена ({removed} шаблон(ов))")},
+    )

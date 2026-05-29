@@ -59,8 +59,16 @@ def first_full_match_path(path: str, method: str = "GET") -> str:
     raise AssertionError(f"No full route match for {method} {path}")
 
 
-def test_template_htmx_table_route_is_matched_before_template_id_route() -> None:
-    assert first_full_match_path("/templates-htmx/table") == "/templates-htmx/table"
+def test_template_htmx_tree_route_is_matched_before_template_id_route() -> None:
+    assert first_full_match_path("/templates-htmx/tree") == "/templates-htmx/tree"
+
+
+def test_template_htmx_panel_route_matches() -> None:
+    template_id = uuid.uuid4()
+    assert (
+        first_full_match_path(f"/templates-htmx/{template_id}/panel")
+        == "/templates-htmx/{template_id}/panel"
+    )
 
 
 @pytest.mark.asyncio

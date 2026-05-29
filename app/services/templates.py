@@ -115,6 +115,52 @@ def normalize_placeholders(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
+def apply_dynamic_headers(raw: Any) -> list[dict[str, Any]]:
+    """Rewrite HTTP headers whose name is a dynamic envelope token.
+
+    Header keys matching a dynamic token (``RqUID`` → ``{{rqUID}}`` etc., see
+    :func:`resolve_dynamic_token`) get ``mode="dynamic"`` and their value
+    replaced by the ``{{token}}`` placeholder, keeping the source value in
+    ``original``. Everything else is normalised to a literal header. Idempotent:
+    re-running re-derives the mode from the key each time.
+    """
+
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("key")
+        if not isinstance(key, str) or not key:
+            continue
+        value = item.get("value") if isinstance(item.get("value"), str) else ""
+        original = item.get("original") if isinstance(item.get("original"), str) else value
+        disabled = bool(item.get("disabled", False))
+        token = resolve_dynamic_token(key)
+        if token is not None:
+            out.append(
+                {
+                    "key": key,
+                    "value": f"{{{{{token}}}}}",
+                    "mode": "dynamic",
+                    "original": original,
+                    "disabled": disabled,
+                }
+            )
+        else:
+            out.append(
+                {
+                    "key": key,
+                    "value": value or original,
+                    "mode": "literal",
+                    "original": original,
+                    "disabled": disabled,
+                }
+            )
+    return out
+
+
 class TemplateService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -178,6 +224,12 @@ class TemplateService:
             content_replaced = True
         if data.llm_meta is not None:
             template.llm_meta = data.llm_meta
+        if data.headers is not None:
+            template.headers = apply_dynamic_headers(data.headers)
+        if data.http_method is not None:
+            template.http_method = data.http_method
+        if data.url is not None:
+            template.url = data.url
         # Placeholders coming alongside a content replacement are ignored — they
         # belonged to the old body. Anything else (e.g. an editor save without
         # touching content) is honored after structural validation.
@@ -241,6 +293,35 @@ class TemplateService:
         template.content = result["content"]
         template.placeholders = result["placeholders"]
         template.llm_meta = result["llm_meta"]
+        await self.session.flush()
+        return template
+
+    async def analyze_and_persist(
+        self,
+        template: MessageTemplate,
+        *,
+        llm_service: Any | None = None,
+    ) -> MessageTemplate:
+        """Analyse a stored template and persist the result (placeholders, meta,
+        rewritten content) plus dynamic-header detection.
+
+        Unlike :meth:`analyze`, this is the "process this template" action used by
+        the workspace: it refuses templates whose body does not parse as their
+        declared format (imported GET/urlencoded/GraphQL requests), raising
+        :class:`ValidationFailed` so callers can report or skip them.
+        """
+
+        source = template.original_content or template.content
+        try:
+            self._extract_leaves(template.format, source)
+        except Exception as exc:
+            raise ValidationFailed(
+                f"Тело сообщения не разбирается как {template.format.upper()} — "
+                "обработка LLM недоступна"
+            ) from exc
+        await self.analyze(template, llm_service=llm_service)
+        template.headers = apply_dynamic_headers(template.headers or [])
+        template.llm_meta = {**(template.llm_meta or {}), "import_status": "processed"}
         await self.session.flush()
         return template
 
