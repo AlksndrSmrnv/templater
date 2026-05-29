@@ -11,6 +11,9 @@
         {% endif %}
         <span x-show="selected.length > 0" x-cloak> · Выбрано: <span x-text="selected.length"></span></span>
     </div>
+    <div id="table-pagination" hx-swap-oob="innerHTML">
+        {% include "partials/_entity_pagination.html" %}
+    </div>
 {% endif %}
 {% if rows %}
     {% for row in rows %}

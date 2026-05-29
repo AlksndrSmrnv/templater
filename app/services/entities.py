@@ -32,6 +32,22 @@ class ClientService:
     async def list_all(self) -> list[Client]:
         return await self.repo.list_all()
 
+    async def list_page(
+        self,
+        *,
+        search: str,
+        filters: dict[str, str],
+        sort: str,
+        direction: str,
+        attr_names: set[str],
+        limit: int,
+        offset: int,
+    ) -> tuple[list[Client], int]:
+        return await self.repo.list_page(
+            search=search, filters=filters, sort=sort, direction=direction,
+            attr_names=attr_names, limit=limit, offset=offset,
+        )
+
     async def get(self, client_id: uuid.UUID) -> Client:
         c = await self.repo.get(client_id)
         if c is None:
@@ -81,6 +97,22 @@ class AccountService:
 
     async def list_all(self, *, client_id: uuid.UUID | None = None) -> list[Account]:
         return await self.repo.list_all(client_id=client_id)
+
+    async def list_page(
+        self,
+        *,
+        search: str,
+        filters: dict[str, str],
+        sort: str,
+        direction: str,
+        attr_names: set[str],
+        limit: int,
+        offset: int,
+    ) -> tuple[list[Account], int]:
+        return await self.repo.list_page(
+            search=search, filters=filters, sort=sort, direction=direction,
+            attr_names=attr_names, limit=limit, offset=offset,
+        )
 
     async def get(self, account_id: uuid.UUID) -> Account:
         a = await self.repo.get(account_id)
@@ -147,6 +179,22 @@ class CardService:
         client_id: uuid.UUID | None = None,
     ) -> list[Card]:
         return await self.repo.list_all(account_id=account_id, client_id=client_id)
+
+    async def list_page(
+        self,
+        *,
+        search: str,
+        filters: dict[str, str],
+        sort: str,
+        direction: str,
+        attr_names: set[str],
+        limit: int,
+        offset: int,
+    ) -> tuple[list[Card], int]:
+        return await self.repo.list_page(
+            search=search, filters=filters, sort=sort, direction=direction,
+            attr_names=attr_names, limit=limit, offset=offset,
+        )
 
     async def get(self, card_id: uuid.UUID) -> Card:
         c = await self.repo.get(card_id)

@@ -54,6 +54,28 @@ def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def _collect_uuids(items: Any, *keys: str) -> set[uuid.UUID]:
+    """Best-effort UUID collection from a list of import rows.
+
+    Used to prefetch/warm rows before the per-row import loops. Malformed or
+    missing values are ignored here — the loop itself re-parses and reports them.
+    """
+
+    out: set[uuid.UUID] = set()
+    for raw in _as_list(items):
+        if not isinstance(raw, dict):
+            continue
+        for key in keys:
+            val = raw.get(key)
+            if not val:
+                continue
+            try:
+                out.add(uuid.UUID(str(val)))
+            except (ValueError, AttributeError, TypeError):
+                continue
+    return out
+
+
 def _safe_label(raw: Any, *keys: str) -> str:
     """Best-effort human label for an import row that may not even be a dict."""
 
@@ -507,6 +529,45 @@ class ExportImportService:
             errors.append("references: ожидался объект вида {тип: [...]}")
             references_section = {}
         references_map = cast(dict[str, Any], references_section or {})
+        # Prefetch existing references so the per-row lookups below are dict hits
+        # instead of 2-3 queries each (autoflush is off and nothing is committed
+        # mid-loop, so a snapshot taken now matches what live queries would return).
+        present_ref_types = [t for t in references_map if t in REFERENCE_TYPES]
+        existing_ref_by_id: dict[str, ReferenceValue] = {}
+        existing_ref_by_code: dict[tuple[str, str], ReferenceValue] = {}
+        if present_ref_types:
+            # Codes only ever clash within a type → scan existing rows of the
+            # present types to build the (type, code) index.
+            for row in (
+                (
+                    await self.session.execute(
+                        select(ReferenceValue).where(
+                            ReferenceValue.entity_type.in_(present_ref_types)
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            ):
+                existing_ref_by_code[(row.entity_type, row.code)] = row
+            # The id (PK) guard is cross-type: a UUID may already belong to a row of
+            # ANY type, so the id index must be built by id regardless of type —
+            # otherwise the cross-type collision check below is bypassed and the
+            # duplicate PK only surfaces as a whole-stage rollback on flush.
+            file_ref_ids = {
+                rid for items in references_map.values() for rid in _collect_uuids(items, "id")
+            }
+            if file_ref_ids:
+                for row in (
+                    (
+                        await self.session.execute(
+                            select(ReferenceValue).where(ReferenceValue.id.in_(file_ref_ids))
+                        )
+                    )
+                    .scalars()
+                    .all()
+                ):
+                    existing_ref_by_id[str(row.id)] = row
         for ref_type, items in references_map.items():
             if ref_type not in REFERENCE_TYPES:
                 errors.append(f"references: неизвестный тип справочника '{ref_type}'")
@@ -538,7 +599,7 @@ class ExportImportService:
                     seen_ref_ids.add(rid_str)
                     seen_ref_codes.add((ref_type, code))
 
-                    existing_ref = await self.refs.get(rid)
+                    existing_ref = existing_ref_by_id.get(rid_str)
                     if existing_ref is not None and existing_ref.entity_type != ref_type:
                         # The UUID already belongs to a different reference table.
                         # Overwriting would corrupt that row with this type's
@@ -549,7 +610,7 @@ class ExportImportService:
                         )
                         continue
                     code_clash = (
-                        None if existing_ref is not None else await self.refs.get_by_code(ref_type, code)
+                        None if existing_ref is not None else existing_ref_by_code.get((ref_type, code))
                     )
 
                     if existing_ref is None and code_clash is None:
@@ -602,7 +663,7 @@ class ExportImportService:
                         # If the new code would collide with *another* row, surface
                         # it rather than letting UNIQUE blow up on commit.
                         if existing_ref.code != code:
-                            other = await self.refs.get_by_code(ref_type, code)
+                            other = existing_ref_by_code.get((ref_type, code))
                             if other is not None and other.id != existing_ref.id:
                                 errors.append(
                                     f"reference {ref_type}/{code}: код уже занят другой записью"
@@ -675,6 +736,21 @@ class ExportImportService:
         # flushed), so session.get() can't see them — track them explicitly so
         # an account/card can reference a parent created in the same file.
         imported_new_ids: dict[str, set[str]] = {"clients": set(), "accounts": set()}
+        # Warm the identity map for every row the loops below look up — the entities
+        # themselves plus the parents they reference — so the per-row session.get() /
+        # repo.get() calls resolve from the identity map instead of issuing N+1
+        # queries. Parents created earlier in this same import aren't in the DB yet,
+        # but the loop short-circuits those via ``imported_new_ids`` before calling get().
+        warm_ids: dict[Any, set[uuid.UUID]] = {
+            Client: _collect_uuids(package.get("clients"), "id")
+            | _collect_uuids(package.get("accounts"), "client_id"),
+            Account: _collect_uuids(package.get("accounts"), "id")
+            | _collect_uuids(package.get("cards"), "account_id"),
+            Card: _collect_uuids(package.get("cards"), "id"),
+        }
+        for warm_model, ids in warm_ids.items():
+            if ids:
+                await self.session.execute(select(warm_model).where(warm_model.id.in_(ids)))
         for kind, model_raw, et in (
             ("clients", Client, "client"),
             ("accounts", Account, "account"),

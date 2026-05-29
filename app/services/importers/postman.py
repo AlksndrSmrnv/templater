@@ -61,13 +61,15 @@ def _walk_item(entry: Any, folder_path: list[str], out: list[ParsedRequest]) -> 
         return
     item_name = _as_str(entry.get("name")) or UNNAMED
     nested = entry.get("item")
+    # A node may carry its own ``request`` *and* a nested ``item`` list (rare, but
+    # valid). Emit the request regardless of whether the node also acts as a folder
+    # so it isn't silently dropped.
+    if "request" in entry:
+        out.append(_parse_request(entry, folder_path, item_name))
     if isinstance(nested, list):
         child_path = [*folder_path, item_name]
         for child in nested:
             _walk_item(child, child_path, out)
-        return
-    if "request" in entry:
-        out.append(_parse_request(entry, folder_path, item_name))
 
 
 def _parse_request(entry: dict[str, Any], folder_path: list[str], name: str) -> ParsedRequest:

@@ -54,9 +54,23 @@ SERVICE_MAP = {
     "card": CardService,
 }
 
+# Rows per page for the entity list. Search/filter/sort/pagination run in SQL, so
+# only this many rows are ever loaded and rendered per request.
+PAGE_SIZE = 50
+
 
 def _service(session: AsyncSession, entity_type: str) -> Any:
     return SERVICE_MAP[entity_type](session)
+
+
+def _page_param(request: Request | None) -> int:
+    if request is None:
+        return 1
+    raw = request.query_params.get("page")
+    try:
+        return max(1, int(raw)) if raw else 1
+    except (TypeError, ValueError):
+        return 1
 
 
 def check_entity_type(entity_type: str) -> None:
@@ -83,10 +97,6 @@ def entity_label(entity_type: str, row: Any) -> str:
 
 async def _schema(session: AsyncSession, entity_type: str) -> list[AttributeDefinition]:
     return await AttributeSchemaService(session).list_schema(entity_type)
-
-
-async def _list_items(session: AsyncSession, entity_type: str) -> Any:
-    return await _service(session, entity_type).list_all()
 
 
 async def _get_item(session: AsyncSession, entity_type: str, item_id: uuid.UUID) -> Any:
@@ -174,52 +184,6 @@ def _filter_values(request: Request) -> dict[str, str]:
     }
 
 
-def _filter_and_sort(
-    items: list[Any],
-    schema: list[AttributeDefinition],
-    *,
-    search: str,
-    sort: str,
-    direction: str,
-    filters: dict[str, str],
-) -> list[Any]:
-    query = search.strip().lower()
-    if query:
-        items = [
-            item
-            for item in items
-            if query
-            in (
-                json.dumps(item.attributes or {}, ensure_ascii=False)
-                + " "
-                + " ".join(item.tags or [])
-                + " "
-                + (item.description or "")
-            ).lower()
-        ]
-    for name, value in filters.items():
-        needle = value.strip().lower()
-        if not needle:
-            continue
-        items = [
-            item
-            for item in items
-            if needle in str((item.attributes or {}).get(name, "")).lower()
-        ]
-
-    attr_names = {field.name for field in schema}
-    sort_key = sort if sort in {"description", "tags", "created_at", "updated_at"} or sort in attr_names else "created_at"
-
-    def key(item: Any) -> str:
-        if sort_key in attr_names:
-            return str((item.attributes or {}).get(sort_key, "")).lower()
-        if sort_key == "tags":
-            return " ".join(item.tags or []).lower()
-        return str(getattr(item, sort_key, "") or "").lower()
-
-    return sorted(items, key=key, reverse=direction == "desc")
-
-
 async def build_entity_list_context(
     session: AsyncSession,
     entity_type: str,
@@ -232,27 +196,36 @@ async def build_entity_list_context(
     check_entity_type(entity_type)
     schema = await _schema(session, entity_type)
     filters = _filter_values(request) if request is not None else {}
-    items_all = await _list_items(session, entity_type)
-    items = _filter_and_sort(
-        items_all,
-        schema,
+    attr_names = {field.name for field in schema}
+    page = _page_param(request)
+    offset = (page - 1) * PAGE_SIZE
+    items, items_total = await _service(session, entity_type).list_page(
         search=search,
+        filters=filters,
         sort=sort,
         direction=direction,
-        filters=filters,
+        attr_names=attr_names,
+        limit=PAGE_SIZE,
+        offset=offset,
     )
+    pages = max(1, (items_total + PAGE_SIZE - 1) // PAGE_SIZE)
     return {
         "active": "data",
         "entity_type": entity_type,
         "title": ENTITY_TITLES[entity_type],
         "schema": schema,
         "items": items,
-        "items_total": len(items_all),
+        "items_total": items_total,
         "relation_columns": RELATION_COLUMNS[entity_type],
         "search": search,
         "sort": sort,
         "direction": direction,
         "filters": filters,
+        "page": page,
+        "page_size": PAGE_SIZE,
+        "pages": pages,
+        "has_prev": page > 1,
+        "has_next": page < pages,
         "ref_options": await _reference_options(session, schema),
         **await _relations(session, entity_type, items=items),
     }
