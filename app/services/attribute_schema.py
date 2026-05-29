@@ -14,6 +14,7 @@ from app.db.models import (
     AttributeDefinition,
 )
 from app.repositories.attribute import AttributeDefinitionRepository
+from app.repositories.entity import count_attribute_usage
 from app.repositories.reference import ReferenceValueRepository
 from app.schemas.attribute import (
     ALLOWED_TYPES,
@@ -104,8 +105,17 @@ class AttributeSchemaService:
         await self.session.flush()
         return attr
 
-    async def deprecate(self, attr_id: uuid.UUID) -> AttributeDefinition:
-        return await self.update(attr_id, AttributeDefinitionUpdate(is_deprecated=True))
+    async def delete(self, attr_id: uuid.UUID) -> None:
+        attr = await self.attrs.get_by_id(attr_id)
+        if attr is None:
+            raise NotFoundError("Атрибут не найден")
+        await self.attrs.delete(attr)
+        await self.session.flush()
+
+    async def usage(self, attr: AttributeDefinition) -> dict[str, int]:
+        return await count_attribute_usage(
+            self.session, entity_type=attr.entity_type, name=attr.name
+        )
 
     @staticmethod
     def _check_entity_type(entity_type: str) -> None:

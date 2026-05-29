@@ -41,7 +41,9 @@ async def page_settings(
     s = get_settings()
     saved_policy = await SettingsRepository(session).get("import_policy", "skip")
     default_policy = saved_policy if saved_policy in {"skip", "overwrite", "fail"} else "skip"
-    attributes = await AttributeSchemaService(session).list_all()
+    svc = AttributeSchemaService(session)
+    attributes = await svc.list_all()
+    usage_counts = {attr.id: await svc.usage(attr) for attr in attributes}
     return templates.TemplateResponse(
         request,
         "settings.html",
@@ -51,6 +53,7 @@ async def page_settings(
             "llm_model": s.gigachat_model,
             "entity_types": list(ALL_ATTR_ENTITY_TYPES),
             "attributes": attributes,
+            "usage_counts": usage_counts,
             "selected_entity_type": "",
             "default_policy": default_policy,
         },
@@ -110,13 +113,15 @@ async def htmx_attributes_table(
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
 ) -> Response:
-    items = await AttributeSchemaService(session).list_all()
+    svc = AttributeSchemaService(session)
+    items = await svc.list_all()
     if entity_type:
         items = [item for item in items if item.entity_type == entity_type]
+    usage_counts = {attr.id: await svc.usage(attr) for attr in items}
     return templates.TemplateResponse(
         request,
         "partials/attributes_table.html",
-        {"attributes": items},
+        {"attributes": items, "usage_counts": usage_counts},
     )
 
 
@@ -218,15 +223,22 @@ async def htmx_attribute_update(
     )
 
 
-@router.post("/settings-htmx/attributes/{attr_id}/deprecate")
-async def htmx_attribute_deprecate(
+@router.delete("/settings-htmx/attributes/{attr_id}")
+async def htmx_attribute_delete(
     attr_id: uuid.UUID, session: AsyncSession = SessionDep
 ) -> Response:
     svc = AttributeSchemaService(session)
-    await commit_and_refresh(session, await svc.deprecate(attr_id))
+    try:
+        await svc.delete(attr_id)
+    except DomainError as exc:
+        return Response(
+            status_code=exc.status_code,
+            headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
+        )
+    await commit_or_409(session, message="Не удалось удалить атрибут")
     return Response(
         status_code=204,
-        headers={"HX-Trigger": toast_header("Атрибут отправлен в архив", refresh_attributes=True)},
+        headers={"HX-Trigger": toast_header("Атрибут удалён", refresh_attributes=True)},
     )
 
 

@@ -7,7 +7,7 @@ from typing import Any, cast
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Account, Card, Client
+from app.db.models import Account, Card, Client, MessageTemplate, ReferenceValue
 
 
 class ClientRepository:
@@ -136,6 +136,40 @@ class CardRepository:
 
     async def delete(self, card: Card) -> None:
         await self.session.delete(card)
+
+
+async def count_attribute_usage(
+    session: AsyncSession,
+    *,
+    entity_type: str,
+    name: str,
+) -> dict[str, int]:
+    """Count how many places currently use the attribute ``name`` of ``entity_type``.
+
+    - ``records``: entity rows holding a (non-empty) value under ``name`` in their JSONB
+      ``attributes``. Data entities map to Client/Account/Card; reference types live in
+      ``reference_values`` filtered by ``entity_type``.
+    - ``templates``: message templates whose content mentions ``name`` — a substring
+      heuristic, so the figure is approximate and only meant as a deletion warning.
+    """
+
+    data_models: dict[str, Any] = {"client": Client, "account": Account, "card": Card}
+    model = cast(Any, data_models.get(entity_type))
+    if model is not None:
+        records_stmt = select(func.count(model.id)).where(model.attributes.has_key(name))
+    else:
+        records_stmt = select(func.count(ReferenceValue.id)).where(
+            ReferenceValue.entity_type == entity_type,
+            ReferenceValue.attributes.has_key(name),
+        )
+    records = int((await session.execute(records_stmt)).scalar_one())
+
+    templates_stmt = select(func.count(MessageTemplate.id)).where(
+        MessageTemplate.content.ilike(f"%{name}%")
+    )
+    templates = int((await session.execute(templates_stmt)).scalar_one())
+
+    return {"records": records, "templates": templates}
 
 
 async def find_entities_referencing(
