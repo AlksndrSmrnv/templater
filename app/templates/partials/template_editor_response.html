@@ -1,3 +1,5 @@
 {% include "partials/template_code.html" %}
 {% set oob_swap = true %}
 {% include "partials/template_edit_llm_panel.html" %}
+{# Clear any stale regenerate/save error from a previous failed attempt. #}
+<div id="regen-errors" class="errors" hx-swap-oob="innerHTML"></div>

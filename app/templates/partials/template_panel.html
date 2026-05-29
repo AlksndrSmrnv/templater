@@ -65,6 +65,7 @@
               hx-put="/templater/templates-htmx/{{ template.id }}"
               hx-target="#template-code-wrap"
               hx-swap="outerHTML">
+            <div id="regen-errors" class="errors"></div>
             <div style="margin-bottom:14px;">
                 {% include "partials/template_edit_llm_panel.html" %}
             </div>
