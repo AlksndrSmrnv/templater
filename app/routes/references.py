@@ -42,9 +42,7 @@ def _check_ref_type(entity_type: str) -> None:
 
 
 async def _active_schema(session: AsyncSession, entity_type: str) -> list[AttributeDefinition]:
-    return await AttributeDefinitionRepository(session).list_by_entity(
-        entity_type, include_deprecated=False
-    )
+    return await AttributeDefinitionRepository(session).list_by_entity(entity_type)
 
 
 async def _reference_payload(

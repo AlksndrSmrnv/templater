@@ -967,13 +967,7 @@ async def test_build_field_catalog_includes_account_owner_paths() -> None:
     }
 
     class FakeSchema:
-        async def list_schema(
-            self,
-            entity_type: str,
-            *,
-            include_deprecated: bool = False,
-        ) -> list[SimpleNamespace]:
-            assert include_deprecated is False
+        async def list_schema(self, entity_type: str) -> list[SimpleNamespace]:
             return definitions[entity_type]
 
     svc.schema = FakeSchema()  # type: ignore[assignment]

@@ -330,7 +330,6 @@ h3 { font-size: 17px; margin: 0 0 6px; }
 .form .form-actions { display: flex; gap: 8px; margin-top: 20px; }
 .form .required-mark { color: var(--danger); margin-left: 4px; }
 .form .field-error { color: var(--danger); font-size: 12px; margin-top: 4px; }
-.form .deprecated-marker { color: var(--warning); font-size: 11px; margin-left: 6px; }
 
 .errors {
     background: #fdecea; color: var(--danger);

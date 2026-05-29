@@ -35,14 +35,13 @@ def test_check_attribute_name_rejects_path_unsafe_names(name: str) -> None:
         AttributeSchemaService._check_attribute_name(name)
 
 
-def _attr(name: str, *, is_deprecated: bool = False) -> AttributeDefinition:
+def _attr(name: str) -> AttributeDefinition:
     return AttributeDefinition(
         entity_type="client",
         name=name,
         label=name,
         data_type="string",
         is_required=False,
-        is_deprecated=is_deprecated,
         options={},
     )
 
@@ -50,25 +49,22 @@ def _attr(name: str, *, is_deprecated: bool = False) -> AttributeDefinition:
 class _StubAttrRepo:
     """Minimal stand-in for AttributeDefinitionRepository (no DB)."""
 
-    def __init__(self, active: list[AttributeDefinition], deprecated: list[AttributeDefinition]):
-        self._active = active
-        self._all = active + deprecated
+    def __init__(self, defs: list[AttributeDefinition]):
+        self._defs = defs
 
-    async def list_by_entity(
-        self, entity_type: str, *, include_deprecated: bool = True
-    ) -> list[AttributeDefinition]:
-        return self._all if include_deprecated else self._active
+    async def list_by_entity(self, entity_type: str) -> list[AttributeDefinition]:
+        return self._defs
 
 
-def _service(active: list[AttributeDefinition], deprecated: list[AttributeDefinition]) -> AttributeSchemaService:
+def _service(defs: list[AttributeDefinition]) -> AttributeSchemaService:
     svc = AttributeSchemaService(cast(AsyncSession, None))
-    svc.attrs = cast(Any, _StubAttrRepo(active, deprecated))
+    svc.attrs = cast(Any, _StubAttrRepo(defs))
     return svc
 
 
 async def test_update_preserves_value_of_hard_deleted_attribute() -> None:
-    # "gone" has no definition at all (it was hard-deleted) — its stored value must survive.
-    svc = _service(active=[_attr("kept")], deprecated=[])
+    # "gone" has no definition (it was hard-deleted) — its stored value must survive a save.
+    svc = _service([_attr("kept")])
     result = await svc.validate_attributes(
         "client",
         {"kept": "v1"},
@@ -77,29 +73,20 @@ async def test_update_preserves_value_of_hard_deleted_attribute() -> None:
     assert result == {"kept": "v1", "gone": "orphan"}
 
 
-async def test_update_does_not_resurrect_cleared_deprecated_attribute() -> None:
-    # "dep" still has a (deprecated) definition, so clearing it in the form must clear it.
-    svc = _service(active=[_attr("kept")], deprecated=[_attr("dep", is_deprecated=True)])
+async def test_update_clears_defined_attribute_when_form_omits_it() -> None:
+    # "opt" still has a definition, so clearing it in the form must clear the stored value
+    # (it must not be resurrected from preserve_existing).
+    svc = _service([_attr("kept"), _attr("opt")])
     result = await svc.validate_attributes(
         "client",
         {"kept": "v1"},
-        preserve_existing={"kept": "old", "dep": "oldDep"},
+        preserve_existing={"kept": "old", "opt": "oldOpt"},
     )
     assert result == {"kept": "v1"}
 
 
-async def test_update_keeps_resubmitted_deprecated_value() -> None:
-    svc = _service(active=[_attr("kept")], deprecated=[_attr("dep", is_deprecated=True)])
-    result = await svc.validate_attributes(
-        "client",
-        {"kept": "v1", "dep": "stillHere"},
-        preserve_existing={"dep": "old"},
-    )
-    assert result == {"kept": "v1", "dep": "stillHere"}
-
-
 async def test_create_without_preserve_existing_keeps_legacy_keys_from_values() -> None:
     # Default behaviour is unchanged when no preserve_existing is passed (e.g. create/import).
-    svc = _service(active=[_attr("kept")], deprecated=[])
+    svc = _service([_attr("kept")])
     result = await svc.validate_attributes("client", {"kept": "v1", "legacy": "x"})
     assert result == {"kept": "v1", "legacy": "x"}

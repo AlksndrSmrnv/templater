@@ -12,13 +12,12 @@ class AttributeDefinitionRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_by_entity(
-        self, entity_type: str, *, include_deprecated: bool = True
-    ) -> list[AttributeDefinition]:
-        stmt = select(AttributeDefinition).where(AttributeDefinition.entity_type == entity_type)
-        if not include_deprecated:
-            stmt = stmt.where(AttributeDefinition.is_deprecated.is_(False))
-        stmt = stmt.order_by(AttributeDefinition.display_order, AttributeDefinition.name)
+    async def list_by_entity(self, entity_type: str) -> list[AttributeDefinition]:
+        stmt = (
+            select(AttributeDefinition)
+            .where(AttributeDefinition.entity_type == entity_type)
+            .order_by(AttributeDefinition.display_order, AttributeDefinition.name)
+        )
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def list_all(self) -> list[AttributeDefinition]:

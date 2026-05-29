@@ -33,9 +33,9 @@ class AttributeSchemaService:
         self.attrs = AttributeDefinitionRepository(session)
         self.refs = ReferenceValueRepository(session)
 
-    async def list_schema(self, entity_type: str, *, include_deprecated: bool = False) -> list[AttributeDefinition]:
+    async def list_schema(self, entity_type: str) -> list[AttributeDefinition]:
         self._check_entity_type(entity_type)
-        return await self.attrs.list_by_entity(entity_type, include_deprecated=include_deprecated)
+        return await self.attrs.list_by_entity(entity_type)
 
     async def list_all(self) -> list[AttributeDefinition]:
         return await self.attrs.list_all()
@@ -73,7 +73,6 @@ class AttributeSchemaService:
             label=data.label,
             data_type=data.data_type,
             is_required=data.is_required,
-            is_deprecated=data.is_deprecated,
             display_order=data.display_order,
             description=data.description,
             options=data.options or {},
@@ -95,8 +94,6 @@ class AttributeSchemaService:
             attr.label = data.label
         if data.is_required is not None:
             attr.is_required = data.is_required
-        if data.is_deprecated is not None:
-            attr.is_deprecated = data.is_deprecated
         if data.display_order is not None:
             attr.display_order = data.display_order
         if data.description is not None:
@@ -151,7 +148,7 @@ class AttributeSchemaService:
           though the UI promises stored values stay untouched on deletion.
         """
 
-        definitions = await self.attrs.list_by_entity(entity_type, include_deprecated=False)
+        definitions = await self.attrs.list_by_entity(entity_type)
         defs_by_name = {d.name: d for d in definitions}
         normalized: dict[str, Any] = {}
         errors: list[str] = []
@@ -167,22 +164,19 @@ class AttributeSchemaService:
             except ValidationFailed as exc:
                 errors.append(f"{d.label}: {exc.message}")
 
-        # Preserve submitted values for keys outside the active schema (e.g. deprecated
-        # attributes that are still rendered on the edit form):
+        # Preserve submitted values for keys outside the current schema (legacy keys, e.g.
+        # from an import file):
         for k, v in values.items():
             if k not in defs_by_name and v not in (None, ""):
                 normalized[k] = v
 
-        # Preserve previously-stored values whose attribute definition no longer exists at
-        # all (hard-deleted). Deprecated-but-defined attributes are intentionally excluded:
-        # they are controlled by the form above, so clearing them keeps working.
+        # Preserve previously-stored values whose attribute definition no longer exists
+        # (it was hard-deleted), so deleting an attribute doesn't silently drop data on the
+        # next save. Keys that still have a definition are controlled by the form above, so
+        # clearing them keeps working.
         if preserve_existing:
-            known = {
-                d.name
-                for d in await self.attrs.list_by_entity(entity_type, include_deprecated=True)
-            }
             for k, v in preserve_existing.items():
-                if k not in known and k not in normalized and v not in (None, ""):
+                if k not in defs_by_name and k not in normalized and v not in (None, ""):
                     normalized[k] = v
 
         if errors:

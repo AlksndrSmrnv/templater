@@ -209,7 +209,7 @@ class TemplateService:
         for role in ("sender", "receiver", "accountOwner"):
             for entity in FIELD_CATALOG_ENTITIES:
                 prefix = role if entity == "client" else f"{role}.{entity}"
-                defs = await self.schema.list_schema(entity, include_deprecated=False)
+                defs = await self.schema.list_schema(entity)
                 for d in defs:
                     result.append(
                         {

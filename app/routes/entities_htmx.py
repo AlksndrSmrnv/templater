@@ -72,12 +72,8 @@ def entity_label(entity_type: str, row: Any) -> str:
     return row.description or row_id[:8]
 
 
-async def _schema(
-    session: AsyncSession, entity_type: str, *, include_deprecated: bool = False
-) -> list[AttributeDefinition]:
-    return await AttributeSchemaService(session).list_schema(
-        entity_type, include_deprecated=include_deprecated
-    )
+async def _schema(session: AsyncSession, entity_type: str) -> list[AttributeDefinition]:
+    return await AttributeSchemaService(session).list_schema(entity_type)
 
 
 async def _list_items(session: AsyncSession, entity_type: str) -> list[Any]:
@@ -269,13 +265,7 @@ async def build_entity_form_context(
 ) -> dict[str, Any]:
     check_entity_type(entity_type)
     entity = await _get_item(session, entity_type, entity_id) if entity_id else None
-    schema = await _schema(session, entity_type, include_deprecated=entity is not None)
-    if entity is not None:
-        schema = [
-            field
-            for field in schema
-            if not field.is_deprecated or (entity.attributes or {}).get(field.name) is not None
-        ]
+    schema = await _schema(session, entity_type)
     parent_options: list[Any] = []
     labels: dict[str, dict[str, str]] = {"client": {}, "account": {}, "card": {}}
     if entity_type == "account":
@@ -310,22 +300,22 @@ async def _entity_payload(
     request: Request,
     session: AsyncSession,
     *,
-    include_deprecated: bool,
+    is_update: bool,
 ) -> ClientCreate | ClientUpdate | AccountCreate | AccountUpdate | CardCreate | CardUpdate:
     form = await request.form()
-    schema = await _schema(session, entity_type, include_deprecated=include_deprecated)
+    schema = await _schema(session, entity_type)
     base = {
         "description": form_str(form, "description"),
         "tags": _tags_from_form(form),
         "attributes": read_entity_attributes(form, schema),
     }
     if entity_type == "client":
-        return ClientUpdate(**base) if include_deprecated else ClientCreate(**base)
+        return ClientUpdate(**base) if is_update else ClientCreate(**base)
     if entity_type == "account":
         data = {**base, "client_id": uuid.UUID(form_str(form, "client_id"))}
-        return AccountUpdate(**data) if include_deprecated else AccountCreate(**data)
+        return AccountUpdate(**data) if is_update else AccountCreate(**data)
     data = {**base, "account_id": uuid.UUID(form_str(form, "account_id"))}
-    return CardUpdate(**data) if include_deprecated else CardCreate(**data)
+    return CardUpdate(**data) if is_update else CardCreate(**data)
 
 
 async def _create_entity(
@@ -412,7 +402,7 @@ async def htmx_create(
 ) -> Response:
     check_entity_type(entity_type)
     try:
-        data = await _entity_payload(entity_type, request, session, include_deprecated=False)
+        data = await _entity_payload(entity_type, request, session, is_update=False)
         created = await commit_and_refresh(
             session,
             await _create_entity(session, entity_type, cast(ClientCreate | AccountCreate | CardCreate, data)),
@@ -443,7 +433,7 @@ async def htmx_update(
 ) -> Response:
     check_entity_type(entity_type)
     try:
-        data = await _entity_payload(entity_type, request, session, include_deprecated=True)
+        data = await _entity_payload(entity_type, request, session, is_update=True)
         await commit_and_refresh(
             session,
             await _update_entity(

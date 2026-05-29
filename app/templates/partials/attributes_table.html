@@ -16,7 +16,6 @@
                 {% endif %}
             </td>
             <td>{% if attr.is_required %}✓{% endif %}</td>
-            <td>{% if attr.is_deprecated %}✓{% endif %}</td>
             <td>{{ attr.display_order }}</td>
             <td>{{ attr.description }}</td>
             <td class="muted">{{ uc_records }} зап. / ~{{ uc_templates }} шаб.</td>
@@ -36,6 +35,6 @@
     {% endfor %}
 {% else %}
     <tr>
-        <td colspan="10" class="muted" style="text-align:center; padding:24px;">Нет атрибутов</td>
+        <td colspan="9" class="muted" style="text-align:center; padding:24px;">Нет атрибутов</td>
     </tr>
 {% endif %}
