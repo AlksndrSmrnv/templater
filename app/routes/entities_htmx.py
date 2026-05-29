@@ -48,6 +48,15 @@ RELATION_COLUMNS = {
     "account": ("client", "cards"),
     "card": ("client", "account"),
 }
+SERVICE_MAP = {
+    "client": ClientService,
+    "account": AccountService,
+    "card": CardService,
+}
+
+
+def _service(session: AsyncSession, entity_type: str) -> Any:
+    return SERVICE_MAP[entity_type](session)
 
 
 def check_entity_type(entity_type: str) -> None:
@@ -76,20 +85,12 @@ async def _schema(session: AsyncSession, entity_type: str) -> list[AttributeDefi
     return await AttributeSchemaService(session).list_schema(entity_type)
 
 
-async def _list_items(session: AsyncSession, entity_type: str) -> list[Any]:
-    if entity_type == "client":
-        return await ClientService(session).list_all()
-    if entity_type == "account":
-        return await AccountService(session).list_all()
-    return await CardService(session).list_all()
+async def _list_items(session: AsyncSession, entity_type: str) -> Any:
+    return await _service(session, entity_type).list_all()
 
 
 async def _get_item(session: AsyncSession, entity_type: str, item_id: uuid.UUID) -> Any:
-    if entity_type == "client":
-        return await ClientService(session).get(item_id)
-    if entity_type == "account":
-        return await AccountService(session).get(item_id)
-    return await CardService(session).get(item_id)
+    return await _service(session, entity_type).get(item_id)
 
 
 def _collect_ref_entities(schema: list[AttributeDefinition]) -> tuple[str, ...]:
@@ -323,11 +324,7 @@ async def _create_entity(
     entity_type: str,
     data: ClientCreate | AccountCreate | CardCreate,
 ) -> Any:
-    if entity_type == "client":
-        return await ClientService(session).create(data)  # type: ignore[arg-type]
-    if entity_type == "account":
-        return await AccountService(session).create(data)  # type: ignore[arg-type]
-    return await CardService(session).create(data)  # type: ignore[arg-type]
+    return await _service(session, entity_type).create(data)
 
 
 async def _update_entity(
@@ -336,20 +333,11 @@ async def _update_entity(
     entity_id: uuid.UUID,
     data: ClientUpdate | AccountUpdate | CardUpdate,
 ) -> Any:
-    if entity_type == "client":
-        return await ClientService(session).update(entity_id, data)  # type: ignore[arg-type]
-    if entity_type == "account":
-        return await AccountService(session).update(entity_id, data)  # type: ignore[arg-type]
-    return await CardService(session).update(entity_id, data)  # type: ignore[arg-type]
+    return await _service(session, entity_type).update(entity_id, data)
 
 
 async def _delete_entity(session: AsyncSession, entity_type: str, entity_id: uuid.UUID) -> None:
-    if entity_type == "client":
-        await ClientService(session).delete(entity_id)
-    elif entity_type == "account":
-        await AccountService(session).delete(entity_id)
-    else:
-        await CardService(session).delete(entity_id)
+    await _service(session, entity_type).delete(entity_id)
 
 
 @router.get("/entities-htmx/{entity_type}/table")

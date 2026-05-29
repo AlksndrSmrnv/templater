@@ -12,9 +12,6 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.db.session import shutdown_engine
 from app.routes import (
-    accounts,
-    cards,
-    clients,
     collections,
     entities_htmx,
     export_import,
@@ -27,6 +24,7 @@ from app.routes import (
 from app.routes import (
     settings as settings_routes,
 )
+from app.routes.entity_pages import build_entity_pages_router
 from app.utils.errors import DomainError
 from app.utils.logging import configure_logging
 
@@ -50,9 +48,9 @@ def create_app() -> FastAPI:
     app.mount(f"{app_prefix}/static", StaticFiles(directory=settings.static_dir), name="static")
 
     app.include_router(home.router, prefix=app_prefix)
-    app.include_router(clients.router, prefix=app_prefix)
-    app.include_router(accounts.router, prefix=app_prefix)
-    app.include_router(cards.router, prefix=app_prefix)
+    app.include_router(build_entity_pages_router("client", "clients"), prefix=app_prefix)
+    app.include_router(build_entity_pages_router("account", "accounts"), prefix=app_prefix)
+    app.include_router(build_entity_pages_router("card", "cards"), prefix=app_prefix)
     app.include_router(entities_htmx.router, prefix=app_prefix)
     app.include_router(references.router, prefix=app_prefix)
     app.include_router(templates_reg.router, prefix=app_prefix)
