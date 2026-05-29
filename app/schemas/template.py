@@ -19,14 +19,6 @@ class TemplateCreate(TemplateBase):
     llm_meta: dict[str, Any] | None = None
 
 
-class HeaderItem(BaseModel):
-    key: str = Field(min_length=1)
-    value: str = ""
-    mode: Literal["literal", "dynamic"] = "literal"
-    original: str = ""
-    disabled: bool = False
-
-
 class TemplateUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
