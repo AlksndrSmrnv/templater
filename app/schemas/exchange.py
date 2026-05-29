@@ -14,12 +14,15 @@ class ExportRequest(BaseModel):
 
 
 class ExportPackage(BaseModel):
-    version: int = 1
+    version: int = 2
     attribute_schema: list[dict[str, Any]]
     references: dict[str, list[dict[str, Any]]]
     clients: list[dict[str, Any]]
     accounts: list[dict[str, Any]]
     cards: list[dict[str, Any]]
+    # Imported request collections referenced by the exported templates.
+    # Absent in v1 packages — import tolerates its absence.
+    collections: list[dict[str, Any]] = Field(default_factory=list)
     templates: list[dict[str, Any]]
 
 

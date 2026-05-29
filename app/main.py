@@ -15,6 +15,7 @@ from app.routes import (
     accounts,
     cards,
     clients,
+    collections,
     entities_htmx,
     export_import,
     filled_templates,
@@ -55,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(entities_htmx.router, prefix=app_prefix)
     app.include_router(references.router, prefix=app_prefix)
     app.include_router(templates_reg.router, prefix=app_prefix)
+    app.include_router(collections.router, prefix=app_prefix)
     app.include_router(filled_templates.router, prefix=app_prefix)
     app.include_router(send.router, prefix=app_prefix)
     app.include_router(settings_routes.router, prefix=app_prefix)

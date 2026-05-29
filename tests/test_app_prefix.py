@@ -11,11 +11,11 @@ def test_app_routes_are_registered_under_templater_prefix() -> None:
 
     assert "/templater/" in route_paths
     assert "/templater/clients" in route_paths
-    assert "/templater/templates-htmx/table" in route_paths
+    assert "/templater/templates-htmx/tree" in route_paths
     assert "/templater/static" in route_paths
     assert "/" not in route_paths
     assert "/clients" not in route_paths
-    assert "/templates-htmx/table" not in route_paths
+    assert "/templates-htmx/tree" not in route_paths
     assert "/static" not in route_paths
 
 

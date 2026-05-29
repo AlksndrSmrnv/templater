@@ -16,16 +16,7 @@
         </div>
         <div style="flex:1; min-width:260px;">
             <h3>Статус обработки</h3>
-            <div class="muted" style="font-size:12px;">
-                {% if llm_used %}
-                    Шаблон обработан LLM.
-                {% else %}
-                    Шаблон обработан эвристикой.
-                {% endif %}
-            </div>
-            {% if llm_error %}
-                <div class="errors" style="margin-top:10px;">{{ llm_error }}</div>
-            {% endif %}
+            <div class="muted" style="font-size:12px;">Шаблон обработан LLM.</div>
         </div>
     </div>
 

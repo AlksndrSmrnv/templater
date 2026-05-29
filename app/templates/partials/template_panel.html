@@ -1,0 +1,100 @@
+<div class="template-panel-body">
+    <div id="panel-errors" class="errors"></div>
+
+    <div class="panel-header">
+        <div class="panel-title">
+            <span class="tree-method method-{{ (template.http_method or '')|lower }}">{{ template.http_method or '·' }}</span>
+            <h2>{{ template.name }}</h2>
+        </div>
+        <div class="panel-actions">
+            <button class="btn primary"
+                    hx-post="/templater/templates-htmx/{{ template.id }}/process-llm"
+                    hx-target="#template-panel"
+                    hx-swap="innerHTML"
+                    hx-indicator="#panel-llm-indicator"
+                    hx-disabled-elt="this"
+                    {% if not parsable %}disabled{% endif %}
+                    title="{% if not parsable %}Тело не разбирается как JSON/XML — обработка недоступна{% else %}Анализ шаблона LLM{% endif %}">
+                ✨ Обработать LLM
+            </button>
+            {% if parsable %}
+            <a class="btn" href="/templater/templates/{{ template.id }}/fill">Заполнить</a>
+            {% endif %}
+            <a class="btn" href="/templater/templates/{{ template.id }}">Редактор</a>
+            <span id="panel-llm-indicator" class="htmx-indicator muted"><span class="spinner"></span> Обработка LLM…</span>
+        </div>
+    </div>
+
+    {% if template.description %}
+    <p class="panel-description muted">{{ template.description }}</p>
+    {% endif %}
+
+    {% if template.url %}
+    <div class="panel-url"><span class="panel-url-method">{{ template.http_method or '' }}</span> <code>{{ template.url }}</code></div>
+    {% endif %}
+
+    <section class="panel-section">
+        <h3>Заголовки</h3>
+        {% if template.headers %}
+        <table class="headers-table">
+            <tbody>
+                {% for h in template.headers %}
+                <tr class="{% if h.get('mode') == 'dynamic' %}header-dynamic{% endif %}{% if h.get('disabled') %} header-disabled{% endif %}">
+                    <td class="header-key">{{ h.get('key') }}</td>
+                    <td class="header-value">
+                        <code>{{ h.get('value') }}</code>
+                        {% if h.get('mode') == 'dynamic' %}<span class="tag">динамический</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="muted">Заголовков нет.</p>
+        {% endif %}
+    </section>
+
+    <section class="panel-section">
+        <h3>Тело сообщения</h3>
+        {% if parsable %}
+        <p class="muted" style="margin:0 0 8px;">
+            Наведите на подсвеченное значение и выберите поле из тестовых данных, либо оставьте исходное.
+        </p>
+        <form id="template-editor-form"
+              class="template-editor"
+              hx-put="/templater/templates-htmx/{{ template.id }}"
+              hx-target="#template-code-wrap"
+              hx-swap="outerHTML">
+            <div style="margin-bottom:14px;">
+                {% include "partials/template_edit_llm_panel.html" %}
+            </div>
+            {% include "partials/template_code.html" %}
+            <div class="form-actions" style="margin-top:10px;">
+                <button class="btn primary" type="submit">Сохранить изменения</button>
+            </div>
+        </form>
+        {% elif template.content %}
+        {% include "partials/template_meta.html" %}
+        <pre class="template-code" style="margin-top:10px;">{{ template.content }}</pre>
+        <p class="muted">Тело не разбирается как {{ template.format|upper }} — редактор плейсхолдеров и обработка LLM недоступны.</p>
+        {% else %}
+        <p class="muted">Нет тела запроса (например, GET-запрос). Сохранены метод, URL и заголовки.</p>
+        {% endif %}
+    </section>
+
+    <section class="panel-section">
+        <h3>Заполненные шаблоны</h3>
+        {% if filled_links %}
+        <ul class="filled-links">
+            {% for f in filled_links %}
+            <li>
+                <a href="/templater/filled-templates/{{ f.id }}">{{ f.name }}</a>
+                <span class="muted">· {{ f.created_at.strftime('%d.%m.%Y %H:%M') }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">Пока нет. Заполните шаблон — ссылка на результат появится здесь.</p>
+        {% endif %}
+    </section>
+</div>

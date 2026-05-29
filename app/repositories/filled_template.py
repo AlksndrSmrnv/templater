@@ -55,6 +55,28 @@ class FilledTemplateRepository:
             )
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def list_by_template(
+        self, template_id: uuid.UUID, *, limit: int = DEFAULT_LIST_LIMIT
+    ) -> list[FilledTemplate]:
+        """Filled snapshots produced from a given template (newest first).
+
+        Heavy text columns are deferred — the caller only renders name/date
+        links. Used by the template workspace panel to show «связанные
+        заполненные шаблоны».
+        """
+
+        stmt = (
+            select(FilledTemplate)
+            .options(
+                defer(FilledTemplate.filled_content),
+                defer(FilledTemplate.changed_locations),
+            )
+            .where(FilledTemplate.message_template_id == template_id)
+            .order_by(FilledTemplate.created_at.desc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def get(self, filled_id: uuid.UUID) -> FilledTemplate | None:
         return await self.session.get(FilledTemplate, filled_id)
 

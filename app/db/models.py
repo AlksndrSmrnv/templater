@@ -169,8 +169,30 @@ class ReferenceValue(Base):
     updated_at: Mapped[datetime] = _updated_at()
 
 
+class Collection(Base):
+    """An imported request collection (Postman v2.1, later Insomnia, …).
+
+    Each contained request becomes a :class:`MessageTemplate` linked back via
+    ``MessageTemplate.collection_id``. Folders are not modelled as rows — each
+    template carries its ``folder_path`` (materialised path) and the UI rebuilds
+    the tree from those paths.
+    """
+
+    __tablename__ = "collections"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="postman")
+    source_format: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    variables: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
 class MessageTemplate(Base):
     __tablename__ = "message_templates"
+    __table_args__ = (Index("ix_message_templates_collection_id", "collection_id"),)
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -180,6 +202,23 @@ class MessageTemplate(Base):
     original_content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     llm_meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     placeholders: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+
+    # Collection membership. ``collection_id`` is SET NULL on collection delete
+    # so a template can outlive its collection (becomes "ungrouped"); the import
+    # flow normally deletes a collection's templates explicitly.
+    collection_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("collections.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Materialised folder path within the collection, e.g. ["Transfers", "A2A"].
+    folder_path: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    # HTTP request headers: list of {"key","value","mode","original","disabled"}.
+    headers: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    http_method: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 

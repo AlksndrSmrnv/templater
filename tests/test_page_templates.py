@@ -459,36 +459,41 @@ def test_template_review_llm_debug_panel_keeps_headings_outside_code_blocks() ->
     assert 'id="template-code-wrap"' not in html
 
 
-def test_template_view_disables_regenerate_when_llm_inactive() -> None:
-    html = render_template(
-        "templates_reg/view.html",
-        {
-            "active": "templates",
-            "template": SimpleNamespace(
-                id="3db678b1-1111-2222-3333-444444444444",
-                name="Template",
-                description="",
-                llm_meta={},
-            ),
-            "rendered_html": "{}",
-            "placeholders": [],
-            "catalog": [],
-            "dynamic_tokens": [],
-            "llm_active": False,
-            "llm_debug": None,
-        },
-    )
+def _view_context(*, parsable: bool) -> dict[str, Any]:
+    return {
+        "active": "templates",
+        "template": SimpleNamespace(
+            id="3db678b1-1111-2222-3333-444444444444",
+            name="Template",
+            description="",
+            llm_meta={},
+        ),
+        "rendered_html": "{}",
+        "placeholders": [],
+        "catalog": [],
+        "dynamic_tokens": [],
+        "parsable": parsable,
+        "llm_debug": None,
+    }
 
-    assert 'disabled title="LLM не настроена"' in html
+
+def test_template_view_shows_actions_when_parsable() -> None:
+    html = render_template("templates_reg/view.html", _view_context(parsable=True))
+    # Regenerate is no longer gated by llm_active — it's available for parsable bodies.
+    assert "Перегенерировать с LLM" in html
+    assert 'disabled title="LLM не настроена"' not in html
+    assert ">Заполнить</a>" in html
     assert 'type="submit" form="template-editor-form">Сохранить изменения</button>' in html
-    assert 'hx-indicator="#regen-indicator"' in html
-    assert 'hx-disabled-elt="this"' in html
-    assert 'id="regen-indicator"' in html
-    assert "Описание (для LLM)" not in html
     assert "Метаинформация LLM" in html
-    assert "Генерация" in html
-    assert html.index('hx-delete="/templater/templates-htmx/') < html.index('id="regen-indicator"')
     assert "Наведите на подсвеченное значение" in html
+
+
+def test_template_view_hides_fill_and_regenerate_when_unparsable() -> None:
+    html = render_template("templates_reg/view.html", _view_context(parsable=False))
+    assert "Перегенерировать с LLM" not in html
+    assert "Заполнить" not in html
+    # The editor itself stays available.
+    assert "Сохранить изменения" in html
 
 
 def test_template_view_shows_llm_debug_toggle_when_present() -> None:
@@ -685,3 +690,144 @@ async def test_page_fill_keeps_account_owner_false_without_meta_placeholders_or_
 
     assert response.name == "templates_reg/fill.html"
     assert response.context["has_account_owner"] is False
+
+
+# ---------- Collections workspace rendering ----------
+
+def _tree_template(name: str, *, method: str = "POST", status: str = "imported") -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        name=name,
+        http_method=method,
+        llm_meta={"import_status": status},
+    )
+
+
+def test_collections_tree_renders_collection_folders_and_items() -> None:
+    item = _tree_template("A2A Transfer")
+    tree = {"folders": {"Transfers": {"folders": {}, "templates": [item]}}, "templates": []}
+    context = {
+        "collection_nodes": [
+            {"collection": SimpleNamespace(id=uuid.uuid4(), name="Demo Bank"), "count": 1, "tree": tree}
+        ],
+        "ungrouped_tree": {"folders": {}, "templates": []},
+        "ungrouped_count": 0,
+        "search": "",
+    }
+    html = render_template("partials/collections_tree.html", context)
+    assert "Demo Bank" in html
+    assert "Transfers" in html
+    assert "A2A Transfer" in html
+    # leaf wires up the panel load
+    items = [tag for tag in start_tags(html, "li") if tag.get("hx-get")]
+    assert any("/panel" in (tag.get("hx-get") or "") for tag in items)
+
+
+def test_collections_tree_shows_ungrouped_and_empty_state() -> None:
+    ungrouped_item = _tree_template("Manual template", status="imported")
+    context = {
+        "collection_nodes": [],
+        "ungrouped_tree": {"folders": {}, "templates": [ungrouped_item]},
+        "ungrouped_count": 1,
+        "search": "",
+    }
+    html = render_template("partials/collections_tree.html", context)
+    assert "Без коллекции" in html
+    assert "Manual template" in html
+
+    empty = render_template(
+        "partials/collections_tree.html",
+        {"collection_nodes": [], "ungrouped_tree": {"folders": {}, "templates": []}, "ungrouped_count": 0, "search": ""},
+    )
+    assert "Пока нет шаблонов" in empty
+
+
+def test_collections_tree_process_button_enabled_when_llm_inactive() -> None:
+    item = _tree_template("A2A Transfer")
+    tree = {"folders": {}, "templates": [item]}
+    context = {
+        "collection_nodes": [
+            {"collection": SimpleNamespace(id=uuid.uuid4(), name="Demo Bank"), "count": 1, "tree": tree}
+        ],
+        "ungrouped_tree": {"folders": {}, "templates": []},
+        "ungrouped_count": 0,
+        "search": "",
+        "llm_active": False,  # heuristic fallback — button stays enabled
+    }
+    html = render_template("partials/collections_tree.html", context)
+    process = [tag for tag in start_tags(html, "button") if "/process-llm" in (tag.get("hx-post") or "")]
+    assert process and "disabled" not in process[0]
+
+
+def _panel_template(**overrides: Any) -> SimpleNamespace:
+    base = dict(
+        id=uuid.uuid4(),
+        name="A2A Transfer",
+        description="Перевод",
+        http_method="POST",
+        url="https://api.bank.test/transfer/a2a",
+        format="json",
+        content='{"amount": 100}',
+        llm_meta={"summary": "Перевод со счёта на счёт"},
+        placeholders=[],
+        headers=[
+            {"key": "RqUID", "value": "{{rqUID}}", "mode": "dynamic", "original": "abc", "disabled": False},
+            {"key": "Content-Type", "value": "application/json", "mode": "literal", "original": "application/json", "disabled": False},
+        ],
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _panel_context(template: SimpleNamespace, *, parsable: bool, filled_links: list[Any] | None = None) -> dict[str, Any]:
+    return {
+        "template": template,
+        "rendered_html": "{}",
+        "placeholders": template.placeholders,
+        "catalog": [],
+        "dynamic_tokens": [],
+        "llm_active": True,
+        "headers": template.headers,
+        "parsable": parsable,
+        "has_account_owner": False,
+        "filled_links": filled_links or [],
+    }
+
+
+def test_template_panel_parsable_shows_headers_body_and_process_button() -> None:
+    template = _panel_template()
+    html = render_template("partials/template_panel.html", _panel_context(template, parsable=True))
+    assert "RqUID" in html
+    assert "{{rqUID}}" in html
+    assert "динамический" in html
+    assert "Обработать LLM" in html
+    assert "template-editor-form" in html  # interactive editor present
+    assert "Заполнить" in html  # fill available for parsable templates
+    # process-llm button targets the center panel
+    buttons = [tag for tag in start_tags(html, "button") if tag.get("hx-post")]
+    assert any("/process-llm" in (tag.get("hx-post") or "") for tag in buttons)
+
+
+def test_template_panel_unparsable_disables_process_and_hides_editor() -> None:
+    template = _panel_template(http_method="GET", content="", url="https://api.bank.test/health", headers=[])
+    html = render_template("partials/template_panel.html", _panel_context(template, parsable=False))
+    assert "template-editor-form" not in html
+    assert "Заполнить" not in html  # fill hidden — body can't be substituted
+    process = [tag for tag in start_tags(html, "button") if "/process-llm" in (tag.get("hx-post") or "")]
+    assert process and "disabled" in process[0]
+
+
+def test_template_panel_process_button_enabled_when_parsable() -> None:
+    # The process button is gated only by parsability (LLM is required and
+    # assumed configured); it must be enabled for a parsable template.
+    html = render_template("partials/template_panel.html", _panel_context(_panel_template(), parsable=True))
+    process = [tag for tag in start_tags(html, "button") if "/process-llm" in (tag.get("hx-post") or "")]
+    assert process and "disabled" not in process[0]
+
+
+def test_template_panel_lists_filled_links() -> None:
+    template = _panel_template()
+    filled = SimpleNamespace(id=uuid.uuid4(), name="A2A — Иванов — 29.05.2026", created_at=__import__("datetime").datetime(2026, 5, 29, 12, 0))
+    html = render_template("partials/template_panel.html", _panel_context(template, parsable=True, filled_links=[filled]))
+    assert "A2A — Иванов — 29.05.2026" in html
+    assert f"/templater/filled-templates/{filled.id}" in html

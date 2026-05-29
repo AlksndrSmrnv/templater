@@ -1,0 +1,56 @@
+{
+  "info": {
+    "name": "Demo Bank",
+    "description": "Тестовая коллекция переводов",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "https://api.bank.test"}
+  ],
+  "item": [
+    {
+      "name": "Transfers",
+      "item": [
+        {
+          "name": "A2A Transfer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "RqUID", "value": "00000000-0000-0000-0000-000000000000"},
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "X-Debug", "value": "1", "disabled": true}
+            ],
+            "url": {"raw": "https://api.bank.test/transfer/a2a"},
+            "body": {
+              "mode": "raw",
+              "raw": "{\"amount\": 100, \"currency\": \"RUB\", \"payerName\": \"Иванов\"}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "description": "Перевод со счёта на счёт"
+          }
+        },
+        {
+          "name": "Legacy XML Transfer",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/xml"}],
+            "url": "https://api.bank.test/transfer/legacy",
+            "body": {
+              "mode": "raw",
+              "raw": "<Transfer><Amount>50</Amount></Transfer>",
+              "options": {"raw": {"language": "xml"}}
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [{"key": "Accept", "value": "application/json"}],
+        "url": "https://api.bank.test/health"
+      }
+    }
+  ]
+}

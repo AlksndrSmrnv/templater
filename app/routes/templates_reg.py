@@ -14,13 +14,14 @@ from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.llm.runner import llm_service
+from app.repositories.filled_template import FilledTemplateRepository
 from app.routes.deps import SessionDep, TemplatesDep
 from app.routes.entities_htmx import entity_label
 from app.routes.htmx_utils import form_errors_response, form_str, toast_header, validation_errors_response
 from app.routes.uow import commit_and_refresh, commit_or_409
 from app.schemas.template import TemplateCreate, TemplateFillRequest, TemplateUpdate
+from app.services.collections import CollectionService
 from app.services.dynamic_fields import dynamic_token_catalog
 from app.services.entities import AccountService, CardService, ClientService
 from app.services.placeholders import PlaceholderFiller
@@ -31,7 +32,8 @@ from app.services.templates import (
     placeholders_have_account_owner,
     template_has_account_owner,
 )
-from app.utils.errors import DomainError, LLMUnavailable, ValidationFailed
+from app.utils import walker
+from app.utils.errors import DomainError, LLMResponseError, LLMUnavailable, ValidationFailed
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -59,6 +61,19 @@ def _llm_ssl_message(exc: BaseException) -> str:
     )
 
 
+def _llm_failure_text(exc: BaseException) -> str:
+    """User-facing message for a failed LLM call.
+
+    The GigaChat client re-raises a plain ``Exception`` after exhausting
+    retries; SSL/OS errors get the cert-specific hint. Used by the regenerate /
+    process routes to render a form error instead of bubbling up a 500.
+    """
+
+    if isinstance(exc, (ssl.SSLError, OSError)):
+        return _llm_ssl_message(exc)
+    return f"LLM не смогла обработать шаблон: {exc}"
+
+
 def _validate_preview_source(data: TemplateCreate) -> None:
     if not data.content.strip():
         raise ValidationFailed("Пустой шаблон")
@@ -71,47 +86,24 @@ def _validate_preview_source(data: TemplateCreate) -> None:
 async def preview_template(data: TemplateCreate, session: AsyncSession) -> dict[str, Any]:
     _validate_preview_source(data)
     svc = TemplateService(session)
-    llm_used = False
-    llm_error: str | None = None
 
-    if get_settings().llm_active:
-        try:
-            async with llm_service() as llm_svc:
-                result = await svc.analyze_content(
-                    fmt=data.format,
-                    original_content=data.content,
-                    llm_service=llm_svc,
-                )
-            llm_used = result.get("llm_debug") is not None
-        except LLMUnavailable as exc:
-            llm_error = str(exc)
+    # LLM is required. A missing/broken configuration or a failed call surfaces
+    # as a DomainError that ``htmx_preview`` renders as a form error — the tool
+    # has no heuristic-only mode.
+    try:
+        async with llm_service() as llm_svc:
             result = await svc.analyze_content(
                 fmt=data.format,
                 original_content=data.content,
-                llm_service=None,
+                llm_service=llm_svc,
             )
-        except (ssl.SSLError, OSError) as exc:
-            llm_error = _llm_ssl_message(exc)
-            result = await svc.analyze_content(
-                fmt=data.format,
-                original_content=data.content,
-                llm_service=None,
-            )
-        except Exception as exc:
-            log.warning("LLM template preview failed; falling back to heuristic analysis", exc_info=True)
-            llm_error = f"LLM не смогла обработать шаблон; использована эвристика. Исходная ошибка: {exc}"
-            result = await svc.analyze_content(
-                fmt=data.format,
-                original_content=data.content,
-                llm_service=None,
-            )
-    else:
-        llm_error = "LLM не настроена; использована эвристика по именам полей."
-        result = await svc.analyze_content(
-            fmt=data.format,
-            original_content=data.content,
-            llm_service=None,
-        )
+    except DomainError:
+        raise
+    except (ssl.SSLError, OSError) as exc:
+        raise LLMUnavailable(_llm_ssl_message(exc)) from exc
+    except Exception as exc:
+        log.warning("LLM template preview failed", exc_info=True)
+        raise LLMResponseError(f"LLM не смогла обработать шаблон: {exc}") from exc
 
     rendered_html = render_template_html(
         SimpleNamespace(
@@ -129,33 +121,34 @@ async def preview_template(data: TemplateCreate, session: AsyncSession) -> dict[
         "placeholders": result["placeholders"],
         "llm_meta": result["llm_meta"],
         "rendered_html": rendered_html,
-        "llm_used": llm_used,
-        "llm_error": llm_error,
+        "llm_used": result.get("llm_debug") is not None,
         "llm_debug": result.get("llm_debug"),
         "catalog": await svc.build_field_catalog(),
         "dynamic_tokens": dynamic_token_catalog(),
     }
 
 
-async def _template_table_context(session: AsyncSession, *, search: str = "") -> dict[str, Any]:
-    rows = await TemplateService(session).list_all()
-    query = search.strip().lower()
-    if query:
-        rows = [
-            row
-            for row in rows
-            if query
-            in (
-                row.name
-                + " "
-                + row.description
-                + " "
-                + str((row.llm_meta or {}).get("summary", ""))
-                + " "
-                + str((row.llm_meta or {}).get("category", ""))
-            ).lower()
-        ]
-    return {"templates_list": rows, "search": search}
+def _is_parsable(template: Any) -> bool:
+    """True when the body parses as its declared format (so LLM analysis and
+    fill are possible). Imported GET/urlencoded/empty/invalid bodies are not.
+
+    Uses the walker directly (not ``TemplateService``) so it is independent of
+    that class being monkeypatched in tests.
+    """
+
+    source = template.original_content or template.content
+    if not source or not source.strip():
+        return False
+    try:
+        if template.format == "json":
+            walker.walk_json(source)
+        elif template.format == "xml":
+            walker.walk_xml(source)
+        else:
+            return False
+    except Exception:
+        return False
+    return True
 
 
 async def _template_code_context(session: AsyncSession, template: Any) -> dict[str, Any]:
@@ -165,8 +158,16 @@ async def _template_code_context(session: AsyncSession, template: Any) -> dict[s
         "placeholders": template.placeholders,
         "catalog": await TemplateService(session).build_field_catalog(),
         "dynamic_tokens": dynamic_token_catalog(),
-        "llm_active": get_settings().llm_active,
+        "parsable": _is_parsable(template),
     }
+
+
+async def _template_panel_context(session: AsyncSession, template: Any) -> dict[str, Any]:
+    context = await _template_code_context(session, template)
+    context["headers"] = template.headers or []
+    context["has_account_owner"] = template_has_account_owner(template)
+    context["filled_links"] = await FilledTemplateRepository(session).list_by_template(template.id)
+    return context
 
 
 async def _template_editor_context(
@@ -308,10 +309,11 @@ async def page_list(
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
 ) -> Response:
+    tree = await CollectionService(session).build_workspace_tree()
     return templates.TemplateResponse(
         request,
-        "templates_reg/list.html",
-        {"active": "templates", **await _template_table_context(session)},
+        "templates_reg/workspace.html",
+        {"active": "templates", **tree},
     )
 
 
@@ -359,17 +361,72 @@ async def page_fill(
 
 # ---------- HTMX ----------
 
-@router.get("/templates-htmx/table")
-async def htmx_table(
+@router.get("/templates-htmx/tree")
+async def htmx_tree(
     request: Request,
     search: str = "",
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
 ) -> Response:
+    context = await CollectionService(session).build_workspace_tree(search=search)
+    return templates.TemplateResponse(request, "partials/collections_tree.html", context)
+
+
+@router.get("/templates-htmx/{template_id}/panel")
+async def htmx_panel(
+    template_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    template = await TemplateService(session).get(template_id)
     return templates.TemplateResponse(
         request,
-        "partials/templates_table.html",
-        await _template_table_context(session, search=search),
+        "partials/template_panel.html",
+        await _template_panel_context(session, template),
+    )
+
+
+@router.post("/templates-htmx/{template_id}/process-llm")
+async def htmx_process_llm(
+    template_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    svc = TemplateService(session)
+    template = await svc.get(template_id)
+    panel_error_headers = {"HX-Retarget": "#panel-errors", "HX-Reswap": "innerHTML"}
+    try:
+        async with llm_service() as llm_svc:
+            await svc.analyze_and_persist(template, llm_service=llm_svc)
+        template = await commit_and_refresh(session, template)
+    except DomainError as exc:
+        return form_errors_response(
+            request,
+            templates,
+            exc.message,
+            details=exc.details,
+            status_code=200,
+            headers=panel_error_headers,
+        )
+    except Exception as exc:
+        # The GigaChat client raises a plain Exception after exhausting retries;
+        # surface it as a form error rather than a global 500.
+        log.warning("LLM processing failed for template %s", template_id, exc_info=True)
+        await session.rollback()
+        return form_errors_response(
+            request,
+            templates,
+            _llm_failure_text(exc),
+            status_code=200,
+            headers=panel_error_headers,
+        )
+    return templates.TemplateResponse(
+        request,
+        "partials/template_panel.html",
+        await _template_panel_context(session, template),
+        headers={"HX-Trigger": toast_header("Шаблон обработан LLM")},
     )
 
 
@@ -491,28 +548,43 @@ async def htmx_regenerate(
 ) -> Response:
     svc = TemplateService(session)
     template = await svc.get(template_id)
+    if not _is_parsable(template):
+        return form_errors_response(
+            request,
+            templates,
+            f"Тело сообщения не разбирается как {template.format.upper()} — "
+            "обработка LLM недоступна",
+            status_code=200,
+            headers={"HX-Retarget": "#template-code-wrap", "HX-Reswap": "outerHTML"},
+        )
     source = template.original_content or template.content
-    llm_debug: dict[str, Any] | None = None
-    if get_settings().llm_active:
-        try:
-            async with llm_service() as llm_svc:
-                result = await svc.analyze_content(
-                    fmt=template.format,
-                    original_content=source,
-                    llm_service=llm_svc,
-                )
-        except Exception:
-            log.warning("LLM template regeneration failed; falling back to heuristic analysis", exc_info=True)
+    regen_error_headers = {"HX-Retarget": "#template-code-wrap", "HX-Reswap": "outerHTML"}
+    try:
+        async with llm_service() as llm_svc:
             result = await svc.analyze_content(
                 fmt=template.format,
                 original_content=source,
-                llm_service=None,
+                llm_service=llm_svc,
             )
-    else:
-        result = await svc.analyze_content(
-            fmt=template.format,
-            original_content=source,
-            llm_service=None,
+    except DomainError as exc:
+        return form_errors_response(
+            request,
+            templates,
+            exc.message,
+            details=exc.details,
+            status_code=200,
+            headers=regen_error_headers,
+        )
+    except Exception as exc:
+        # The GigaChat client raises a plain Exception after exhausting retries;
+        # surface it as a form error rather than a global 500.
+        log.warning("LLM regeneration failed for template %s", template_id, exc_info=True)
+        return form_errors_response(
+            request,
+            templates,
+            _llm_failure_text(exc),
+            status_code=200,
+            headers=regen_error_headers,
         )
 
     llm_debug = result.get("llm_debug")
@@ -635,6 +707,13 @@ async def htmx_fill_render(
         )
     except ValueError:
         return form_errors_response(request, templates, "Проверьте выбранные записи")
+    except DomainError as exc:
+        # E.g. the template body doesn't parse as its declared format (imported
+        # GET/urlencoded request) — surface readable feedback instead of the
+        # global JSON error response.
+        return form_errors_response(
+            request, templates, exc.message, details=exc.details, status_code=200
+        )
     return templates.TemplateResponse(
         request,
         "partials/fill_result.html",

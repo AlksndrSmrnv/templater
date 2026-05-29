@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Шаблоны сообщений — Template Maker{% endblock %}
+{% block content %}
+<div class="workspace" x-data="{ selected: null }">
+    <aside class="workspace-left">
+        <div class="workspace-left-header">
+            <div class="workspace-left-title">
+                <h2>📚 Коллекции</h2>
+                <a class="btn small" href="/templater/templates/new" title="Загрузить одиночный шаблон вручную">+ Шаблон</a>
+            </div>
+            <div class="import-zone"
+                 x-data="{
+                    over: false,
+                    drop(e) {
+                        this.over = false;
+                        const f = e.dataTransfer.files[0];
+                        if (!f) return;
+                        const input = this.$refs.fileInput;
+                        const dt = new DataTransfer(); dt.items.add(f); input.files = dt.files;
+                        input.form.requestSubmit();
+                    }
+                 }"
+                 @dragover.prevent="over = true"
+                 @dragleave="over = false"
+                 @drop.prevent="drop($event)"
+                 :class="{ dragover: over }">
+                <form hx-post="/templater/collections/import-htmx"
+                      hx-encoding="multipart/form-data"
+                      hx-target="#collections-tree"
+                      hx-swap="innerHTML"
+                      hx-indicator="#import-indicator"
+                      hx-on::after-request="this.reset()">
+                    <input type="file" name="file" x-ref="fileInput" accept=".json,application/json" hidden
+                           onchange="if (this.files.length) this.form.requestSubmit()">
+                    <button type="button" class="btn primary" @click="$refs.fileInput.click()">⬆️ Импортировать коллекцию</button>
+                </form>
+                <div class="import-hint muted">Postman v2.1 · перетащите .json сюда</div>
+                <span id="import-indicator" class="htmx-indicator muted"><span class="spinner"></span> Импорт…</span>
+            </div>
+            <input class="tree-search"
+                   type="search"
+                   name="search"
+                   placeholder="Поиск по имени / URL / описанию…"
+                   hx-get="/templater/templates-htmx/tree"
+                   hx-target="#collections-tree"
+                   hx-swap="innerHTML"
+                   hx-trigger="input changed delay:200ms">
+            <span id="tree-indicator" class="htmx-indicator muted"><span class="spinner"></span> Обработка…</span>
+        </div>
+        <div id="collections-tree" class="collections-tree">
+            {% include "partials/collections_tree.html" %}
+        </div>
+    </aside>
+
+    <section class="workspace-center" id="template-panel">
+        <div class="workspace-empty muted">
+            ← Выберите запрос в дереве слева, чтобы посмотреть его содержимое и заголовки.
+        </div>
+    </section>
+</div>
+{% endblock %}
