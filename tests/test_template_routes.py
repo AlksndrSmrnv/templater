@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from types import SimpleNamespace
 from typing import Any, cast
@@ -274,7 +275,8 @@ async def test_htmx_regenerate_returns_preview_without_committing(
     assert response.name == "partials/template_editor_response.html"
     assert response.context["llm_debug"] == analyzed["llm_debug"]
     assert response.context["template"].llm_meta == analyzed["llm_meta"]
-    assert "Предпросмотр LLM обновлён" in response.headers["HX-Trigger"]
+    trigger = json.loads(response.headers["HX-Trigger"])
+    assert "Предпросмотр LLM обновлён" in trigger["showToast"]["message"]
 
 
 @pytest.mark.asyncio
@@ -425,6 +427,46 @@ async def test_htmx_process_llm_reports_plain_llm_failure(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
+async def test_htmx_process_llm_persistence_failure_is_not_masked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A DB failure after a successful analysis must propagate, not be reported as an LLM failure."""
+    template_id = uuid.uuid4()
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            return SimpleNamespace(id=requested_id, name="T")
+
+        async def analyze_and_persist(self, template: Any, *, llm_service: Any | None = None) -> Any:
+            return None  # analysis succeeds
+
+    class FakeLlmContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    async def boom(session: object, item: object, **kwargs: object) -> Any:
+        raise RuntimeError("database is down")
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", boom)
+
+    with pytest.raises(RuntimeError, match="database is down"):
+        await templates_reg.htmx_process_llm(
+            template_id=template_id,
+            request=cast(Any, FakeFormRequest({})),
+            templates=cast(Any, FakeTemplateRenderer()),
+            session=cast(Any, object()),
+        )
+
+
+@pytest.mark.asyncio
 async def test_htmx_regenerate_reports_plain_llm_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     template_id = uuid.uuid4()
 
@@ -461,4 +503,7 @@ async def test_htmx_regenerate_reports_plain_llm_failure(monkeypatch: pytest.Mon
     assert response.name == "partials/form_errors.html"
     assert response.status_code == 200
     assert "LLM не смогла" in response.context["message"]
-    assert response.headers["HX-Retarget"] == "#template-code-wrap"
+    # Errors must land in a dedicated container, not replace #template-code-wrap
+    # (which would wipe the hidden placeholders input and the user's mappings).
+    assert response.headers["HX-Retarget"] == "#regen-errors"
+    assert response.headers["HX-Reswap"] == "innerHTML"

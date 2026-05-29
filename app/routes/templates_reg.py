@@ -397,10 +397,11 @@ async def htmx_process_llm(
     svc = TemplateService(session)
     template = await svc.get(template_id)
     panel_error_headers = {"HX-Retarget": "#panel-errors", "HX-Reswap": "innerHTML"}
+    # Scope the broad catch to the LLM analysis only — a persistence failure in
+    # commit_and_refresh must surface as a real error, not be masked as an LLM failure.
     try:
         async with llm_service() as llm_svc:
             await svc.analyze_and_persist(template, llm_service=llm_svc)
-        template = await commit_and_refresh(session, template)
     except DomainError as exc:
         return form_errors_response(
             request,
@@ -422,6 +423,7 @@ async def htmx_process_llm(
             status_code=200,
             headers=panel_error_headers,
         )
+    template = await commit_and_refresh(session, template)
     return templates.TemplateResponse(
         request,
         "partials/template_panel.html",
@@ -555,10 +557,10 @@ async def htmx_regenerate(
             f"Тело сообщения не разбирается как {template.format.upper()} — "
             "обработка LLM недоступна",
             status_code=200,
-            headers={"HX-Retarget": "#template-code-wrap", "HX-Reswap": "outerHTML"},
+            headers={"HX-Retarget": "#regen-errors", "HX-Reswap": "innerHTML"},
         )
     source = template.original_content or template.content
-    regen_error_headers = {"HX-Retarget": "#template-code-wrap", "HX-Reswap": "outerHTML"}
+    regen_error_headers = {"HX-Retarget": "#regen-errors", "HX-Reswap": "innerHTML"}
     try:
         async with llm_service() as llm_svc:
             result = await svc.analyze_content(

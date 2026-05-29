@@ -40,7 +40,11 @@ def toast_header(message: str, *, toast_type: str = "success", **events: Any) ->
         "showToast": {"message": message, "type": toast_type},
         **normalized_events,
     }
-    return json.dumps(payload, ensure_ascii=False)
+    # ensure_ascii=True (default) escapes non-ASCII as \uXXXX so the value is
+    # latin-1-safe — HTTP header values are encoded as latin-1 by Starlette, and
+    # raw Cyrillic here would raise UnicodeEncodeError → 500 (no htmx swap/toast).
+    # htmx unescapes it back to the original text via JSON.parse on the client.
+    return json.dumps(payload)
 
 
 def form_errors_response(
