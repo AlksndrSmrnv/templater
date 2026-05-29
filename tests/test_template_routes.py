@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from types import SimpleNamespace
 from typing import Any, cast
@@ -274,7 +275,8 @@ async def test_htmx_regenerate_returns_preview_without_committing(
     assert response.name == "partials/template_editor_response.html"
     assert response.context["llm_debug"] == analyzed["llm_debug"]
     assert response.context["template"].llm_meta == analyzed["llm_meta"]
-    assert "Предпросмотр LLM обновлён" in response.headers["HX-Trigger"]
+    trigger = json.loads(response.headers["HX-Trigger"])
+    assert "Предпросмотр LLM обновлён" in trigger["showToast"]["message"]
 
 
 @pytest.mark.asyncio
