@@ -16,6 +16,7 @@ from app.db.models import (
     AttributeDefinition,
     Card,
     Client,
+    Collection,
     MessageTemplate,
     ReferenceValue,
 )
@@ -221,13 +222,22 @@ class ExportImportService:
 
         templates = await self.templates.get_many(req.templates)
 
+        # Pull in the collections those templates belong to so restore keeps the
+        # workspace tree intact (template.collection_id is a FK to collections).
+        collection_ids = {t.collection_id for t in templates if t.collection_id}
+        collection_objs: list[Collection] = []
+        if collection_ids:
+            stmt = select(Collection).where(Collection.id.in_(list(collection_ids)))
+            collection_objs = list((await self.session.execute(stmt)).scalars().all())
+
         return ExportPackage(
-            version=1,
+            version=2,
             attribute_schema=[self._dump_attr(a) for a in all_defs],
             references=references,
             clients=[self._dump_client(c) for c in client_objs],
             accounts=[self._dump_account(a) for a in account_objs],
             cards=[self._dump_card(c) for c in card_objs],
+            collections=[self._dump_collection(c) for c in collection_objs],
             templates=[self._dump_template(t) for t in templates],
         )
 
@@ -239,7 +249,15 @@ class ExportImportService:
     ) -> ImportSummary:
         if policy not in ("skip", "overwrite", "fail"):
             policy = "skip"
-        counter_keys = ("attribute_schema", "references", "clients", "accounts", "cards", "templates")
+        counter_keys = (
+            "attribute_schema",
+            "references",
+            "clients",
+            "accounts",
+            "cards",
+            "collections",
+            "templates",
+        )
         created = {k: 0 for k in counter_keys}
         updated = {k: 0 for k in counter_keys}
         skipped = {k: 0 for k in counter_keys}
@@ -262,7 +280,7 @@ class ExportImportService:
         # file with e.g. ``clients: {...}`` would be silently treated as empty
         # and look like a successful zero-change import.
         shape_errors = False
-        for section in ("attribute_schema", "clients", "accounts", "cards", "templates"):
+        for section in ("attribute_schema", "clients", "accounts", "cards", "collections", "templates"):
             value = package.get(section)
             if value is not None and not isinstance(value, list):
                 errors.append(f"Секция '{section}' должна быть списком")
@@ -779,6 +797,72 @@ class ExportImportService:
                 return f"template {label}: {fmt} не парсится: {exc}"
             return None
 
+        # ---- collections (workspace import groups; must precede templates so
+        # template.collection_id FKs resolve) ----
+        seen_collection_ids: set[str] = set()
+        for raw in _as_list(package.get("collections")):
+            if not isinstance(raw, dict):
+                errors.append("collections: запись не является объектом")
+                continue
+            raw = cast(dict[str, Any], raw)
+            try:
+                cid = uuid.UUID(str(raw["id"]))
+                cid_str = str(cid)
+                if cid_str in seen_collection_ids:
+                    errors.append(f"collection {raw.get('name')}: дубликат id в файле")
+                    continue
+                seen_collection_ids.add(cid_str)
+
+                existing_collection = await self.session.get(Collection, cid)
+                if existing_collection is not None and conflict("collections", raw):
+                    continue
+
+                coll_name, coll_name_err = _validate_required_str(raw.get("name"), 255)
+                if coll_name_err or coll_name is None:
+                    errors.append(f"collection {_safe_label(raw, 'id')}: name {coll_name_err}")
+                    continue
+                coll_desc, coll_desc_err = _validate_optional_str(raw.get("description"))
+                if coll_desc_err:
+                    errors.append(f"collection {coll_name}: description {coll_desc_err}")
+                    continue
+                coll_source, coll_source_err = _validate_optional_str(raw.get("source"))
+                if coll_source_err:
+                    errors.append(f"collection {coll_name}: source {coll_source_err}")
+                    continue
+                coll_fmt, coll_fmt_err = _validate_optional_str(raw.get("source_format"))
+                if coll_fmt_err:
+                    errors.append(f"collection {coll_name}: source_format {coll_fmt_err}")
+                    continue
+                coll_vars = _as_list(raw.get("variables"))
+
+                if existing_collection is None:
+                    self.session.add(Collection(
+                        id=cid,
+                        name=coll_name,
+                        description=coll_desc or "",
+                        source=coll_source or "postman",
+                        source_format=coll_fmt or "",
+                        variables=coll_vars,
+                    ))
+                    created["collections"] += 1
+                else:
+                    existing_collection.name = coll_name
+                    existing_collection.description = (
+                        coll_desc if coll_desc is not None else existing_collection.description
+                    )
+                    existing_collection.source = coll_source or existing_collection.source
+                    existing_collection.source_format = (
+                        coll_fmt if coll_fmt is not None else existing_collection.source_format
+                    )
+                    existing_collection.variables = coll_vars
+                    updated["collections"] += 1
+            except Exception as exc:
+                errors.append(f"collection {_safe_label(raw, 'name', 'id')}: {exc}")
+
+        # Persist collections now so the template loop can resolve collection_id.
+        if not await safe_flush("collections"):
+            return _zeroed_summary()
+
         # templates
         seen_template_ids: set[str] = set()
         for raw in _as_list(package.get("templates")):
@@ -812,19 +896,22 @@ class ExportImportService:
                     errors.append(f"template {_safe_label(raw, 'id')}: name {name_err}")
                     continue
                 new_content = raw.get("content")
-                if not isinstance(new_content, str) or not new_content:
-                    errors.append(f"template {new_name}: content должен быть непустой строкой")
+                if not isinstance(new_content, str):
+                    errors.append(f"template {new_name}: content должен быть строкой")
                     continue
                 new_description, desc_err = _validate_optional_str(raw.get("description"))
                 if desc_err:
                     errors.append(f"template {new_name}: description {desc_err}")
                     continue
 
-                # content must parse as the declared format.
-                content_err = _validate_template_body(raw.get("name", "?"), fmt, new_content)
-                if content_err:
-                    errors.append(content_err.replace("template", "template content"))
-                    continue
+                # Non-empty content must parse as the declared format. Empty
+                # content is allowed: imported GET/urlencoded/GraphQL requests
+                # carry no parsable body (stored with import_status="unparsed").
+                if new_content:
+                    content_err = _validate_template_body(raw.get("name", "?"), fmt, new_content)
+                    if content_err:
+                        errors.append(content_err.replace("template", "template content"))
+                        continue
 
                 # Normalize original_content: absent / empty / null → fall back
                 # to content. analyze/regenerate use it as their source, so a
@@ -867,6 +954,36 @@ class ExportImportService:
                         continue
                     new_llm_meta = parsed_llm_meta
 
+                # Workspace metadata (collection import). Optional — degrade to
+                # defaults on absence/bad shape rather than failing the row.
+                new_headers = [h for h in _as_list(raw.get("headers")) if isinstance(h, dict)]
+                new_folder_path = [str(p) for p in _as_list(raw.get("folder_path"))]
+                new_http_method, method_err = _validate_optional_str(raw.get("http_method"))
+                if method_err:
+                    errors.append(f"template {new_name}: http_method {method_err}")
+                    continue
+                new_url, url_err = _validate_optional_str(raw.get("url"))
+                if url_err:
+                    errors.append(f"template {new_name}: url {url_err}")
+                    continue
+                order_raw = raw.get("display_order")
+                new_display_order = (
+                    order_raw if isinstance(order_raw, int) and not isinstance(order_raw, bool) else 0
+                )
+
+                # Resolve collection_id only if that collection exists (imported
+                # in the block above or pre-existing). An unknown id would fail
+                # the FK; we make the template ungrouped instead.
+                new_collection_id: uuid.UUID | None = None
+                coll_ref = raw.get("collection_id")
+                if coll_ref:
+                    try:
+                        candidate = uuid.UUID(str(coll_ref))
+                    except (ValueError, AttributeError, TypeError):
+                        candidate = None
+                    if candidate is not None and await self.session.get(Collection, candidate) is not None:
+                        new_collection_id = candidate
+
                 if existing_template is None:
                     self.session.add(MessageTemplate(
                         id=tid,
@@ -877,6 +994,12 @@ class ExportImportService:
                         original_content=new_original,
                         llm_meta=new_llm_meta,
                         placeholders=placeholders,
+                        collection_id=new_collection_id,
+                        folder_path=new_folder_path,
+                        headers=new_headers,
+                        http_method=new_http_method or "",
+                        url=new_url or "",
+                        display_order=new_display_order,
                     ))
                     created["templates"] += 1
                 else:
@@ -890,6 +1013,12 @@ class ExportImportService:
                     existing_template.original_content = new_original
                     existing_template.llm_meta = new_llm_meta
                     existing_template.placeholders = placeholders
+                    existing_template.collection_id = new_collection_id
+                    existing_template.folder_path = new_folder_path
+                    existing_template.headers = new_headers
+                    existing_template.http_method = new_http_method or ""
+                    existing_template.url = new_url or ""
+                    existing_template.display_order = new_display_order
                     updated["templates"] += 1
             except Exception as exc:
                 errors.append(f"template {_safe_label(raw, 'name', 'id')}: {exc}")
@@ -961,6 +1090,17 @@ class ExportImportService:
         }
 
     @staticmethod
+    def _dump_collection(c: Collection) -> dict[str, Any]:
+        return {
+            "id": str(c.id),
+            "name": c.name,
+            "description": c.description,
+            "source": c.source,
+            "source_format": c.source_format,
+            "variables": c.variables,
+        }
+
+    @staticmethod
     def _dump_template(t: MessageTemplate) -> dict[str, Any]:
         return {
             "id": str(t.id),
@@ -971,4 +1111,12 @@ class ExportImportService:
             "original_content": t.original_content,
             "llm_meta": t.llm_meta,
             "placeholders": t.placeholders,
+            # Workspace metadata (collection import) — kept so a backup/restore
+            # preserves the collection tree, headers, method and URL.
+            "collection_id": str(t.collection_id) if t.collection_id else None,
+            "folder_path": list(t.folder_path or []),
+            "headers": list(t.headers or []),
+            "http_method": t.http_method,
+            "url": t.url,
+            "display_order": t.display_order,
         }

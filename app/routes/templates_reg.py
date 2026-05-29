@@ -692,6 +692,13 @@ async def htmx_fill_render(
         )
     except ValueError:
         return form_errors_response(request, templates, "Проверьте выбранные записи")
+    except DomainError as exc:
+        # E.g. the template body doesn't parse as its declared format (imported
+        # GET/urlencoded request) — surface readable feedback instead of the
+        # global JSON error response.
+        return form_errors_response(
+            request, templates, exc.message, details=exc.details, status_code=200
+        )
     return templates.TemplateResponse(
         request,
         "partials/fill_result.html",

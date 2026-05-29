@@ -36,13 +36,12 @@
         </div>
         <div class="tree-collection-actions">
             <button class="btn small"
-                    title="Обработать всю коллекцию LLM"
+                    title="{% if llm_active %}Обработать всю коллекцию LLM{% else %}Обработать всю коллекцию (LLM не настроена — будет использована эвристика){% endif %}"
                     hx-post="/templater/collections/{{ cn.collection.id }}/process-llm"
                     hx-target="#collections-tree"
                     hx-swap="innerHTML"
                     hx-indicator="#tree-indicator"
-                    hx-disabled-elt="this"
-                    {% if not llm_active %}disabled title="LLM не настроена"{% endif %}>✨</button>
+                    hx-disabled-elt="this">✨</button>
             <button class="btn small danger"
                     title="Удалить коллекцию"
                     hx-delete="/templater/collections/{{ cn.collection.id }}"

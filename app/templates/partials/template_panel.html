@@ -13,10 +13,13 @@
                     hx-swap="innerHTML"
                     hx-indicator="#panel-llm-indicator"
                     hx-disabled-elt="this"
-                    {% if not parsable %}disabled title="Тело не разбирается как JSON/XML — обработка недоступна"{% elif not llm_active %}disabled title="LLM не настроена (будет использована эвристика)"{% endif %}>
+                    {% if not parsable %}disabled{% endif %}
+                    title="{% if not parsable %}Тело не разбирается как JSON/XML — обработка недоступна{% elif llm_active %}Анализ шаблона LLM{% else %}Анализ шаблона (LLM не настроена — будет использована эвристика){% endif %}">
                 ✨ Обработать LLM
             </button>
+            {% if parsable %}
             <a class="btn" href="/templater/templates/{{ template.id }}/fill">Заполнить</a>
+            {% endif %}
             <a class="btn" href="/templater/templates/{{ template.id }}">Редактор</a>
             <span id="panel-llm-indicator" class="htmx-indicator muted"><span class="spinner"></span> Обработка LLM…</span>
         </div>

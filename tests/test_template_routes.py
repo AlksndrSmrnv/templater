@@ -11,6 +11,7 @@ from starlette.routing import Match
 from app.routes import templates_reg
 from app.routes.templates_reg import router
 from app.schemas.template import TemplateCreate
+from app.utils.errors import ValidationFailed
 from app.utils.walker import Leaf
 
 
@@ -364,3 +365,22 @@ async def test_htmx_update_rejects_non_object_llm_meta() -> None:
     assert response.name == "partials/form_errors.html"
     assert response.status_code == 422
     assert response.context["message"] == "Поле llm_meta должно быть JSON-объектом"
+
+
+@pytest.mark.asyncio
+async def test_htmx_fill_render_reports_unparsable_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def boom(session: object, template_id: uuid.UUID, data: object) -> Any:
+        raise ValidationFailed("Шаблон не парсится как JSON")
+
+    monkeypatch.setattr(templates_reg, "_render_fill", boom)
+
+    response = await templates_reg.htmx_fill_render(
+        template_id=uuid.uuid4(),
+        request=cast(Any, FakeFormRequest({})),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert response.name == "partials/form_errors.html"
+    assert response.status_code == 200
+    assert "не парсится" in response.context["message"]

@@ -737,6 +737,23 @@ def test_collections_tree_shows_ungrouped_and_empty_state() -> None:
     assert "Пока нет шаблонов" in empty
 
 
+def test_collections_tree_process_button_enabled_when_llm_inactive() -> None:
+    item = _tree_template("A2A Transfer")
+    tree = {"folders": {}, "templates": [item]}
+    context = {
+        "collection_nodes": [
+            {"collection": SimpleNamespace(id=uuid.uuid4(), name="Demo Bank"), "count": 1, "tree": tree}
+        ],
+        "ungrouped_tree": {"folders": {}, "templates": []},
+        "ungrouped_count": 0,
+        "search": "",
+        "llm_active": False,  # heuristic fallback — button stays enabled
+    }
+    html = render_template("partials/collections_tree.html", context)
+    process = [tag for tag in start_tags(html, "button") if "/process-llm" in (tag.get("hx-post") or "")]
+    assert process and "disabled" not in process[0]
+
+
 def _panel_template(**overrides: Any) -> SimpleNamespace:
     base = dict(
         id=uuid.uuid4(),
@@ -780,6 +797,7 @@ def test_template_panel_parsable_shows_headers_body_and_process_button() -> None
     assert "динамический" in html
     assert "Обработать LLM" in html
     assert "template-editor-form" in html  # interactive editor present
+    assert "Заполнить" in html  # fill available for parsable templates
     # process-llm button targets the center panel
     buttons = [tag for tag in start_tags(html, "button") if tag.get("hx-post")]
     assert any("/process-llm" in (tag.get("hx-post") or "") for tag in buttons)
@@ -789,8 +807,20 @@ def test_template_panel_unparsable_disables_process_and_hides_editor() -> None:
     template = _panel_template(http_method="GET", content="", url="https://api.bank.test/health", headers=[])
     html = render_template("partials/template_panel.html", _panel_context(template, parsable=False))
     assert "template-editor-form" not in html
+    assert "Заполнить" not in html  # fill hidden — body can't be substituted
     process = [tag for tag in start_tags(html, "button") if "/process-llm" in (tag.get("hx-post") or "")]
     assert process and "disabled" in process[0]
+
+
+def test_template_panel_process_enabled_for_heuristic_when_llm_inactive() -> None:
+    # When LLM is off, parsable templates can still be processed heuristically,
+    # so the button must NOT be disabled (only the title changes).
+    ctx = _panel_context(_panel_template(), parsable=True)
+    ctx["llm_active"] = False
+    html = render_template("partials/template_panel.html", ctx)
+    process = [tag for tag in start_tags(html, "button") if "/process-llm" in (tag.get("hx-post") or "")]
+    assert process and "disabled" not in process[0]
+    assert "эвристика" in html
 
 
 def test_template_panel_lists_filled_links() -> None:
