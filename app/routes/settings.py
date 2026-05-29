@@ -43,7 +43,7 @@ async def page_settings(
     default_policy = saved_policy if saved_policy in {"skip", "overwrite", "fail"} else "skip"
     svc = AttributeSchemaService(session)
     attributes = await svc.list_all()
-    usage_counts = {attr.id: await svc.usage(attr) for attr in attributes}
+    usage_counts = await svc.usage(attributes)
     return templates.TemplateResponse(
         request,
         "settings.html",
@@ -117,7 +117,7 @@ async def htmx_attributes_table(
     items = await svc.list_all()
     if entity_type:
         items = [item for item in items if item.entity_type == entity_type]
-    usage_counts = {attr.id: await svc.usage(attr) for attr in items}
+    usage_counts = await svc.usage(items)
     return templates.TemplateResponse(
         request,
         "partials/attributes_table.html",

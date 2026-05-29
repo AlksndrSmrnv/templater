@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Any
 
@@ -112,10 +113,10 @@ class AttributeSchemaService:
         await self.attrs.delete(attr)
         await self.session.flush()
 
-    async def usage(self, attr: AttributeDefinition) -> dict[str, int]:
-        return await count_attribute_usage(
-            self.session, entity_type=attr.entity_type, name=attr.name
-        )
+    async def usage(
+        self, attrs: Sequence[AttributeDefinition]
+    ) -> dict[uuid.UUID, dict[str, int]]:
+        return await count_attribute_usage(self.session, attrs)
 
     @staticmethod
     def _check_entity_type(entity_type: str) -> None:
@@ -135,6 +136,8 @@ class AttributeSchemaService:
         self,
         entity_type: str,
         values: dict[str, Any],
+        *,
+        preserve_existing: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Validate ``values`` against active attribute_definitions and return normalized dict.
 
@@ -142,6 +145,10 @@ class AttributeSchemaService:
         - Type-cast values when possible (date strings → date, numbers, bools, enum values).
         - Unknown attribute names are kept verbatim (so legacy values persist), but a warning
           could be added later if needed.
+        - ``preserve_existing`` (the record's currently stored attributes) is used on updates
+          to keep values whose attribute definition no longer exists at all — i.e. it was
+          hard-deleted. Without this the next save would silently drop those values, even
+          though the UI promises stored values stay untouched on deletion.
         """
 
         definitions = await self.attrs.list_by_entity(entity_type, include_deprecated=False)
@@ -160,10 +167,23 @@ class AttributeSchemaService:
             except ValidationFailed as exc:
                 errors.append(f"{d.label}: {exc.message}")
 
-        # Preserve any existing keys that aren't in active schema (legacy/deprecated):
+        # Preserve submitted values for keys outside the active schema (e.g. deprecated
+        # attributes that are still rendered on the edit form):
         for k, v in values.items():
             if k not in defs_by_name and v not in (None, ""):
                 normalized[k] = v
+
+        # Preserve previously-stored values whose attribute definition no longer exists at
+        # all (hard-deleted). Deprecated-but-defined attributes are intentionally excluded:
+        # they are controlled by the form above, so clearing them keeps working.
+        if preserve_existing:
+            known = {
+                d.name
+                for d in await self.attrs.list_by_entity(entity_type, include_deprecated=True)
+            }
+            for k, v in preserve_existing.items():
+                if k not in known and k not in normalized and v not in (None, ""):
+                    normalized[k] = v
 
         if errors:
             raise ValidationFailed("Проверка атрибутов не пройдена", details=errors)
