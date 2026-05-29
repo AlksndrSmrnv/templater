@@ -13,7 +13,6 @@ class AttributeDefinitionBase(BaseModel):
     label: str = Field(min_length=1, max_length=255)
     data_type: str
     is_required: bool = False
-    is_deprecated: bool = False
     display_order: int = 0
     description: str = ""
     options: dict[str, Any] = Field(default_factory=dict)
@@ -26,7 +25,6 @@ class AttributeDefinitionCreate(AttributeDefinitionBase):
 class AttributeDefinitionUpdate(BaseModel):
     label: str | None = None
     is_required: bool | None = None
-    is_deprecated: bool | None = None
     display_order: int | None = None
     description: str | None = None
     options: dict[str, Any] | None = None

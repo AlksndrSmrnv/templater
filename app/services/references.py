@@ -94,7 +94,7 @@ class ReferenceService:
             value.description = data.description
         if data.attributes is not None:
             value.attributes = await self.schema.validate_attributes(
-                value.entity_type, data.attributes
+                value.entity_type, data.attributes, preserve_existing=value.attributes
             )
         try:
             await self.session.flush()

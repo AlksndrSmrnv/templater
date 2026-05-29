@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import uuid
+from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any, cast
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Account, Card, Client
+from app.db.models import Account, Card, Client, MessageTemplate, ReferenceValue
 
 
 class ClientRepository:
@@ -136,6 +137,55 @@ class CardRepository:
 
     async def delete(self, card: Card) -> None:
         await self.session.delete(card)
+
+
+async def count_attribute_usage(
+    session: AsyncSession,
+    attrs: Sequence[Any],
+) -> dict[uuid.UUID, dict[str, int]]:
+    """Count, for each attribute definition in ``attrs``, where it is currently used.
+
+    Returns a map ``attr.id -> {"records": int, "templates": int}``:
+
+    - ``records``: entity rows holding a (non-empty) value under ``attr.name`` in their JSONB
+      ``attributes``. Data entities map to Client/Account/Card; reference types live in
+      ``reference_values`` filtered by ``entity_type``.
+    - ``templates``: message templates whose content mentions ``attr.name`` — a substring
+      heuristic, so the figure is approximate and only meant as a deletion warning.
+
+    Counts are batched (one aggregate query per entity type plus one query for all template
+    contents) to avoid an N+1 over the attribute list on the settings page.
+    """
+
+    result: dict[uuid.UUID, dict[str, int]] = {a.id: {"records": 0, "templates": 0} for a in attrs}
+    if not attrs:
+        return result
+
+    data_models: dict[str, Any] = {"client": Client, "account": Account, "card": Card}
+    by_type: dict[str, list[Any]] = defaultdict(list)
+    for a in attrs:
+        by_type[a.entity_type].append(a)
+
+    # Records: one query per entity type using count(*) FILTER (WHERE attributes ? name).
+    for entity_type, group in by_type.items():
+        model = cast(Any, data_models.get(entity_type)) or ReferenceValue
+        cols = [
+            func.count().filter(model.attributes.has_key(a.name)).label(f"c{i}")
+            for i, a in enumerate(group)
+        ]
+        stmt = select(*cols).select_from(model)
+        if data_models.get(entity_type) is None:
+            stmt = stmt.where(ReferenceValue.entity_type == entity_type)
+        row = (await session.execute(stmt)).one()._mapping
+        for i, a in enumerate(group):
+            result[a.id]["records"] = int(row[f"c{i}"])
+
+    # Templates: fetch all contents once and tally substring matches in Python.
+    contents = list((await session.execute(select(MessageTemplate.content))).scalars().all())
+    for a in attrs:
+        result[a.id]["templates"] = sum(1 for content in contents if a.name in content)
+
+    return result
 
 
 async def find_entities_referencing(

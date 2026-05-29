@@ -1,6 +1,10 @@
 {% set rows = attributes | default([]) %}
+{% set counts = usage_counts | default({}) %}
 {% if rows %}
     {% for attr in rows %}
+        {% set uc = counts.get(attr.id, {}) %}
+        {% set uc_records = uc.get("records", 0) %}
+        {% set uc_templates = uc.get("templates", 0) %}
         <tr>
             <td>{{ attr.entity_type }}</td>
             <td><code>{{ attr.name }}</code></td>
@@ -12,22 +16,20 @@
                 {% endif %}
             </td>
             <td>{% if attr.is_required %}✓{% endif %}</td>
-            <td>{% if attr.is_deprecated %}✓{% endif %}</td>
             <td>{{ attr.display_order }}</td>
             <td>{{ attr.description }}</td>
+            <td class="muted">{{ uc_records }} зап. / ~{{ uc_templates }} шаб.</td>
             <td class="row-actions">
                 <button class="btn"
                         type="button"
                         hx-get="/templater/settings-htmx/attributes/{{ attr.id }}/edit"
                         hx-target="#attr-modal-content"
                         hx-swap="innerHTML">Изменить</button>
-                {% if not attr.is_deprecated %}
-                    <button class="btn danger"
-                            type="button"
-                            hx-post="/templater/settings-htmx/attributes/{{ attr.id }}/deprecate"
-                            hx-swap="none"
-                            hx-confirm="Пометить атрибут как устаревший?">В архив</button>
-                {% endif %}
+                <button class="btn danger"
+                        type="button"
+                        hx-delete="/templater/settings-htmx/attributes/{{ attr.id }}"
+                        hx-swap="none"
+                        hx-confirm="Удалить атрибут «{{ attr.label }}» ({{ attr.entity_type }}.{{ attr.name }})? Сохранённые значения в записях не удаляются. Используется: {{ uc_records }} записей, ~{{ uc_templates }} шаблонов.">Удалить</button>
             </td>
         </tr>
     {% endfor %}

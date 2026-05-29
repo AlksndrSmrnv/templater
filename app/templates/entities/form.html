@@ -69,7 +69,7 @@
             {% set field_name = "attr_" ~ field.name %}
             {% set value = attrs.get(field.name) %}
             <div class="form-section">
-                <label for="{{ field_id }}">{{ field.label }}{% if field.is_required %}<span class="required-mark">*</span>{% endif %}{% if field.is_deprecated %}<span class="deprecated-marker">[устаревший]</span>{% endif %}</label>
+                <label for="{{ field_id }}">{{ field.label }}{% if field.is_required %}<span class="required-mark">*</span>{% endif %}</label>
                 {% if field.data_type == "text" %}
                     <textarea id="{{ field_id }}" name="{{ field_name }}" rows="3">{{ value or "" }}</textarea>
                 {% elif field.data_type == "int" %}

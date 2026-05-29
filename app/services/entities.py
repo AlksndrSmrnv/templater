@@ -55,7 +55,9 @@ class ClientService:
         client = await self.get(client_id)
         client.description = data.description
         client.tags = list(data.tags)
-        client.attributes = await self.schema.validate_attributes("client", data.attributes)
+        client.attributes = await self.schema.validate_attributes(
+            "client", data.attributes, preserve_existing=client.attributes
+        )
         await self.session.flush()
         return client
 
@@ -114,7 +116,9 @@ class AccountService:
         account.client_id = data.client_id
         account.description = data.description
         account.tags = list(data.tags)
-        account.attributes = await self.schema.validate_attributes("account", data.attributes)
+        account.attributes = await self.schema.validate_attributes(
+            "account", data.attributes, preserve_existing=account.attributes
+        )
         await self.session.flush()
         return account
 
@@ -181,7 +185,9 @@ class CardService:
         card.account_id = data.account_id
         card.description = data.description
         card.tags = list(data.tags)
-        card.attributes = await self.schema.validate_attributes("card", data.attributes)
+        card.attributes = await self.schema.validate_attributes(
+            "card", data.attributes, preserve_existing=card.attributes
+        )
         await self.session.flush()
         return card
 

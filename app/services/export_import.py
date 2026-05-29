@@ -204,8 +204,8 @@ class ExportImportService:
                     if not val:
                         continue
                     try:
-                        # A legacy / deprecated attribute may hold a non-UUID
-                        # value (validation preserves unknown keys unchecked).
+                        # A legacy value of a since-deleted attribute may not be a
+                        # UUID (validation preserves unknown keys unchecked).
                         # Skip it instead of letting uuid.UUID(...) 500 the export.
                         ref_ids[target_type].add(uuid.UUID(str(val)))
                     except (ValueError, AttributeError, TypeError):
@@ -395,12 +395,6 @@ class ExportImportService:
                 if ir_err:
                     errors.append(f"attribute_schema {entity_type}/{name}: is_required {ir_err}")
                     continue
-                is_deprecated, id_err = _validate_bool(
-                    raw.get("is_deprecated"), existing_attr.is_deprecated if existing_attr is not None else False
-                )
-                if id_err:
-                    errors.append(f"attribute_schema {entity_type}/{name}: is_deprecated {id_err}")
-                    continue
 
                 raw_display_order = raw.get("display_order")
                 display_order_err = (
@@ -435,7 +429,6 @@ class ExportImportService:
                         label=label,
                         data_type=data_type,
                         is_required=is_required,
-                        is_deprecated=is_deprecated,
                         display_order=display_order,
                         description=description,
                         options=options,
@@ -445,7 +438,6 @@ class ExportImportService:
                     # all parsed — apply atomically (data_type unchanged by design)
                     existing_attr.label = label
                     existing_attr.is_required = is_required
-                    existing_attr.is_deprecated = is_deprecated
                     existing_attr.display_order = display_order
                     existing_attr.description = description
                     existing_attr.options = options
@@ -924,7 +916,6 @@ class ExportImportService:
             "label": a.label,
             "data_type": a.data_type,
             "is_required": a.is_required,
-            "is_deprecated": a.is_deprecated,
             "display_order": a.display_order,
             "description": a.description,
             "options": a.options,

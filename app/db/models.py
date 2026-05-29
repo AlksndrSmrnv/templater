@@ -79,7 +79,6 @@ class AttributeDefinition(Base):
     label: Mapped[str] = mapped_column(String(255), nullable=False)
     data_type: Mapped[str] = mapped_column(String(32), nullable=False)
     is_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    is_deprecated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     options: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
