@@ -177,10 +177,10 @@ async def test_analyze_content_propagates_llm_debug() -> None:
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
-            assert leaves == ["/note"]
+            assert leaves == [{"location": "/note", "value": "x"}]
             return {"meta": {"summary": "llm"}, "placeholders": [], "debug": debug}
 
     svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
@@ -446,7 +446,7 @@ async def test_analyze_content_uses_path_role_with_llm_attribute() -> None:
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -478,7 +478,7 @@ async def test_analyze_content_resolves_llm_suggestion_case_insensitively() -> N
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -514,7 +514,7 @@ async def test_analyze_content_keeps_account_owner_role_for_llm_ucp_id_attribute
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -556,7 +556,7 @@ async def test_analyze_content_falls_back_for_account_owner_llm_suggestion_witho
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -601,7 +601,7 @@ async def test_analyze_content_falls_back_for_account_owner_nested_llm_suggestio
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -646,7 +646,7 @@ async def test_analyze_content_falls_back_for_account_owner_synonym_llm_suggesti
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -691,7 +691,7 @@ async def test_analyze_content_maps_deep_nested_account_owner_field_by_role_not_
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -748,7 +748,7 @@ async def test_analyze_content_maps_account_owner_surname_from_exact_llm_locatio
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -807,7 +807,7 @@ async def test_analyze_content_uses_nested_account_owner_llm_leaf_attribute() ->
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {

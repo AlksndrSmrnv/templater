@@ -341,10 +341,18 @@ class TemplateService:
         catalog_by_lower = {entry["path"].lower(): entry["path"] for entry in catalog}
 
         if llm_service is not None:
+            # Envelope leaves (rqUID/operUID/rqTm/channelDateTime) are substituted
+            # deterministically below, so don't waste the prompt asking the LLM
+            # about them — its answer for these is ignored anyway.
+            mappable = [
+                {"location": leaf.location, "value": leaf.value}
+                for leaf in leaves
+                if resolve_dynamic_token(leaf.location) is None
+            ]
             result = await llm_service.analyze_template(
                 content=original_content,
                 fmt=fmt,
-                leaves=[leaf.location for leaf in leaves],
+                leaves=mappable,
                 catalog=catalog,
             )
             llm_mappings = self._llm_mappings_by_leaf(leaves, result.get("placeholders", []))

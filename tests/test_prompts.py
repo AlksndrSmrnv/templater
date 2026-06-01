@@ -1,166 +1,137 @@
 from __future__ import annotations
 
-import json
-
 from app.llm.prompts import PromptBuilder
 
 
-def test_build_template_field_mapping_includes_payload_keys() -> None:
-    sys_p, user_p = PromptBuilder.build_template_field_mapping(
-        content='{"fullName":"X"}',
-        fmt="json",
-        leaves=["/fullName"],
-        catalog=[{"path": "sender.fullName", "label": "S", "data_type": "string"}],
+def _mapping(
+    leaves: list[dict[str, str]], catalog: list[dict[str, str]]
+) -> tuple[str, str, dict[str, str]]:
+    return PromptBuilder.build_template_field_mapping(leaves=leaves, catalog=catalog)
+
+
+def test_build_template_field_mapping_numbers_leaves_and_drops_json_blob() -> None:
+    sys_p, user_p, id_map = _mapping(
+        leaves=[
+            {"location": "/Payer/FullName", "value": "Иванов Иван"},
+            {"location": "/Payer/INN", "value": "7701234567"},
+        ],
+        catalog=[{"path": "sender.fullName", "label": "Sender — ФИО", "data_type": "string"}],
     )
-    payload = json.loads(user_p)
 
-    assert "JSON" in sys_p
-    assert "placeholders" in sys_p
-    assert "accountOwner.*" in sys_p
-    assert "ownerName" in sys_p
-    assert "JSON Pointer" in sys_p
-    assert '"location": "/RqHdr/RqUID"' in sys_p
-    assert "побайтово равной" in sys_p
-    assert payload["leaves"] == ["/fullName"]
-    assert '"fullName": "X"' in user_p or 'fullName' in user_p
-    assert '"sender.fullName"' in user_p
-
-
-def test_build_template_field_mapping_preserves_xml_leaf_path_syntax() -> None:
-    sys_p, user_p = PromptBuilder.build_template_field_mapping(
-        content="<Root><Item id=\"1\"><Name>X</Name></Item></Root>",
-        fmt="xml",
-        leaves=["/Root/Item[0]/@id", "/Root/Item[0]/Name[0]/#text"],
-        catalog=[{"path": "sender.fullName", "label": "S", "data_type": "string"}],
-    )
-    payload = json.loads(user_p)
-
-    assert payload["leaves"] == ["/Root/Item[0]/@id", "/Root/Item[0]/Name[0]/#text"]
-    assert "[idx]" in sys_p
-    assert "#text" in sys_p
-    assert "@attr" in sys_p
-    assert "не нормализуй" in sys_p
+    assert id_map == {"L1": "/Payer/FullName", "L2": "/Payer/INN"}
+    assert "L1  /Payer/FullName = Иванов Иван" in user_p
+    assert "L2  /Payer/INN = 7701234567" in user_p
+    assert "sender.fullName — Sender — ФИО" in user_p
+    # No JSON blob in the user prompt anymore — plain text only.
+    assert "{" not in user_p and "}" not in user_p
+    assert "data_type" not in user_p
+    # The full template is no longer shipped — only leaf values.
+    assert "template" not in user_p
 
 
 def test_build_template_field_mapping_defines_roles_and_account_owner_rule() -> None:
-    sys_p, _ = PromptBuilder.build_template_field_mapping(
-        content='{"ownerName":"X"}',
-        fmt="json",
-        leaves=["/ownerName"],
+    sys_p, _, _ = _mapping(
+        leaves=[{"location": "/ownerName", "value": "X"}],
         catalog=[{"path": "accountOwner.ownerName", "label": "Owner", "data_type": "string"}],
     )
 
-    assert "В системе три РОЛИ участников" in sys_p
     assert "sender.* — отправитель" in sys_p
     assert "receiver.* — получатель" in sys_p
-    assert "accountOwner.* — ВЛАДЕЛЕЦ СЧЁТА" in sys_p
-    assert "Не сворачивай такого участника в sender или receiver" in sys_p
+    assert "accountOwner.* — третья сторона" in sys_p
+    assert "ownerName" in sys_p
+    assert "Не сворачивай его в sender или receiver" in sys_p
 
 
-def test_build_template_field_mapping_skips_service_identifiers() -> None:
-    sys_p, _ = PromptBuilder.build_template_field_mapping(
-        content='{"operuid":"1","rquid":"2"}',
-        fmt="json",
-        leaves=[
-            "/operuid",
-            "/rquid",
-        ],
-        catalog=[{"path": "sender.ucp_id", "label": "Sender UCP ID", "data_type": "string"}],
+def test_build_template_field_mapping_has_few_shot_example() -> None:
+    sys_p, _, _ = _mapping(
+        leaves=[{"location": "/Payer/INN", "value": "7701234567"}],
+        catalog=[{"path": "sender.inn", "label": "Sender — ИНН", "data_type": "string"}],
     )
 
-    assert "rqUID" in sys_p
-    assert "operUID" in sys_p
-    assert "rqTm" in sys_p
-    assert "channelDateTime" in sys_p
-    assert "{{rqUID}}" in sys_p
-    assert "динамические" in sys_p
+    assert "Пример." in sys_p
+    assert '{"placeholders":[{"leaf":"L1","field":"sender.inn"}]}' in sys_p
+    # Demonstrates skipping a leaf that has no matching field.
+    assert "пропущен" in sys_p
 
 
-def test_build_template_field_mapping_requests_precise_transfer_summary() -> None:
-    sys_p, _ = PromptBuilder.build_template_field_mapping(
-        content='{"productId":"another_int"}',
-        fmt="json",
-        leaves=["/productId"],
+def test_build_template_field_mapping_specifies_strict_response_shape() -> None:
+    sys_p, _, _ = _mapping(
+        leaves=[{"location": "/fullName", "value": "X"}],
         catalog=[],
     )
 
-    assert "2–4 предложения" in sys_p
+    assert '{"placeholders":[{"leaf":str,"field":str}]}' in sys_p
+    assert "пропусти лист" in sys_p
+
+
+def test_build_template_field_mapping_drops_legacy_clutter() -> None:
+    # The byte-exact warning, envelope-token paragraph and meta instructions are
+    # gone — leaf ids and a separate meta call replace them.
+    sys_p, _, _ = _mapping(
+        leaves=[{"location": "/fullName", "value": "X"}],
+        catalog=[],
+    )
+
+    assert "побайтово" not in sys_p
+    assert "channelDateTime" not in sys_p
+    assert "summary" not in sys_p
+    assert "productId" not in sys_p
+
+
+def test_build_template_field_mapping_flattens_and_truncates_values() -> None:
+    long_value = "a" * 200
+    _, user_p, _ = _mapping(
+        leaves=[
+            {"location": "/note", "value": "строка1\nстрока2"},
+            {"location": "/blob", "value": long_value},
+        ],
+        catalog=[],
+    )
+
+    assert "L1  /note = строка1 строка2" in user_p
+    assert "a" * 120 + "…" in user_p
+    assert "a" * 121 not in user_p
+
+
+def test_build_template_field_mapping_preserves_xml_leaf_path_syntax() -> None:
+    _, user_p, id_map = _mapping(
+        leaves=[
+            {"location": "/Root/Item[0]/@id", "value": "1"},
+            {"location": "/Root/Item[0]/Name[0]/#text", "value": "X"},
+        ],
+        catalog=[],
+    )
+
+    assert id_map["L1"] == "/Root/Item[0]/@id"
+    assert id_map["L2"] == "/Root/Item[0]/Name[0]/#text"
+    assert "L1  /Root/Item[0]/@id = 1" in user_p
+    assert "L2  /Root/Item[0]/Name[0]/#text = X" in user_p
+
+
+def test_build_template_meta_returns_strings_without_json_wrapper() -> None:
+    sys_p, user_p = PromptBuilder.build_template_meta(content="<a/>", fmt="xml")
+
+    assert isinstance(sys_p, str) and sys_p
     assert "productId" in sys_p
-    assert "another_int" in sys_p
     assert "another_ext" in sys_p
-    assert "Подразделение-источник" in sys_p
-    assert "Комиссию" in sys_p
+    assert user_p.startswith("Формат: xml")
+    assert "<a/>" in user_p
+    # Plain text, not a json.dumps payload wrapper.
+    assert '"template"' not in user_p and '"format"' not in user_p
 
 
-def test_build_template_field_mapping_compacts_json_and_removes_null_object_keys() -> None:
-    _, user_p = PromptBuilder.build_template_field_mapping(
+def test_build_template_meta_compacts_json_and_removes_null_object_keys() -> None:
+    _, user_p = PromptBuilder.build_template_meta(
         content=(
             '{\r\n'
             '\t"fullName": "X",\r\n'
             '\t"empty": null,\r\n'
-            '\t"nested": {"dropMe": null, "keepMe": "Y"},\r\n'
-            '\t"items": [null, {"dropMe": null, "keepMe": "Z"}]\r\n'
+            '\t"nested": {"dropMe": null, "keepMe": "Y"}\r\n'
             '}'
         ),
         fmt="json",
-        leaves=["/fullName", "/nested/keepMe", "/items/0", "/items/1/keepMe"],
-        catalog=[],
-    )
-    payload = json.loads(user_p)
-
-    assert payload["template"] == (
-        '{"fullName":"X","nested":{"keepMe":"Y"},"items":[null,{"keepMe":"Z"}]}'
-    )
-    assert "\t" not in payload["template"]
-    assert "\r\n" not in payload["template"]
-
-
-def test_build_template_field_mapping_keeps_invalid_json_as_is() -> None:
-    content = '{"fullName": "X",'
-
-    _, user_p = PromptBuilder.build_template_field_mapping(
-        content=content,
-        fmt="json",
-        leaves=["/fullName"],
-        catalog=[],
-    )
-    payload = json.loads(user_p)
-
-    assert payload["template"] == content
-
-
-def test_build_template_field_mapping_slims_catalog_for_prompt() -> None:
-    _, user_p = PromptBuilder.build_template_field_mapping(
-        content='{"fullName":"X"}',
-        fmt="json",
-        leaves=["/fullName"],
-        catalog=[
-            {"path": "sender.fullName", "label": "Sender — ФИО", "data_type": "string"},
-        ],
-    )
-    payload = json.loads(user_p)
-
-    assert payload["catalog"] == [{"path": "sender.fullName", "label": "Sender — ФИО"}]
-    assert "data_type" not in user_p
-
-
-def test_build_template_field_mapping_requires_only_successful_suggestions() -> None:
-    sys_p, _ = PromptBuilder.build_template_field_mapping(
-        content='{"fullName":"X"}',
-        fmt="json",
-        leaves=["/fullName"],
-        catalog=[],
     )
 
-    assert "включай ТОЛЬКО те `location`" in sys_p
-    assert "НЕ возвращай эту запись вовсе" in sys_p
-    assert "null" not in sys_p
-    assert '"suggestion": str' in sys_p
-
-
-def test_build_template_meta_returns_strings() -> None:
-    sys_p, user_p = PromptBuilder.build_template_meta(content="<a/>", fmt="xml")
-    assert isinstance(sys_p, str) and sys_p
-    assert "productId" in sys_p
-    assert "another_ext" in sys_p
-    assert "xml" in user_p
+    assert '{"fullName":"X","nested":{"keepMe":"Y"}}' in user_p
+    assert "dropMe" not in user_p
+    assert "\t" not in user_p

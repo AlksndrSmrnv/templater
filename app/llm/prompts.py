@@ -35,74 +35,87 @@ def _slim_catalog(catalog: list[dict[str, str]]) -> list[dict[str, str]]:
     ]
 
 
+_MAX_LEAF_VALUE_CHARS = 120
+
+
+def _format_leaf_value(value: str) -> str:
+    """Single-line, length-capped rendering of a leaf value for the prompt."""
+
+    flat = " ".join(str(value).split())
+    if len(flat) > _MAX_LEAF_VALUE_CHARS:
+        return flat[:_MAX_LEAF_VALUE_CHARS] + "…"
+    return flat
+
+
 class PromptBuilder:
     """Builds system + user prompts for tasks we ask the LLM to perform."""
 
     @staticmethod
     def build_template_field_mapping(
         *,
-        content: str,
-        fmt: str,
-        leaves: list[str],
+        leaves: list[dict[str, str]],
         catalog: list[dict[str, str]],
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, dict[str, str]]:
+        """Build the field-mapping prompt.
+
+        Each leaf gets a short id (``L1``, ``L2`` …) so the model never has to
+        echo a long JSON-pointer / XML path back byte-exact — it answers with the
+        id, and we expand it to the real ``location`` via the returned map.
+
+        Returns ``(system_prompt, user_prompt, id_to_location)``.
+        """
+
         system_prompt = (
-            "Ты помогаешь подготовить шаблон сообщения для тестирования банковской системы.\n"
-            "Тебе дают исходный шаблон (JSON или XML), список путей листовых значений\n"
-            "и каталог доступных полей тестовых данных.\n"
+            "Ты размечаешь шаблон банковского сообщения для тестирования: подбираешь "
+            "каждому значению из шаблона подходящее поле тестовых данных.\n"
             "\n"
-            "В поле `leaves` массив путей всех листовых значений шаблона. В ответе\n"
-            "`placeholders[].location` ОБЯЗАТЕЛЬНО возвращай строку из этого массива\n"
-            "побайтово равной исходной строке: без изменений, нормализации, сокращения\n"
-            "или перевода в точечную нотацию; значение листа смотри в `template` по этому пути.\n"
-            "Для JSON это JSON Pointer, например \"location\": \"/RqHdr/RqUID\".\n"
-            "Для XML путь может содержать индексы `[idx]`, текстовый маркер `#text` и\n"
-            "атрибуты `@attr`; не нормализуй и не удаляй эти части.\n"
+            "Тебе дают листья шаблона (id, путь, значение) и каталог полей "
+            "(путь — описание).\n"
+            "Для каждого листа, которому подходит поле из каталога, верни его id и путь "
+            "поля. Если подходящего поля нет — просто пропусти лист, не добавляй его в "
+            "ответ.\n"
             "\n"
-            "В системе три РОЛИ участников; роль каждого поля каталога видна в начале path\n"
-            "и в label:\n"
-            "  • sender.* — отправитель (инициатор операции, плательщик).\n"
+            "Роли участников (видны в начале пути и в описании поля):\n"
+            "  • sender.* — отправитель/плательщик (инициатор операции).\n"
             "  • receiver.* — получатель (адресат операции).\n"
-            "  • accountOwner.* — ВЛАДЕЛЕЦ СЧЁТА: третья сторона, чей счёт/карта фигурируют\n"
-            "    в операции, но кто не является ни отправителем, ни получателем.\n"
+            "  • accountOwner.* — третья сторона: владелец/держатель счёта или карты, "
+            "бенефициар (ownerName, accountHolder, владелецСчёта, держательКарты, блоки "
+            "owner/holder). Не сворачивай его в sender или receiver — это отдельная "
+            "сторона.\n"
             "\n"
-            "ВАЖНО про accountOwner: если в шаблоне описан участник, который НЕ отправитель\n"
-            "и НЕ получатель (владелец/держатель счёта или карты, бенефициар, третье лицо;\n"
-            "поля вида ownerName, accountHolder, владелецСчета, держательКарты, блоки\n"
-            "owner/holder/accountOwner) — его поля ОБЯЗАТЕЛЬНО размечай как accountOwner.*.\n"
-            "Не сворачивай такого участника в sender или receiver: это разные стороны.\n"
+            "Пример.\n"
+            "Листья:\n"
+            "L1  /Payer/INN = 7701234567\n"
+            "L2  /Note = спасибо\n"
+            "Каталог:\n"
+            "sender.inn — sender/client — ИНН\n"
+            "Ответ: {\"placeholders\":[{\"leaf\":\"L1\",\"field\":\"sender.inn\"}]}\n"
+            "(L2 пропущен: подходящего поля нет.)\n"
             "\n"
-            "Твоя задача: для литеральных значений выбрать подходящее поле из каталога,\n"
-            "если оно есть. В ответе `placeholders` включай ТОЛЬКО те `location`,\n"
-            "для которых ты выбрал поле из каталога. Если подходящего поля нет — "
-            "НЕ возвращай эту запись вовсе, не присылай её с пустым `suggestion`.\n"
-            "Служебные поля конверта rqUID, operUID, rqTm, channelDateTime обрабатываются\n"
-            "отдельно как динамические параметры ({{rqUID}}, {{operUID}}, {{rqTm}},\n"
-            "{{channelDateTime}}). Не предлагай для них замену на поля участников.\n"
-            "\n"
-            "Дополнительно опиши шаблон (summary, category, scenarios). В проекте только\n"
-            "JSON денежных переводов: прочитай каждый параметр и сделай summary максимально\n"
-            "точным, в 2–4 предложения. Обязательно отрази: тип перевода по productId\n"
-            "(TDD/A2A — перевод со счёта на счёт; another_int — перевод другому клиенту\n"
-            "этого же банка; another_ext — перевод клиенту в другой банк; если плательщик\n"
-            "и получатель совпадают, укажи перевод самому себе), Подразделение-источник\n"
-            "банка, канал операции, валюту перевода, Комиссию — есть/нет и в какой валюте.\n"
-            "\n"
-            "Отвечай СТРОГО в виде валидного JSON без пояснений:\n"
-            "{\n"
-            "  \"meta\": {\"summary\": str, \"category\": str, \"scenarios\": [str]},\n"
-            "  \"placeholders\": [{\"location\": str, \"suggestion\": str}]\n"
-            "}\n"
+            "Ответь СТРОГО валидным JSON без пояснений:\n"
+            "{\"placeholders\":[{\"leaf\":str,\"field\":str}]}\n"
         )
-        prompt_content = _compact_json_for_prompt(content) if fmt == "json" else content
-        user_payload = {
-            "format": fmt,
-            "template": prompt_content,
-            "leaves": leaves,
-            "catalog": _slim_catalog(catalog),
-        }
-        user_prompt = json.dumps(user_payload, ensure_ascii=False, indent=2)
-        return system_prompt, user_prompt
+
+        id_to_location: dict[str, str] = {}
+        leaf_lines: list[str] = []
+        for idx, leaf in enumerate(leaves, start=1):
+            leaf_id = f"L{idx}"
+            location = leaf.get("location", "")
+            id_to_location[leaf_id] = location
+            value = _format_leaf_value(leaf.get("value", ""))
+            leaf_lines.append(f"{leaf_id}  {location} = {value}")
+
+        catalog_lines = [
+            f"{entry['path']} — {entry['label']}" for entry in _slim_catalog(catalog)
+        ]
+
+        user_prompt = (
+            "Листья шаблона (id, путь, значение):\n"
+            + "\n".join(leaf_lines)
+            + "\n\nКаталог полей (путь — описание):\n"
+            + "\n".join(catalog_lines)
+        )
+        return system_prompt, user_prompt, id_to_location
 
     @staticmethod
     def build_template_meta(*, content: str, fmt: str) -> tuple[str, str]:
@@ -118,6 +131,6 @@ class PromptBuilder:
             "(короткие фразы, описывающие частные случаи использования).\n"
             "Ответ — валидный JSON: {\"summary\": str, \"category\": str, \"scenarios\": [str]}.\n"
         )
-        user_payload = {"format": fmt, "template": content}
-        user_prompt = json.dumps(user_payload, ensure_ascii=False, indent=2)
+        body = _compact_json_for_prompt(content) if fmt == "json" else content
+        user_prompt = f"Формат: {fmt}\n\n{body}"
         return system_prompt, user_prompt

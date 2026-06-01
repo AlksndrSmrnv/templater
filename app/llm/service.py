@@ -25,13 +25,24 @@ class LLMService:
         *,
         content: str,
         fmt: str,
-        leaves: list[str],
+        leaves: list[dict[str, str]],
         catalog: list[dict[str, str]],
     ) -> dict[str, Any]:
+        """Map template leaves to catalog fields and describe the template.
+
+        Runs two focused LLM calls instead of one combined task — a weak model
+        copes far better when each prompt asks for one thing: (1) field mapping,
+        (2) ``meta`` (summary/category/scenarios). ``leaves`` carry both
+        ``location`` and ``value`` so the whole template no longer has to be
+        shipped as a JSON blob.
+        """
+
+        meta = await self.regenerate_meta(content=content, fmt=fmt)
         if not leaves:
-            return {"placeholders": [], "meta": {"summary": "Пустой шаблон"}}
-        system_prompt, user_prompt = self.prompts.build_template_field_mapping(
-            content=content, fmt=fmt, leaves=leaves, catalog=catalog
+            return {"placeholders": [], "meta": meta}
+
+        system_prompt, user_prompt, id_to_location = (
+            self.prompts.build_template_field_mapping(leaves=leaves, catalog=catalog)
         )
         response: ChatResponse = await self.client.chat(system_prompt, user_prompt)
         debug = {
@@ -46,17 +57,24 @@ class LLMService:
                 "response_text[:200]=%r",
                 response.text[:200],
             )
-            return {"placeholders": [], "meta": {}, "debug": debug}
+            return {"placeholders": [], "meta": meta, "debug": debug}
         placeholders = parsed.get("placeholders") or []
-        meta = parsed.get("meta") or {}
+        # Build a value→location index so a model that echoes the raw path (or a
+        # different leaf id) instead of the assigned id still resolves.
+        known_locations = set(id_to_location.values())
         normalized = []
         for item in placeholders:
             if not isinstance(item, dict):
                 continue
-            loc = item.get("location")
-            sug = item.get("suggestion") or None
-            if loc:
-                normalized.append({"location": loc, "suggestion": sug})
+            field = item.get("field") or item.get("suggestion") or None
+            ref = item.get("leaf") or item.get("location")
+            if not isinstance(ref, str) or not ref:
+                continue
+            location = id_to_location.get(ref)
+            if location is None and ref in known_locations:
+                location = ref  # model returned the path itself — accept it
+            if location:
+                normalized.append({"location": location, "suggestion": field})
         return {"placeholders": normalized, "meta": meta, "debug": debug}
 
     async def regenerate_meta(self, *, content: str, fmt: str) -> dict[str, Any]:
