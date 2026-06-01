@@ -119,3 +119,11 @@ async def test_reorder_rejects_mismatched_id_set() -> None:
     svc.session = cast(AsyncSession, _FakeSession())
     with pytest.raises(ValidationFailed, match="не совпадает"):
         await svc.reorder("client", [a.id, uuid.uuid4()])
+
+
+async def test_reorder_rejects_duplicate_ids() -> None:
+    a, b = _attr_with_id("a"), _attr_with_id("b")
+    svc = _service([a, b])
+    svc.session = cast(AsyncSession, _FakeSession())
+    with pytest.raises(ValidationFailed, match="не совпадает"):
+        await svc.reorder("client", [a.id, b.id, a.id])

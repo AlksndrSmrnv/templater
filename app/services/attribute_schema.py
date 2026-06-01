@@ -105,7 +105,7 @@ class AttributeSchemaService:
         await self._check_entity_type(entity_type)
         attrs = await self.attrs.list_by_entity(entity_type)
         existing_ids = {attr.id for attr in attrs}
-        if set(order) != existing_ids:
+        if len(order) != len(existing_ids) or set(order) != existing_ids:
             raise ValidationFailed(
                 "Список атрибутов для сортировки не совпадает с атрибутами этого типа"
             )
