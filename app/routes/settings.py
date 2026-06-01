@@ -24,6 +24,7 @@ from app.schemas.attribute import (
     ALLOWED_TYPES,
     AttributeDefinitionCreate,
     AttributeDefinitionUpdate,
+    AttributeReorder,
 )
 from app.services.attribute_schema import AttributeSchemaService
 from app.services.reference_types import ReferenceTypeService
@@ -243,6 +244,33 @@ async def htmx_attribute_delete(
     return Response(
         status_code=204,
         headers={"HX-Trigger": toast_header("Атрибут удалён", refresh_attributes=True)},
+    )
+
+
+@router.post("/settings-htmx/attributes/reorder")
+async def htmx_attribute_reorder(
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    form = await request.form()
+    raw_order = [item for item in form_str(form, "order").split(",") if item.strip()]
+    try:
+        data = AttributeReorder(entity_type=form_str(form, "entity_type"), order=raw_order)
+    except ValidationError:
+        return form_errors_response(request, templates, "Некорректный список атрибутов")
+    svc = AttributeSchemaService(session)
+    try:
+        await svc.reorder(data.entity_type, data.order)
+    except DomainError as exc:
+        return Response(
+            status_code=exc.status_code,
+            headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
+        )
+    await commit_or_409(session, message="Не удалось изменить порядок атрибутов")
+    return Response(
+        status_code=204,
+        headers={"HX-Trigger": toast_header("Порядок обновлён", refresh_attributes=True)},
     )
 
 

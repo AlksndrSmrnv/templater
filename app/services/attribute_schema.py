@@ -101,6 +101,19 @@ class AttributeSchemaService:
         await self.session.flush()
         return attr
 
+    async def reorder(self, entity_type: str, order: list[uuid.UUID]) -> None:
+        await self._check_entity_type(entity_type)
+        attrs = await self.attrs.list_by_entity(entity_type)
+        existing_ids = {attr.id for attr in attrs}
+        if set(order) != existing_ids:
+            raise ValidationFailed(
+                "Список атрибутов для сортировки не совпадает с атрибутами этого типа"
+            )
+        by_id = {attr.id: attr for attr in attrs}
+        for idx, attr_id in enumerate(order):
+            by_id[attr_id].display_order = (idx + 1) * 10
+        await self.session.flush()
+
     async def delete(self, attr_id: uuid.UUID) -> None:
         attr = await self.attrs.get_by_id(attr_id)
         if attr is None:
