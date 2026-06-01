@@ -1,23 +1,59 @@
-{% macro render_node(node) %}
+{% macro render_node(node, collection_id, path, editable) %}
     {% for folder_name, child in node.folders.items() %}
-    <li class="tree-folder" x-data="{ open: true }">
-        <div class="tree-folder-label" @click="open = !open">
-            <span class="tree-caret" x-text="open ? '▾' : '▸'"></span>
+    {% set fpath = path + [folder_name] %}
+    <li class="tree-folder" x-data="{ open: true, editing: false, creating: false }">
+        <div class="tree-folder-label">
+            <span class="tree-caret" @click="open = !open" x-text="open ? '▾' : '▸'"></span>
             <span class="tree-folder-icon">📁</span>
-            <span class="tree-folder-name">{{ folder_name }}</span>
+            <span class="tree-folder-name" x-show="!editing" @click="open = !open">{{ folder_name }}</span>
+            {% if editable %}
+            <form class="tree-inline-form" x-show="editing" x-cloak
+                  hx-post="/templater/collections/{{ collection_id }}/folders/rename"
+                  hx-target="#collections-tree" hx-swap="innerHTML">
+                <input type="hidden" name="path" value="{{ fpath | tojson | forceescape }}">
+                <input class="tree-rename-input" type="text" name="name" value="{{ folder_name }}"
+                       required x-ref="renameInput"
+                       @click.stop @keydown.escape.stop="editing = false">
+            </form>
+            <span class="tree-folder-actions">
+                <button type="button" class="tree-act" title="Переименовать"
+                        @click.stop="editing = true; $nextTick(() => $refs.renameInput.focus())">✎</button>
+                <button type="button" class="tree-act" title="Новая подпапка"
+                        @click.stop="creating = !creating">📁+</button>
+                <a class="tree-act" title="Новый запрос в этой папке"
+                   href="/templater/templates/new?collection_id={{ collection_id }}&folder={{ fpath | tojson | urlencode }}">+</a>
+                <button type="button" class="tree-act danger" title="Удалить папку (только пустую)"
+                        hx-delete="/templater/collections/{{ collection_id }}/folders"
+                        hx-vals="{{ {'path': (fpath | tojson)} | tojson | forceescape }}"
+                        hx-confirm="Удалить папку «{{ folder_name }}»?"
+                        hx-target="#collections-tree" hx-swap="innerHTML">🗑</button>
+            </span>
+            {% endif %}
         </div>
-        <ul class="tree-list" x-show="open">
-            {{ render_node(child) }}
+        {% if editable %}
+        <form class="tree-inline-form tree-subfolder-form" x-show="creating" x-cloak
+              hx-post="/templater/collections/{{ collection_id }}/folders"
+              hx-target="#collections-tree" hx-swap="innerHTML">
+            <input type="hidden" name="parent" value="{{ fpath | tojson | forceescape }}">
+            <input type="text" name="name" placeholder="Имя подпапки" required @click.stop>
+        </form>
+        {% endif %}
+        <ul class="tree-list" x-show="open"
+            data-collection-id="{{ collection_id }}"
+            data-folder-path="{{ fpath | tojson | forceescape }}">
+            {{ render_node(child, collection_id, fpath, editable) }}
         </ul>
     </li>
     {% endfor %}
     {% for t in node.templates %}
     <li class="tree-item"
+        data-id="{{ t.id }}"
         :class="{ active: selected === '{{ t.id }}' }"
         @click="selected = '{{ t.id }}'"
         hx-get="/templater/templates-htmx/{{ t.id }}/panel"
         hx-target="#template-panel"
         hx-swap="innerHTML">
+        {% if editable %}<span class="tree-drag-handle" title="Перетащите запрос" @click.stop>⠿</span>{% endif %}
         <span class="tree-method method-{{ (t.http_method or '')|lower }}">{{ t.http_method or '·' }}</span>
         <span class="tree-name">{{ t.name }}</span>
         {% if (t.llm_meta or {}).get('import_status') == 'unparsed' %}<span class="tree-flag" title="Тело не разбирается как JSON/XML">⚠</span>{% endif %}
@@ -26,7 +62,7 @@
 {% endmacro %}
 
 {% for cn in collection_nodes %}
-<div class="tree-collection" x-data="{ open: true }">
+<div class="tree-collection" x-data="{ open: true, creating: false }">
     <div class="tree-collection-head">
         <div class="tree-collection-title" @click="open = !open">
             <span class="tree-caret" x-text="open ? '▾' : '▸'"></span>
@@ -35,6 +71,10 @@
             <span class="tree-count">{{ cn.count }}</span>
         </div>
         <div class="tree-collection-actions">
+            <button class="btn small" title="Новая папка"
+                    @click.stop="creating = !creating">📁+</button>
+            <a class="btn small" title="Новый запрос в коллекции"
+               href="/templater/templates/new?collection_id={{ cn.collection.id }}">+</a>
             <button class="btn small"
                     title="Обработать всю коллекцию LLM"
                     hx-post="/templater/collections/{{ cn.collection.id }}/process-llm"
@@ -50,8 +90,15 @@
                     hx-swap="innerHTML">🗑</button>
         </div>
     </div>
-    <ul class="tree-list tree-root" x-show="open">
-        {{ render_node(cn.tree) }}
+    <form class="tree-inline-form" x-show="creating" x-cloak
+          hx-post="/templater/collections/{{ cn.collection.id }}/folders"
+          hx-target="#collections-tree" hx-swap="innerHTML">
+        <input type="hidden" name="parent" value="[]">
+        <input type="text" name="name" placeholder="Имя папки" required>
+    </form>
+    <ul class="tree-list tree-root" x-show="open"
+        data-collection-id="{{ cn.collection.id }}" data-folder-path="[]">
+        {{ render_node(cn.tree, cn.collection.id|string, [], true) }}
     </ul>
 </div>
 {% endfor %}
@@ -66,8 +113,9 @@
             <span class="tree-count">{{ ungrouped_count }}</span>
         </div>
     </div>
-    <ul class="tree-list tree-root" x-show="open">
-        {{ render_node(ungrouped_tree) }}
+    <ul class="tree-list tree-root" x-show="open"
+        data-collection-id="" data-folder-path="[]">
+        {{ render_node(ungrouped_tree, "", [], false) }}
     </ul>
 </div>
 {% endif %}

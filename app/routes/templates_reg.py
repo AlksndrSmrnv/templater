@@ -125,6 +125,10 @@ async def preview_template(data: TemplateCreate, session: AsyncSession) -> dict[
         "llm_debug": result.get("llm_debug"),
         "catalog": await svc.build_field_catalog(),
         "dynamic_tokens": dynamic_token_catalog(),
+        # Carried through to the review form's hidden fields so the saved request
+        # lands in the collection/folder the user started from.
+        "preset_collection_id": str(data.collection_id) if data.collection_id else "",
+        "preset_folder_path": list(data.folder_path or []),
     }
 
 
@@ -196,8 +200,29 @@ def _json_form_value(form: Any, key: str, default: Any) -> Any:
         raise ValidationFailed(f"Поле {key} содержит некорректный JSON") from exc
 
 
+def _placement_from_form(form: Any) -> tuple[uuid.UUID | None, list[str]]:
+    """Read the optional collection/folder placement carried by the new-template
+    form (set by the "+ запрос" buttons in the collections tree)."""
+
+    raw_collection = form_str(form, "collection_id").strip()
+    collection_id: uuid.UUID | None = None
+    if raw_collection:
+        try:
+            collection_id = uuid.UUID(raw_collection)
+        except ValueError:
+            collection_id = None
+    folder_raw = _json_form_value(form, "folder_path", [])
+    folder_path = (
+        [str(seg).strip() for seg in folder_raw if str(seg).strip()]
+        if isinstance(folder_raw, list)
+        else []
+    )
+    return collection_id, folder_path
+
+
 async def _template_create_from_form(request: Request) -> TemplateCreate:
     form = await request.form()
+    collection_id, folder_path = _placement_from_form(form)
     return TemplateCreate(
         name=form_str(form, "name"),
         description=form_str(form, "description"),
@@ -206,16 +231,21 @@ async def _template_create_from_form(request: Request) -> TemplateCreate:
         analyze_with_llm=False,
         placeholders=_json_form_value(form, "placeholders", []),
         llm_meta=_json_form_value(form, "llm_meta", {}),
+        collection_id=collection_id,
+        folder_path=folder_path,
     )
 
 
 async def _template_preview_from_form(request: Request) -> TemplateCreate:
     form = await request.form()
+    collection_id, folder_path = _placement_from_form(form)
     return TemplateCreate(
         name=form_str(form, "name"),
         description=form_str(form, "description"),
         format=form_str(form, "format") or "json",
         content=form_str(form, "content"),
+        collection_id=collection_id,
+        folder_path=folder_path,
     )
 
 
@@ -323,8 +353,33 @@ async def page_list(
 
 
 @router.get("/templates/new")
-async def page_new(request: Request, templates: Jinja2Templates = TemplatesDep) -> Response:
-    return templates.TemplateResponse(request, "templates_reg/upload.html", {"active": "templates"})
+async def page_new(
+    request: Request,
+    collection_id: str = "",
+    folder: str = "",
+    templates: Jinja2Templates = TemplatesDep,
+) -> Response:
+    # ``folder`` is a JSON array of path segments coming from the "+ запрос"
+    # buttons in the collections tree; surfaced to the form as hidden fields so
+    # the created request lands in the right collection/folder.
+    folder_path: list[str] = []
+    if folder.strip():
+        try:
+            value = json.loads(folder)
+            if isinstance(value, list):
+                folder_path = [str(seg).strip() for seg in value if str(seg).strip()]
+        except ValueError:
+            folder_path = []
+    return templates.TemplateResponse(
+        request,
+        "templates_reg/upload.html",
+        {
+            "active": "templates",
+            "preset_collection_id": collection_id.strip(),
+            "preset_folder_path": folder_path,
+            "preset_folder_label": " / ".join(folder_path),
+        },
+    )
 
 
 @router.get("/templates/{template_id}")

@@ -59,3 +59,64 @@
     </section>
 </div>
 {% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/sortablejs@1.15.6/Sortable.min.js"
+        integrity="sha384-HZZ/fukV+9G8gwTNjN7zQDG0Sp7MsZy5DDN6VfY3Be7V9dvQpEpR2jF2HlyFUUjU"
+        crossorigin="anonymous"></script>
+<script>
+    (function () {
+        let instances = [];
+
+        function destroyTreeSortables() {
+            instances.forEach((s) => { try { s.destroy(); } catch (e) {} });
+            instances = [];
+        }
+
+        function initTreeSortables() {
+            const root = document.getElementById('collections-tree');
+            if (!root || !window.Sortable) return;
+            destroyTreeSortables();
+            // Every folder list (and each collection root) is a drop target; a shared
+            // group lets requests move across folders and across collections.
+            root.querySelectorAll('ul.tree-list').forEach((ul) => {
+                instances.push(Sortable.create(ul, {
+                    group: 'tree',
+                    handle: '.tree-drag-handle',
+                    draggable: '.tree-item',
+                    animation: 150,
+                    fallbackOnBody: true,
+                    ghostClass: 'sortable-ghost',
+                    chosenClass: 'sortable-chosen',
+                    onEnd(evt) {
+                        const item = evt.item;
+                        const id = item && item.dataset ? item.dataset.id : '';
+                        const target = evt.to;
+                        if (!id || !target) return;
+                        const order = Array.from(
+                            target.querySelectorAll(':scope > li.tree-item')
+                        ).map((li) => li.dataset.id).filter(Boolean);
+                        htmx.ajax('POST', '/templater/collections/move-request', {
+                            values: {
+                                template_id: id,
+                                collection_id: target.dataset.collectionId || '',
+                                folder: target.dataset.folderPath || '[]',
+                                order: order.join(','),
+                            },
+                            target: '#collections-tree',
+                            swap: 'innerHTML',
+                        });
+                    },
+                }));
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', initTreeSortables);
+        // The tree is re-rendered by htmx (search, import, folder ops, moves) —
+        // rebuild Sortable on the fresh DOM.
+        document.body.addEventListener('htmx:afterSwap', function (e) {
+            if (e.detail.target && e.detail.target.id === 'collections-tree') initTreeSortables();
+        });
+    })();
+</script>
+{% endblock %}

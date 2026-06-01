@@ -195,6 +195,8 @@ class TemplateService:
             original_content=data.content,
             llm_meta={},
             placeholders=[],
+            collection_id=data.collection_id,
+            folder_path=[str(seg) for seg in (data.folder_path or [])],
         )
         await self.repo.add(template)
         return template

@@ -202,6 +202,12 @@ class Collection(Base):
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="postman")
     source_format: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     variables: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    # Explicit folder paths (each path = list of segments, e.g. ["Transfers", "A2A"]).
+    # Templates carry their own ``folder_path`` for membership, but that alone can't
+    # represent an *empty* folder — without this the folder would vanish on the next
+    # tree rebuild. So created/renamed folders are persisted here, giving folder
+    # rename/delete a home and letting the workspace tree show empty folders.
+    folders: Mapped[list[list[str]]] = mapped_column(JSONB, nullable=False, default=list)
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 

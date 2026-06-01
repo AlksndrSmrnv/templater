@@ -32,6 +32,13 @@
           @htmx:before-request="showFormErrors = false"
           @htmx:after-swap="showFormErrors = $event.detail.target === $refs.errors">
         <div id="form-errors" class="errors" x-ref="errors" x-show="showFormErrors"></div>
+        <input type="hidden" name="collection_id" value="{{ preset_collection_id | default('') }}">
+        <input type="hidden" name="folder_path" value="{{ (preset_folder_path | default([])) | tojson | forceescape }}">
+        {% if preset_folder_label | default('') %}
+        <div class="form-section">
+            <p class="muted" style="margin:0;">📁 Новый запрос будет создан в папке: <strong>{{ preset_folder_label }}</strong></p>
+        </div>
+        {% endif %}
         <div class="form-section">
             <label>Имя <span class="required-mark">*</span>
                 <input type="text" name="name" required>

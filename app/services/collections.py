@@ -46,12 +46,17 @@ def _new_node() -> dict[str, Any]:
     return {"folders": {}, "templates": []}
 
 
-def build_folder_tree(templates: list[MessageTemplate]) -> dict[str, Any]:
+def build_folder_tree(
+    templates: list[MessageTemplate],
+    extra_folders: list[list[str]] | None = None,
+) -> dict[str, Any]:
     """Group templates into a nested ``{"folders": {...}, "templates": [...]}``.
 
     Folders come from each template's materialised ``folder_path``. Order within
     a level follows ``display_order`` then ``created_at`` (preserving import
-    order). Consumed by ``partials/collections_tree.html`` via a recursive macro.
+    order). ``extra_folders`` (a collection's explicit folder paths) are seeded
+    into the tree even when empty, so folders with no requests still appear.
+    Consumed by ``partials/collections_tree.html`` via a recursive macro.
     """
 
     root = _new_node()
@@ -61,7 +66,56 @@ def build_folder_tree(templates: list[MessageTemplate]) -> dict[str, Any]:
         for folder in template.folder_path or []:
             node = node["folders"].setdefault(str(folder), _new_node())
         node["templates"].append(template)
+    for path in extra_folders or []:
+        node = root
+        for folder in path:
+            node = node["folders"].setdefault(str(folder), _new_node())
     return root
+
+
+def _norm_path(path: list[Any] | None) -> list[str]:
+    """Coerce a folder path into a list of non-empty string segments."""
+
+    return [str(seg).strip() for seg in (path or []) if str(seg).strip()]
+
+
+def _starts_with(path: list[str], prefix: list[str]) -> bool:
+    return path[: len(prefix)] == prefix
+
+
+def _all_folder_paths(
+    collection_folders: list[list[str]],
+    templates: list[MessageTemplate],
+) -> set[tuple[str, ...]]:
+    """Every folder path that exists in a collection, including intermediate
+    prefixes — both explicit (``Collection.folders``) and the ones implied by
+    template ``folder_path`` values."""
+
+    paths: set[tuple[str, ...]] = set()
+    sources: list[list[str]] = list(collection_folders or [])
+    sources.extend((t.folder_path or []) for t in templates)
+    for raw in sources:
+        segments = _norm_path(raw)
+        for i in range(1, len(segments) + 1):
+            paths.add(tuple(segments[:i]))
+    return paths
+
+
+def _distinct_folder_paths(requests: list[Any]) -> list[list[str]]:
+    """Unique folder paths (including intermediate prefixes) implied by a set of
+    parsed requests, in first-seen order — used to seed ``Collection.folders`` at
+    import so the structure (incl. otherwise-empty parent folders) is captured."""
+
+    seen: set[tuple[str, ...]] = set()
+    out: list[list[str]] = []
+    for request in requests:
+        segments = _norm_path(list(getattr(request, "folder_path", []) or []))
+        for i in range(1, len(segments) + 1):
+            key = tuple(segments[:i])
+            if key not in seen:
+                seen.add(key)
+                out.append(list(key))
+    return out
 
 
 class CollectionService:
@@ -104,7 +158,7 @@ class CollectionService:
                 {
                     "collection": collection,
                     "count": len(items),
-                    "tree": build_folder_tree(items),
+                    "tree": build_folder_tree(items, extra_folders=collection.folders),
                 }
             )
         return {
@@ -128,6 +182,7 @@ class CollectionService:
             source=parsed.source,
             source_format=parsed.source_format,
             variables=parsed.variables,
+            folders=_distinct_folder_paths(parsed.requests),
         )
         await self.repo.add(collection)
 
@@ -164,6 +219,124 @@ class CollectionService:
         removed = await self.templates.delete_by_collection(collection_id)
         await self.repo.delete(collection)
         return removed
+
+    async def create_folder(
+        self, collection_id: uuid.UUID, parent_path: list[str], name: str
+    ) -> list[str]:
+        """Add an (initially empty) folder under ``parent_path``. Persisted on the
+        collection so it survives until requests are dropped into it."""
+
+        collection = await self.get(collection_id)
+        parent = _norm_path(parent_path)
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValidationFailed("Имя папки не может быть пустым")
+        new_path = [*parent, clean_name]
+        templates = await self.templates.list_by_collection(collection_id)
+        existing = _all_folder_paths(collection.folders, templates)
+        if tuple(new_path) in existing:
+            raise ValidationFailed("Папка с таким именем уже существует")
+        collection.folders = [*collection.folders, new_path]
+        await self.session.flush()
+        return new_path
+
+    async def rename_folder(
+        self, collection_id: uuid.UUID, path: list[str], new_name: str
+    ) -> list[str]:
+        """Rename the folder at ``path`` to ``new_name``, re-prefixing every
+        descendant folder path on both templates and the explicit folder list."""
+
+        collection = await self.get(collection_id)
+        old_path = _norm_path(path)
+        if not old_path:
+            raise ValidationFailed("Не указана папка для переименования")
+        clean_name = new_name.strip()
+        if not clean_name:
+            raise ValidationFailed("Имя папки не может быть пустым")
+        new_path = [*old_path[:-1], clean_name]
+        if new_path == old_path:
+            return new_path
+
+        templates = await self.templates.list_by_collection(collection_id)
+        # Collision: a sibling/other folder already occupies the new path. Exclude
+        # the folder being renamed and its descendants from the check.
+        others = {
+            p
+            for p in _all_folder_paths(collection.folders, templates)
+            if not _starts_with(list(p), old_path)
+        }
+        if tuple(new_path) in others:
+            raise ValidationFailed("Папка с таким именем уже существует")
+
+        for template in templates:
+            fp = _norm_path(template.folder_path)
+            if _starts_with(fp, old_path):
+                template.folder_path = [*new_path, *fp[len(old_path):]]
+
+        updated_folders: list[list[str]] = []
+        for raw in collection.folders:
+            segments = _norm_path(raw)
+            if _starts_with(segments, old_path):
+                updated_folders.append([*new_path, *segments[len(old_path):]])
+            else:
+                updated_folders.append(segments)
+        collection.folders = updated_folders
+        await self.session.flush()
+        return new_path
+
+    async def delete_folder(self, collection_id: uuid.UUID, path: list[str]) -> None:
+        """Delete an empty folder. Refuses if any request or sub-folder lives under
+        it — the caller must move/remove the contents first."""
+
+        collection = await self.get(collection_id)
+        target = _norm_path(path)
+        if not target:
+            raise ValidationFailed("Не указана папка для удаления")
+        templates = await self.templates.list_by_collection(collection_id)
+        has_templates = any(
+            _starts_with(_norm_path(t.folder_path), target) for t in templates
+        )
+        has_children = any(
+            len(p := _norm_path(raw)) > len(target) and _starts_with(p, target)
+            for raw in collection.folders
+        )
+        if has_templates or has_children:
+            raise ValidationFailed(
+                "Папка не пуста — сначала переместите или удалите вложенные запросы и папки"
+            )
+        collection.folders = [
+            segments for raw in collection.folders if (segments := _norm_path(raw)) != target
+        ]
+        await self.session.flush()
+
+    async def move_request(
+        self,
+        template_id: uuid.UUID,
+        target_collection_id: uuid.UUID | None,
+        target_folder_path: list[str],
+        order: list[uuid.UUID],
+    ) -> None:
+        """Move a request into ``target_folder_path`` of ``target_collection_id``
+        (``None`` = ungrouped) and renumber ``display_order`` for the target
+        folder's siblings according to ``order``. Handles intra-folder reorder,
+        moves between folders and moves between collections in one call."""
+
+        template = await self.templates.get(template_id)
+        if template is None:
+            raise NotFoundError("Шаблон не найден")
+        if target_collection_id is not None:
+            await self.get(target_collection_id)  # 404 if missing
+
+        template.collection_id = target_collection_id
+        template.folder_path = _norm_path(target_folder_path)
+
+        if order:
+            siblings = {t.id: t for t in await self.templates.get_many(order)}
+            for idx, sibling_id in enumerate(order):
+                sibling = siblings.get(sibling_id)
+                if sibling is not None:
+                    sibling.display_order = idx
+        await self.session.flush()
 
     async def process_collection_llm(self, collection_id: uuid.UUID) -> ProcessCollectionSummary:
         """Run LLM analysis across every parsable template of a collection.
