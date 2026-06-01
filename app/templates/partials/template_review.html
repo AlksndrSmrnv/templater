@@ -8,6 +8,8 @@
     <input type="hidden" name="format" value="{{ format }}">
     <input type="hidden" name="content" value="{{ original_content }}">
     <input type="hidden" name="llm_meta" value="{{ llm_meta | tojson | forceescape }}">
+    <input type="hidden" name="collection_id" value="{{ preset_collection_id | default('') }}">
+    <input type="hidden" name="folder_path" value="{{ (preset_folder_path | default([])) | tojson | forceescape }}">
 
     <div style="display:flex; gap:24px; margin-bottom:14px; flex-wrap: wrap;">
         <div style="flex:1; min-width:260px;">

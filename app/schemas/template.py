@@ -17,6 +17,10 @@ class TemplateCreate(TemplateBase):
     analyze_with_llm: bool = True
     placeholders: list[dict[str, Any]] | None = None
     llm_meta: dict[str, Any] | None = None
+    # Optional placement: drop the new request straight into a collection folder
+    # (used by the "+ запрос" buttons in the collections tree).
+    collection_id: uuid.UUID | None = None
+    folder_path: list[str] = Field(default_factory=list)
 
 
 class TemplateUpdate(BaseModel):

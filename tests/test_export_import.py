@@ -234,6 +234,9 @@ async def test_template_roundtrip_preserves_collection_metadata() -> None:
     coll = SimpleNamespace(
         id=coll_id, name="Demo", description="", source="postman",
         source_format="v2.1.0", variables=[],
+        # "Reports/Daily" holds no templates — it only survives the round-trip if
+        # Collection.folders is exported and re-imported.
+        folders=[["Transfers"], ["Reports"], ["Reports", "Daily"]],
     )
 
     package = {
@@ -268,6 +271,8 @@ async def test_template_roundtrip_preserves_collection_metadata() -> None:
 
     collections = [c for c in session.added if isinstance(c, Collection)]
     assert len(collections) == 1 and collections[0].source_format == "v2.1.0"
+    # Empty folders preserved through export → import.
+    assert ["Reports", "Daily"] in collections[0].folders
 
 
 @pytest.mark.asyncio
