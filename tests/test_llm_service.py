@@ -39,7 +39,10 @@ async def test_analyze_template_parses_valid_json() -> None:
     assert result["placeholders"] == [{"location": "/fullName", "suggestion": "sender.fullName"}]
     assert result["debug"]["system_prompt"]
     assert result["debug"]["user_prompt"]
-    assert result["debug"]["response_text"] == mapping_text
+    # Debug surfaces BOTH calls — meta and mapping prompt/response.
+    assert mapping_text in result["debug"]["response_text"]
+    assert meta_text in result["debug"]["response_text"]
+    assert "meta" in result["debug"]["system_prompt"]
 
 
 @pytest.mark.asyncio
@@ -53,7 +56,7 @@ async def test_analyze_template_handles_garbled_mapping_response() -> None:
     assert result["placeholders"] == []
     assert result["meta"] == {}
     assert result["debug"]["system_prompt"]
-    assert result["debug"]["response_text"] == "это просто текст, не JSON"
+    assert "это просто текст, не JSON" in result["debug"]["response_text"]
 
 
 @pytest.mark.asyncio
@@ -135,3 +138,7 @@ async def test_analyze_template_without_leaves_skips_mapping_call() -> None:
     assert result["meta"]["summary"] == "пусто"
     # Only the meta call happened — no mapping call.
     assert len(client.calls) == 1
+    # The meta call still hit the LLM, so its debug must be surfaced (otherwise
+    # llm_used would wrongly report False and the prompt couldn't be diagnosed).
+    assert result["debug"]["response_text"] == '{"summary": "пусто"}'
+    assert result["debug"]["system_prompt"]
