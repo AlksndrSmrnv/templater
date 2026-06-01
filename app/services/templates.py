@@ -221,6 +221,8 @@ class TemplateService:
             template.content = data.content
             template.original_content = data.content
             template.placeholders = []
+            # New body ⇒ the old prompts/response describe a different document.
+            template.llm_debug = None
             content_replaced = True
         if data.llm_meta is not None:
             template.llm_meta = data.llm_meta
@@ -294,6 +296,9 @@ class TemplateService:
         template.content = result["content"]
         template.placeholders = result["placeholders"]
         template.llm_meta = result["llm_meta"]
+        # Persist the LLM prompts/response so they stay viewable later — e.g.
+        # after a bulk "process collection" run from the collections menu.
+        template.llm_debug = result.get("llm_debug")
         await self.session.flush()
         return template
 
@@ -341,10 +346,18 @@ class TemplateService:
         catalog_by_lower = {entry["path"].lower(): entry["path"] for entry in catalog}
 
         if llm_service is not None:
+            # Envelope leaves (rqUID/operUID/rqTm/channelDateTime) are substituted
+            # deterministically below, so don't waste the prompt asking the LLM
+            # about them — its answer for these is ignored anyway.
+            mappable = [
+                {"location": leaf.location, "value": leaf.value}
+                for leaf in leaves
+                if resolve_dynamic_token(leaf.location) is None
+            ]
             result = await llm_service.analyze_template(
                 content=original_content,
                 fmt=fmt,
-                leaves=[leaf.location for leaf in leaves],
+                leaves=mappable,
                 catalog=catalog,
             )
             llm_mappings = self._llm_mappings_by_leaf(leaves, result.get("placeholders", []))
@@ -702,6 +715,10 @@ class TemplateService:
             **(template.llm_meta or {}),
             "has_account_owner": placeholders_have_account_owner(template.placeholders),
         }
+        # Manual, non-LLM save: the previously captured prompts/response no longer
+        # correspond to the saved placeholders, so drop the now-stale debug rather
+        # than leave a misleading record (re-run "Обработать LLM" to refresh it).
+        template.llm_debug = None
         template.content = self.regenerate_content(template)
         await self.session.flush()
         return template

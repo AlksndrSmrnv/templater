@@ -160,6 +160,72 @@ async def test_analyze_content_returns_preview_without_mutating_model() -> None:
 
 
 @pytest.mark.asyncio
+async def test_analyze_persists_llm_debug_on_template() -> None:
+    # The debug must be stored on the template so it stays viewable after the
+    # fact — e.g. once a template was processed in bulk from the collections menu.
+    class FakeSession:
+        async def flush(self) -> None:
+            return None
+
+    svc = TemplateService(cast(Any, FakeSession()))
+    debug = {"system_prompt": "sys", "user_prompt": "usr", "response_text": "resp"}
+
+    async def fake_analyze_content(
+        *, fmt: str, original_content: str, llm_service: Any | None = None
+    ) -> dict[str, Any]:
+        return {
+            "content": original_content,
+            "placeholders": [],
+            "llm_meta": {"summary": "ok"},
+            "llm_debug": debug,
+        }
+
+    svc.analyze_content = fake_analyze_content  # type: ignore[method-assign]
+
+    template = SimpleNamespace(
+        format="json",
+        content='{"a":"x"}',
+        original_content='{"a":"x"}',
+        placeholders=[],
+        llm_meta={},
+        llm_debug=None,
+    )
+
+    await svc.analyze(cast(Any, template))
+
+    assert template.llm_debug == debug
+
+
+@pytest.mark.asyncio
+async def test_update_placeholders_clears_stale_llm_debug() -> None:
+    # A manual editor save must drop the previously captured LLM debug — the
+    # saved placeholders may have been hand-edited, so the old prompts/response
+    # no longer describe the saved state.
+    class FakeSession:
+        async def flush(self) -> None:
+            return None
+
+    svc = TemplateService(cast(Any, FakeSession()))
+    template = SimpleNamespace(
+        format="json",
+        content='{"a":"x"}',
+        original_content='{"a":"x"}',
+        placeholders=[],
+        llm_meta={"summary": "ok"},
+        llm_debug={"system_prompt": "sys", "user_prompt": "u", "response_text": "r"},
+    )
+
+    async def fake_get(tid: Any) -> Any:
+        return template
+
+    svc.get = fake_get  # type: ignore[method-assign, assignment]
+
+    await svc.update_placeholders(cast(Any, None), [])
+
+    assert template.llm_debug is None
+
+
+@pytest.mark.asyncio
 async def test_analyze_content_propagates_llm_debug() -> None:
     svc = TemplateService(cast(Any, SimpleNamespace()))
     debug = {
@@ -177,10 +243,10 @@ async def test_analyze_content_propagates_llm_debug() -> None:
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
-            assert leaves == ["/note"]
+            assert leaves == [{"location": "/note", "value": "x"}]
             return {"meta": {"summary": "llm"}, "placeholders": [], "debug": debug}
 
     svc.build_field_catalog = fake_catalog  # type: ignore[method-assign]
@@ -446,7 +512,7 @@ async def test_analyze_content_uses_path_role_with_llm_attribute() -> None:
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -478,7 +544,7 @@ async def test_analyze_content_resolves_llm_suggestion_case_insensitively() -> N
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -514,7 +580,7 @@ async def test_analyze_content_keeps_account_owner_role_for_llm_ucp_id_attribute
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -556,7 +622,7 @@ async def test_analyze_content_falls_back_for_account_owner_llm_suggestion_witho
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -601,7 +667,7 @@ async def test_analyze_content_falls_back_for_account_owner_nested_llm_suggestio
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -646,7 +712,7 @@ async def test_analyze_content_falls_back_for_account_owner_synonym_llm_suggesti
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -691,7 +757,7 @@ async def test_analyze_content_maps_deep_nested_account_owner_field_by_role_not_
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -748,7 +814,7 @@ async def test_analyze_content_maps_account_owner_surname_from_exact_llm_locatio
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {
@@ -807,7 +873,7 @@ async def test_analyze_content_uses_nested_account_owner_llm_leaf_attribute() ->
             *,
             content: str,
             fmt: str,
-            leaves: list[str],
+            leaves: list[dict[str, str]],
             catalog: list[dict[str, str]],
         ) -> dict[str, Any]:
             return {

@@ -25,20 +25,37 @@ class LLMService:
         *,
         content: str,
         fmt: str,
-        leaves: list[str],
+        leaves: list[dict[str, str]],
         catalog: list[dict[str, str]],
     ) -> dict[str, Any]:
+        """Map template leaves to catalog fields and describe the template.
+
+        Runs two focused LLM calls instead of one combined task — a weak model
+        copes far better when each prompt asks for one thing: (1) field mapping,
+        (2) ``meta`` (summary/category/scenarios). ``leaves`` carry both
+        ``location`` and ``value`` so the whole template no longer has to be
+        shipped as a JSON blob.
+        """
+
+        meta, meta_debug = await self._describe_template(content=content, fmt=fmt)
         if not leaves:
-            return {"placeholders": [], "meta": {"summary": "Пустой шаблон"}}
-        system_prompt, user_prompt = self.prompts.build_template_field_mapping(
-            content=content, fmt=fmt, leaves=leaves, catalog=catalog
+            # The meta call still hit the LLM even without mappable leaves
+            # (e.g. envelope-only templates) — surface its debug so ``llm_used``
+            # reflects reality and the prompt/response stay diagnosable.
+            return {"placeholders": [], "meta": meta, "debug": meta_debug}
+
+        system_prompt, user_prompt, id_to_location = (
+            self.prompts.build_template_field_mapping(leaves=leaves, catalog=catalog)
         )
         response: ChatResponse = await self.client.chat(system_prompt, user_prompt)
-        debug = {
-            "system_prompt": system_prompt,
-            "user_prompt": user_prompt,
-            "response_text": response.text,
-        }
+        debug = self._merge_debug(
+            meta=meta_debug,
+            mapping={
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "response_text": response.text,
+            },
+        )
         parsed = self._parse_json(response.text)
         if not isinstance(parsed, dict):
             log.warning(
@@ -46,26 +63,64 @@ class LLMService:
                 "response_text[:200]=%r",
                 response.text[:200],
             )
-            return {"placeholders": [], "meta": {}, "debug": debug}
+            return {"placeholders": [], "meta": meta, "debug": debug}
         placeholders = parsed.get("placeholders") or []
-        meta = parsed.get("meta") or {}
+        # Build a value→location index so a model that echoes the raw path (or a
+        # different leaf id) instead of the assigned id still resolves.
+        known_locations = set(id_to_location.values())
         normalized = []
         for item in placeholders:
             if not isinstance(item, dict):
                 continue
-            loc = item.get("location")
-            sug = item.get("suggestion") or None
-            if loc:
-                normalized.append({"location": loc, "suggestion": sug})
+            field = item.get("field") or item.get("suggestion") or None
+            ref = item.get("leaf") or item.get("location")
+            if not isinstance(ref, str) or not ref:
+                continue
+            location = id_to_location.get(ref)
+            if location is None and ref in known_locations:
+                location = ref  # model returned the path itself — accept it
+            if location:
+                normalized.append({"location": location, "suggestion": field})
         return {"placeholders": normalized, "meta": meta, "debug": debug}
 
     async def regenerate_meta(self, *, content: str, fmt: str) -> dict[str, Any]:
+        meta, _ = await self._describe_template(content=content, fmt=fmt)
+        return meta
+
+    async def _describe_template(
+        self, *, content: str, fmt: str
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        """Run the meta (summary/category/scenarios) LLM call.
+
+        Returns ``(meta, debug)`` so callers can both use the description and
+        surface the prompt/response — the meta call hits the LLM just like the
+        mapping call and must be diagnosable from the debug panel.
+        """
+
         system_prompt, user_prompt = self.prompts.build_template_meta(content=content, fmt=fmt)
         response = await self.client.chat(system_prompt, user_prompt)
+        debug = {
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "response_text": response.text,
+        }
         parsed = self._parse_json(response.text)
-        if isinstance(parsed, dict):
-            return parsed
-        return {"summary": response.text[:300]}
+        meta = parsed if isinstance(parsed, dict) else {"summary": response.text[:300]}
+        return meta, debug
+
+    @staticmethod
+    def _merge_debug(*, meta: dict[str, str], mapping: dict[str, str]) -> dict[str, str]:
+        """Combine the meta and mapping debug into the flat shape the debug
+        panel renders, with a labelled section per LLM call."""
+
+        keys = ("system_prompt", "user_prompt", "response_text")
+        return {
+            key: (
+                f"### Описание шаблона (meta)\n{meta.get(key, '')}\n\n"
+                f"### Разметка полей (placeholders)\n{mapping.get(key, '')}"
+            )
+            for key in keys
+        }
 
     @staticmethod
     def _parse_json(text: str) -> Any:

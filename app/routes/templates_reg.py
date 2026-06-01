@@ -167,6 +167,9 @@ async def _template_panel_context(session: AsyncSession, template: Any) -> dict[
     context["headers"] = template.headers or []
     context["has_account_owner"] = template_has_account_owner(template)
     context["filled_links"] = await FilledTemplateRepository(session).list_by_template(template.id)
+    # Show the LLM prompts/response captured at the last analysis (incl. bulk
+    # collection processing) so it can be inspected from the collections menu.
+    context["llm_debug"] = getattr(template, "llm_debug", None)
     return context
 
 
@@ -177,7 +180,9 @@ async def _template_editor_context(
     llm_debug: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     context = await _template_code_context(session, template)
-    context["llm_debug"] = llm_debug
+    # Fall back to the debug stored on the template when no fresh one is passed
+    # (e.g. opening the editor after a bulk collection run).
+    context["llm_debug"] = llm_debug if llm_debug is not None else getattr(template, "llm_debug", None)
     return context
 
 

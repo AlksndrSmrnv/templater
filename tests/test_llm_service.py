@@ -5,60 +5,67 @@ import pytest
 from app.llm.models import ChatResponse, TokenUsage
 from app.llm.service import LLMService
 
+# analyze_template now makes TWO calls in order: (1) meta, (2) field mapping.
+# FakeClient hands out responses in that order; with a single response it
+# returns the same text for every call.
+
 
 class FakeClient:
-    def __init__(self, response_text: str) -> None:
-        self.response_text = response_text
+    def __init__(self, *responses: str) -> None:
+        self.responses = list(responses)
         self.calls: list[tuple[str, str]] = []
 
     async def chat(self, system_prompt: str, user_prompt: str) -> ChatResponse:
+        idx = len(self.calls)
         self.calls.append((system_prompt, user_prompt))
-        return ChatResponse(text=self.response_text, token_usage=TokenUsage(1, 2, 3))
+        text = self.responses[idx] if idx < len(self.responses) else self.responses[-1]
+        return ChatResponse(text=text, token_usage=TokenUsage(1, 2, 3))
+
+
+_LEAF = [{"location": "/fullName", "value": "X"}]
+_CATALOG = [{"path": "sender.fullName", "label": "Sender", "data_type": "string"}]
 
 
 @pytest.mark.asyncio
 async def test_analyze_template_parses_valid_json() -> None:
-    response_text = (
-        '{"meta": {"summary": "X", "category": "transfer", "scenarios": ["a"]},'
-        ' "placeholders": [{"location": "/fullName", "suggestion": "sender.fullName"}]}'
-    )
-    client = FakeClient(response_text)
+    meta_text = '{"summary": "X", "category": "transfer", "scenarios": ["a"]}'
+    mapping_text = '{"placeholders": [{"leaf": "L1", "field": "sender.fullName"}]}'
+    client = FakeClient(meta_text, mapping_text)
     service = LLMService(client)
     result = await service.analyze_template(
-        content='{"fullName":"X"}',
-        fmt="json",
-        leaves=["/fullName"],
-        catalog=[{"path": "sender.fullName", "label": "Sender", "data_type": "string"}],
+        content='{"fullName":"X"}', fmt="json", leaves=_LEAF, catalog=_CATALOG,
     )
     assert result["meta"]["category"] == "transfer"
     assert result["placeholders"] == [{"location": "/fullName", "suggestion": "sender.fullName"}]
     assert result["debug"]["system_prompt"]
     assert result["debug"]["user_prompt"]
-    assert result["debug"]["response_text"] == response_text
+    # Debug surfaces BOTH calls — meta and mapping prompt/response.
+    assert mapping_text in result["debug"]["response_text"]
+    assert meta_text in result["debug"]["response_text"]
+    assert "meta" in result["debug"]["system_prompt"]
 
 
 @pytest.mark.asyncio
-async def test_analyze_template_handles_garbled_response() -> None:
-    # LLM returned non-JSON: service should not raise.
-    response_text = "это просто текст, не JSON"
-    client = FakeClient(response_text)
+async def test_analyze_template_handles_garbled_mapping_response() -> None:
+    # Mapping LLM returned non-JSON: service must not raise, placeholders empty.
+    client = FakeClient("{}", "это просто текст, не JSON")
     service = LLMService(client)
     result = await service.analyze_template(
-        content="{}", fmt="json", leaves=["/a"], catalog=[],
+        content="{}", fmt="json", leaves=[{"location": "/a", "value": "1"}], catalog=[],
     )
     assert result["placeholders"] == []
     assert result["meta"] == {}
     assert result["debug"]["system_prompt"]
-    assert result["debug"]["user_prompt"]
-    assert result["debug"]["response_text"] == response_text
+    assert "это просто текст, не JSON" in result["debug"]["response_text"]
 
 
 @pytest.mark.asyncio
-async def test_analyze_template_recovers_json_substring() -> None:
-    client = FakeClient('Извините, вот мой ответ: {"meta": {"summary": "S"}, "placeholders": []} спасибо!')
+async def test_analyze_template_recovers_meta_json_substring() -> None:
+    meta_text = 'Извините, вот мой ответ: {"summary": "S"} спасибо!'
+    client = FakeClient(meta_text, '{"placeholders": []}')
     service = LLMService(client)
     result = await service.analyze_template(
-        content="{}", fmt="json", leaves=["/a"], catalog=[],
+        content="{}", fmt="json", leaves=[{"location": "/a", "value": "1"}], catalog=[],
     )
     assert result["meta"]["summary"] == "S"
 
@@ -67,39 +74,27 @@ async def test_analyze_template_recovers_json_substring() -> None:
 async def test_analyze_template_strips_markdown_fences() -> None:
     # GigaChat habitually wraps its JSON in a ```json … ``` fence even though
     # the system prompt asks for raw JSON. Parser must tolerate it.
-    response_text = (
+    mapping_text = (
         "```json\n"
-        '{"meta": {"summary": "перевод со счёта на счёт", "category": "transfer", "scenarios": ["a"]},'
-        ' "placeholders": [{"location": "/fullName", "suggestion": "sender.fullName"}]}\n'
+        '{"placeholders": [{"leaf": "L1", "field": "sender.fullName"}]}\n'
         "```"
     )
-    client = FakeClient(response_text)
+    client = FakeClient('{"summary": "S"}', mapping_text)
     service = LLMService(client)
     result = await service.analyze_template(
-        content='{"fullName":"X"}',
-        fmt="json",
-        leaves=["/fullName"],
-        catalog=[{"path": "sender.fullName", "label": "Sender", "data_type": "string"}],
+        content='{"fullName":"X"}', fmt="json", leaves=_LEAF, catalog=_CATALOG,
     )
-    assert result["meta"]["summary"] == "перевод со счёта на счёт"
     assert result["placeholders"] == [{"location": "/fullName", "suggestion": "sender.fullName"}]
 
 
 @pytest.mark.asyncio
 async def test_analyze_template_parses_trailing_commas() -> None:
-    response_text = (
-        '{"meta": {"summary": "X", "category": "transfer", "scenarios": ["a"],},'
-        ' "placeholders": [{"location": "/fullName", "suggestion": "sender.fullName",},],}'
-    )
-    client = FakeClient(response_text)
+    mapping_text = '{"placeholders": [{"leaf": "L1", "field": "sender.fullName",},],}'
+    client = FakeClient('{"summary": "S"}', mapping_text)
     service = LLMService(client)
     result = await service.analyze_template(
-        content='{"fullName":"X"}',
-        fmt="json",
-        leaves=["/fullName"],
-        catalog=[{"path": "sender.fullName", "label": "Sender", "data_type": "string"}],
+        content='{"fullName":"X"}', fmt="json", leaves=_LEAF, catalog=_CATALOG,
     )
-    assert result["meta"]["summary"] == "X"
     assert result["placeholders"] == [{"location": "/fullName", "suggestion": "sender.fullName"}]
 
 
@@ -107,20 +102,43 @@ async def test_analyze_template_parses_trailing_commas() -> None:
 async def test_analyze_template_handles_fence_with_trailing_commas() -> None:
     # Worst-case real response: fenced AND with trailing commas. Also missing
     # closing fence — simulates a response truncated at the token limit.
-    response_text = (
+    mapping_text = (
         "```json\n"
-        '{"meta": {"summary": "перевод", "category": "transfer", "scenarios": ["a", "b",],},'
-        ' "placeholders": [{"location": "/fullName", "suggestion": "sender.fullName",},],}\n'
+        '{"placeholders": [{"leaf": "L1", "field": "sender.fullName",},],}\n'
         "```"
     )
-    client = FakeClient(response_text)
+    client = FakeClient('{"summary": "S"}', mapping_text)
     service = LLMService(client)
     result = await service.analyze_template(
-        content='{"fullName":"X"}',
-        fmt="json",
-        leaves=["/fullName"],
-        catalog=[{"path": "sender.fullName", "label": "Sender", "data_type": "string"}],
+        content='{"fullName":"X"}', fmt="json", leaves=_LEAF, catalog=_CATALOG,
     )
-    assert result["meta"]["category"] == "transfer"
-    assert result["meta"]["scenarios"] == ["a", "b"]
     assert result["placeholders"] == [{"location": "/fullName", "suggestion": "sender.fullName"}]
+
+
+@pytest.mark.asyncio
+async def test_analyze_template_accepts_raw_path_in_leaf_field() -> None:
+    # Tolerance: model echoed the path itself instead of the assigned id.
+    mapping_text = '{"placeholders": [{"leaf": "/fullName", "field": "sender.fullName"}]}'
+    client = FakeClient('{"summary": "S"}', mapping_text)
+    service = LLMService(client)
+    result = await service.analyze_template(
+        content='{"fullName":"X"}', fmt="json", leaves=_LEAF, catalog=_CATALOG,
+    )
+    assert result["placeholders"] == [{"location": "/fullName", "suggestion": "sender.fullName"}]
+
+
+@pytest.mark.asyncio
+async def test_analyze_template_without_leaves_skips_mapping_call() -> None:
+    client = FakeClient('{"summary": "пусто"}')
+    service = LLMService(client)
+    result = await service.analyze_template(
+        content="{}", fmt="json", leaves=[], catalog=_CATALOG,
+    )
+    assert result["placeholders"] == []
+    assert result["meta"]["summary"] == "пусто"
+    # Only the meta call happened — no mapping call.
+    assert len(client.calls) == 1
+    # The meta call still hit the LLM, so its debug must be surfaced (otherwise
+    # llm_used would wrongly report False and the prompt couldn't be diagnosed).
+    assert result["debug"]["response_text"] == '{"summary": "пусто"}'
+    assert result["debug"]["system_prompt"]

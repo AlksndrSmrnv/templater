@@ -271,6 +271,47 @@ async def test_template_roundtrip_preserves_collection_metadata() -> None:
 
 
 @pytest.mark.asyncio
+async def test_import_overwrite_clears_stale_llm_debug() -> None:
+    # Backups omit llm_debug by design; overwriting an existing template must not
+    # leave the previous local template's prompts/response attached to the new
+    # restored content.
+    tid = uuid.uuid4()
+    existing = SimpleNamespace(
+        id=tid, name="Old", description="", format="json",
+        content='{"a":"x"}', original_content='{"a":"x"}',
+        llm_meta={"import_status": "imported"}, placeholders=[],
+        llm_debug={"system_prompt": "old", "user_prompt": "old", "response_text": "old"},
+        collection_id=None, folder_path=[], headers=[],
+        http_method="", url="", display_order=0,
+    )
+    session = _RoundTripSession()
+    session.store[(MessageTemplate, tid)] = existing
+
+    package = {
+        "version": 2,
+        "templates": [
+            {
+                "id": str(tid),
+                "name": "New",
+                "format": "json",
+                "content": '{"b":"y"}',
+                "original_content": '{"b":"y"}',
+                "llm_meta": {"import_status": "imported"},
+                "placeholders": [],
+            }
+        ],
+    }
+
+    summary = await ExportImportService(cast(Any, session)).import_package(
+        package, policy="overwrite"
+    )
+
+    assert summary.errors == []
+    assert existing.content == '{"b":"y"}'
+    assert existing.llm_debug is None
+
+
+@pytest.mark.asyncio
 async def test_import_reports_wrong_shaped_collections_section() -> None:
     svc = ExportImportService(cast(AsyncSession, _RoundTripSession()))
     summary = await svc.import_package({"collections": "nope"}, policy="skip")

@@ -218,6 +218,10 @@ class MessageTemplate(Base):
     original_content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     llm_meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     placeholders: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    # Last LLM request/response (system + user prompt and raw response) captured
+    # during analysis. Persisted so the debug panel can show it after the fact —
+    # e.g. when the template was processed in bulk from the collections menu.
+    llm_debug: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True, default=None)
 
     # Collection membership. ``collection_id`` is SET NULL on collection delete
     # so a template can outlive its collection (becomes "ungrouped"); the import
