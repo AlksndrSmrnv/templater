@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any, cast
 
@@ -11,12 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     DATA_ENTITY_TYPES,
+    RESERVED_ENTITY_TYPES,
     Account,
     AttributeDefinition,
     Card,
     Client,
     Collection,
     MessageTemplate,
+    ReferenceType,
     ReferenceValue,
 )
 from app.repositories.attribute import AttributeDefinitionRepository
@@ -33,6 +36,10 @@ from app.schemas.exchange import ExportPackage, ExportRequest, ImportSummary
 from app.services.attribute_schema import AttributeSchemaService
 from app.services.templates import normalize_placeholders
 from app.utils.errors import ValidationFailed
+
+
+# Reference-type code shape (mirrors ReferenceTypeService._CODE_RE).
+_REF_TYPE_CODE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -210,7 +217,9 @@ class ExportImportService:
         client_objs = await self.clients.get_many(list(client_ids))
 
         # collect reference IDs used in attributes
-        ref_codes = set(await ReferenceTypeRepository(self.session).codes())
+        ref_type_repo = ReferenceTypeRepository(self.session)
+        ref_type_objs = await ref_type_repo.list_all()
+        ref_codes = {rt.code for rt in ref_type_objs}
         all_defs = await self.attrs.list_all()
         ref_attrs_by_owner: dict[str, list[tuple[str, str]]] = {}
         for d in all_defs:
@@ -255,6 +264,7 @@ class ExportImportService:
 
         return ExportPackage(
             version=2,
+            reference_types=[self._dump_reference_type(rt) for rt in ref_type_objs],
             attribute_schema=[self._dump_attr(a) for a in all_defs],
             references=references,
             clients=[self._dump_client(c) for c in client_objs],
@@ -273,6 +283,7 @@ class ExportImportService:
         if policy not in ("skip", "overwrite", "fail"):
             policy = "skip"
         counter_keys = (
+            "reference_types",
             "attribute_schema",
             "references",
             "clients",
@@ -303,7 +314,7 @@ class ExportImportService:
         # file with e.g. ``clients: {...}`` would be silently treated as empty
         # and look like a successful zero-change import.
         shape_errors = False
-        for section in ("attribute_schema", "clients", "accounts", "cards", "collections", "templates"):
+        for section in ("reference_types", "attribute_schema", "clients", "accounts", "cards", "collections", "templates"):
             value = package.get(section)
             if value is not None and not isinstance(value, list):
                 errors.append(f"Секция '{section}' должна быть списком")
@@ -316,8 +327,11 @@ class ExportImportService:
             return _zeroed_summary()
 
         # Reference types are data, not code: snapshot the current set once (after
-        # the cheap shape guards above, which must not touch the DB).
-        ref_codes = set(await ReferenceTypeRepository(self.session).codes())
+        # the cheap shape guards above, which must not touch the DB). The set is
+        # grown in-place by the reference_types import loop below so that the
+        # attribute_schema and references sections can target freshly-imported types.
+        ref_type_repo = ReferenceTypeRepository(self.session)
+        ref_codes = set(await ref_type_repo.codes())
         all_attr_types = set(DATA_ENTITY_TYPES) | ref_codes
 
         def conflict(kind: str, raw: dict[str, Any]) -> bool:
@@ -348,6 +362,84 @@ class ExportImportService:
                 await self.session.rollback()
                 errors.append(f"flush failed ({stage}): {exc.orig if hasattr(exc, 'orig') else exc}")
                 return False
+
+        # ---- reference_types (registry; must precede attribute_schema & references) ----
+        # Reference tables created from the UI live in the registry, so a backup
+        # taken on one install must re-create them on a clean target before any
+        # attribute_schema / references rows can reference them.
+        seen_type_codes: set[str] = set()
+        for raw in _as_list(package.get("reference_types")):
+            if not isinstance(raw, dict):
+                errors.append("reference_types: запись не является объектом")
+                continue
+            raw = cast(dict[str, Any], raw)
+            code_raw = raw.get("code")
+            if not isinstance(code_raw, str) or not _REF_TYPE_CODE_RE.fullmatch(code_raw):
+                errors.append(f"reference_types: некорректный код '{code_raw}'")
+                continue
+            code = code_raw
+            if len(code) > 64:
+                errors.append(f"reference_types {code}: код длиннее 64 символов")
+                continue
+            if code in RESERVED_ENTITY_TYPES:
+                errors.append(f"reference_types {code}: зарезервированный код")
+                continue
+            if code in seen_type_codes:
+                errors.append(f"reference_types {code}: дубликат в файле")
+                continue
+            seen_type_codes.add(code)
+
+            existing_type = await ref_type_repo.get(code)
+            if existing_type is not None and conflict("reference_types", raw):
+                # Already present (skip/fail) — leave as-is but allow downstream
+                # sections to target it. (It's already in ref_codes/all_attr_types.)
+                continue
+
+            title, title_err = _validate_required_str(raw.get("title"), 255)
+            if title_err or title is None:
+                errors.append(f"reference_types {code}: title {title_err}")
+                continue
+            icon, icon_err = _validate_optional_str(raw.get("icon"))
+            if icon_err:
+                errors.append(f"reference_types {code}: icon {icon_err}")
+                continue
+            if icon is not None and len(icon) > 16:
+                errors.append(f"reference_types {code}: icon длиннее 16 символов")
+                continue
+            description, desc_err = _validate_optional_str(raw.get("description"))
+            if desc_err:
+                errors.append(f"reference_types {code}: description {desc_err}")
+                continue
+
+            raw_order = raw.get("display_order")
+            display_order = raw_order if isinstance(raw_order, int) and not isinstance(raw_order, bool) else 0
+
+            if existing_type is None:
+                self.session.add(
+                    ReferenceType(
+                        code=code,
+                        title=title,
+                        icon=icon or "",
+                        description=description or "",
+                        display_order=display_order,
+                    )
+                )
+                created["reference_types"] += 1
+            else:
+                existing_type.title = title
+                if icon is not None:
+                    existing_type.icon = icon
+                if description is not None:
+                    existing_type.description = description
+                existing_type.display_order = display_order
+                updated["reference_types"] += 1
+            ref_codes.add(code)
+            all_attr_types.add(code)
+
+        # Flush so attribute_schema / references validation (and FKs) see the
+        # just-added registry rows. autoflush=False means a SELECT won't do it.
+        if not await safe_flush("reference_types"):
+            return _zeroed_summary()
 
         # ---- attribute_schema (validated, never trusts the file blindly) ----
         seen_attr_keys: set[tuple[str, str]] = set()
@@ -1118,6 +1210,16 @@ class ExportImportService:
             # The transaction was rolled back, so nothing landed in DB.
             return _zeroed_summary()
         return ImportSummary(created=created, updated=updated, skipped=skipped, errors=errors)
+
+    @staticmethod
+    def _dump_reference_type(rt: ReferenceType) -> dict[str, Any]:
+        return {
+            "code": rt.code,
+            "title": rt.title,
+            "icon": rt.icon,
+            "description": rt.description,
+            "display_order": rt.display_order,
+        }
 
     @staticmethod
     def _dump_attr(a: AttributeDefinition) -> dict[str, Any]:

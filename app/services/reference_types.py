@@ -59,23 +59,35 @@ class ReferenceTypeService:
         columns: list[ColumnSpec],
     ) -> ReferenceType:
         code = code.strip()
+        title = title.strip()
+        icon = icon.strip()
+        description = description.strip()
+
         if not _CODE_RE.fullmatch(code):
             raise ValidationFailed(
                 "Код справочника должен начинаться с латинской буквы и содержать только "
                 "строчные латинские буквы, цифры и подчёркивание"
             )
+        # Mirror the DB column limits so user input can't trip an IntegrityError
+        # (which would surface as a 500) on flush.
+        if len(code) > 64:
+            raise ValidationFailed("Код справочника не может быть длиннее 64 символов")
         if code in RESERVED_ENTITY_TYPES:
             raise ValidationFailed(f"Код '{code}' зарезервирован и не может быть использован")
+        if not title:
+            raise ValidationFailed("Название справочника обязательно")
+        if len(title) > 255:
+            raise ValidationFailed("Название справочника не может быть длиннее 255 символов")
+        if len(icon) > 16:
+            raise ValidationFailed("Иконка не может быть длиннее 16 символов")
         if await self.repo.exists(code):
             raise IntegrityViolation(f"Справочник с кодом '{code}' уже существует")
-        if not title.strip():
-            raise ValidationFailed("Название справочника обязательно")
 
         ref_type = ReferenceType(
             code=code,
-            title=title.strip(),
-            icon=icon.strip(),
-            description=description.strip(),
+            title=title,
+            icon=icon,
+            description=description,
             display_order=0,
         )
         try:

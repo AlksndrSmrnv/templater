@@ -168,7 +168,7 @@ async def test_import_reports_wrong_shaped_sections() -> None:
 import uuid  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
-from app.db.models import Collection, MessageTemplate  # noqa: E402
+from app.db.models import Collection, MessageTemplate, ReferenceType  # noqa: E402
 
 
 class _EmptyResult:
@@ -194,7 +194,10 @@ class _RoundTripSession:
 
     def add(self, obj: Any) -> None:
         self.added.append(obj)
-        self.store[(type(obj), obj.id)] = obj
+        ident = getattr(obj, "id", None)
+        if ident is None:
+            ident = getattr(obj, "code", None)  # e.g. ReferenceType (PK = code)
+        self.store[(type(obj), ident)] = obj
 
     async def execute(self, *args: Any, **kwargs: Any) -> _EmptyResult:
         return _EmptyResult()
@@ -308,3 +311,53 @@ async def test_import_keeps_nonempty_unparsable_body_verbatim() -> None:
     assert template.placeholders == []
     assert template.llm_meta["import_status"] == "unparsed"
     assert template.http_method == "POST"
+
+
+# ---------- reference_types registry round-trip ----------
+
+
+@pytest.mark.asyncio
+async def test_import_creates_reference_type_from_registry() -> None:
+    # A справочник created from the UI must be re-creatable on a clean install
+    # from the exported ``reference_types`` section.
+    package = {
+        "version": 2,
+        "reference_types": [
+            {"code": "department", "title": "Отделы", "icon": "🏢", "description": "", "display_order": 5}
+        ],
+    }
+    session = cast(Any, _RoundTripSession())
+    summary = await ExportImportService(session).import_package(package, policy="skip")
+
+    assert summary.errors == []
+    assert summary.created["reference_types"] == 1
+    added = [o for o in session.added if isinstance(o, ReferenceType)]
+    assert len(added) == 1
+    assert added[0].code == "department"
+    assert added[0].title == "Отделы"
+    assert added[0].icon == "🏢"
+    assert added[0].display_order == 5
+
+
+@pytest.mark.asyncio
+async def test_import_rejects_invalid_reference_type_code() -> None:
+    package = {"reference_types": [{"code": "Bad Code!", "title": "X"}]}
+    session = cast(Any, _RoundTripSession())
+    summary = await ExportImportService(session).import_package(package, policy="skip")
+
+    assert any("reference_types" in e for e in summary.errors)
+    assert summary.created["reference_types"] == 0
+    assert not [o for o in session.added if isinstance(o, ReferenceType)]
+
+
+def test_export_package_includes_reference_types_field() -> None:
+    # The dump shape feeds the import above; keep them in lockstep.
+    rt = ReferenceType(code="department", title="Отделы", icon="🏢", description="", display_order=5)
+    dumped = ExportImportService._dump_reference_type(rt)
+    assert dumped == {
+        "code": "department",
+        "title": "Отделы",
+        "icon": "🏢",
+        "description": "",
+        "display_order": 5,
+    }

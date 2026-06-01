@@ -263,6 +263,10 @@ async def htmx_create_type(
         )
         code = ref_type.code  # capture before commit expires the instance
         await commit_or_409(session, message="Не удалось создать справочник")
+    except ValidationError as exc:
+        # A column with e.g. an over-long label trips Pydantic inside the service.
+        await session.rollback()
+        return validation_errors_response(request, templates, exc)
     except DomainError as exc:
         await session.rollback()
         return form_errors_response(
