@@ -53,7 +53,7 @@
         hx-get="/templater/templates-htmx/{{ t.id }}/panel"
         hx-target="#template-panel"
         hx-swap="innerHTML">
-        {% if editable %}<span class="tree-drag-handle" title="Перетащите запрос" @click.stop>⠿</span>{% endif %}
+        <span class="tree-drag-handle" title="Перетащите запрос" @click.stop>⠿</span>
         <span class="tree-method method-{{ (t.http_method or '')|lower }}">{{ t.http_method or '·' }}</span>
         <span class="tree-name">{{ t.name }}</span>
         {% if (t.llm_meta or {}).get('import_status') == 'unparsed' %}<span class="tree-flag" title="Тело не разбирается как JSON/XML">⚠</span>{% endif %}

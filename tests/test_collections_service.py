@@ -174,6 +174,33 @@ async def test_create_folder_appends_and_rejects_duplicate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_folder_ops_reject_missing_target() -> None:
+    coll = SimpleNamespace(id=uuid.uuid4(), folders=[["A"]])
+    svc = _service([coll], [])
+
+    with pytest.raises(ValidationFailed):
+        await svc.create_folder(coll.id, ["Ghost"], "Child")  # parent missing
+    with pytest.raises(ValidationFailed):
+        await svc.rename_folder(coll.id, ["Ghost"], "X")  # path missing
+    with pytest.raises(ValidationFailed):
+        await svc.delete_folder(coll.id, ["Ghost"])  # path missing
+
+
+@pytest.mark.asyncio
+async def test_move_request_ignores_non_sibling_ids_in_order() -> None:
+    coll = SimpleNamespace(id=uuid.uuid4(), folders=[["A"], ["B"]])
+    t1 = _tpl_in(coll.id, "t1", ["A"], 0)
+    elsewhere = _tpl_in(coll.id, "elsewhere", ["B"], 7)
+    svc = _service([coll], [t1, elsewhere])
+
+    # A crafted order that includes a template living in another folder must not
+    # renumber that template.
+    await svc.move_request(t1.id, coll.id, ["A"], [t1.id, elsewhere.id])
+    assert t1.display_order == 0
+    assert elsewhere.display_order == 7  # untouched
+
+
+@pytest.mark.asyncio
 async def test_rename_folder_reprefixes_templates_and_folders() -> None:
     coll = SimpleNamespace(id=uuid.uuid4(), folders=[["Transfers"], ["Transfers", "A2A"]])
     inside = _tpl_in(coll.id, "b", ["Transfers", "A2A"], 0)

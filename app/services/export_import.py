@@ -1008,6 +1008,12 @@ class ExportImportService:
                     errors.append(f"collection {coll_name}: source_format {coll_fmt_err}")
                     continue
                 coll_vars = _as_list(raw.get("variables"))
+                coll_folders = [
+                    segments
+                    for path in _as_list(raw.get("folders"))
+                    if isinstance(path, list)
+                    and (segments := [str(seg).strip() for seg in path if str(seg).strip()])
+                ]
 
                 if existing_collection is None:
                     self.session.add(Collection(
@@ -1017,6 +1023,7 @@ class ExportImportService:
                         source=coll_source or "postman",
                         source_format=coll_fmt or "",
                         variables=coll_vars,
+                        folders=coll_folders,
                     ))
                     created["collections"] += 1
                 else:
@@ -1029,6 +1036,7 @@ class ExportImportService:
                         coll_fmt if coll_fmt is not None else existing_collection.source_format
                     )
                     existing_collection.variables = coll_vars
+                    existing_collection.folders = coll_folders
                     updated["collections"] += 1
             except Exception as exc:
                 errors.append(f"collection {_safe_label(raw, 'name', 'id')}: {exc}")
@@ -1287,6 +1295,9 @@ class ExportImportService:
             "source": c.source,
             "source_format": c.source_format,
             "variables": c.variables,
+            # Explicit folder structure (incl. empty folders); without this a
+            # backup/restore would drop any folder that has no requests in it.
+            "folders": [list(path) for path in (c.folders or [])],
         }
 
     @staticmethod

@@ -251,13 +251,20 @@ async def htmx_move_request(
             session,
             headers={"HX-Trigger": toast_header("Некорректный запрос", toast_type="error")},
         )
+    # Empty collection_id means "Без коллекции" (ungrouped) — intentional. A
+    # non-empty but malformed value is a broken payload, not a move to ungrouped.
     raw_collection = form_str(form, "collection_id").strip()
     target_collection_id: uuid.UUID | None = None
     if raw_collection:
         try:
             target_collection_id = uuid.UUID(raw_collection)
         except ValueError:
-            target_collection_id = None
+            return await _tree_response(
+                request,
+                templates,
+                session,
+                headers={"HX-Trigger": toast_header("Некорректный запрос", toast_type="error")},
+            )
     folder = _parse_path(form_str(form, "folder"))
     order = _parse_uuids(form_str(form, "order"))
     try:

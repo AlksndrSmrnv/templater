@@ -234,6 +234,8 @@ class CollectionService:
         new_path = [*parent, clean_name]
         templates = await self.templates.list_by_collection(collection_id)
         existing = _all_folder_paths(collection.folders, templates)
+        if parent and tuple(parent) not in existing:
+            raise ValidationFailed("Родительская папка не найдена")
         if tuple(new_path) in existing:
             raise ValidationFailed("Папка с таким именем уже существует")
         collection.folders = [*collection.folders, new_path]
@@ -258,13 +260,12 @@ class CollectionService:
             return new_path
 
         templates = await self.templates.list_by_collection(collection_id)
+        all_paths = _all_folder_paths(collection.folders, templates)
+        if tuple(old_path) not in all_paths:
+            raise ValidationFailed("Папка не найдена")
         # Collision: a sibling/other folder already occupies the new path. Exclude
         # the folder being renamed and its descendants from the check.
-        others = {
-            p
-            for p in _all_folder_paths(collection.folders, templates)
-            if not _starts_with(list(p), old_path)
-        }
+        others = {p for p in all_paths if not _starts_with(list(p), old_path)}
         if tuple(new_path) in others:
             raise ValidationFailed("Папка с таким именем уже существует")
 
@@ -293,6 +294,8 @@ class CollectionService:
         if not target:
             raise ValidationFailed("Не указана папка для удаления")
         templates = await self.templates.list_by_collection(collection_id)
+        if tuple(target) not in _all_folder_paths(collection.folders, templates):
+            raise ValidationFailed("Папка не найдена")
         has_templates = any(
             _starts_with(_norm_path(t.folder_path), target) for t in templates
         )
@@ -327,15 +330,26 @@ class CollectionService:
         if target_collection_id is not None:
             await self.get(target_collection_id)  # 404 if missing
 
+        target_folder = _norm_path(target_folder_path)
         template.collection_id = target_collection_id
-        template.folder_path = _norm_path(target_folder_path)
+        template.folder_path = target_folder
 
+        # Renumber ``display_order`` only across templates that actually live in
+        # the target collection/folder (after the move). This stops a crafted or
+        # stale ``order`` payload from reshuffling unrelated templates elsewhere.
         if order:
             siblings = {t.id: t for t in await self.templates.get_many(order)}
-            for idx, sibling_id in enumerate(order):
+            position = 0
+            for sibling_id in order:
                 sibling = siblings.get(sibling_id)
-                if sibling is not None:
-                    sibling.display_order = idx
+                if sibling is None:
+                    continue
+                if sibling.collection_id != target_collection_id:
+                    continue
+                if _norm_path(sibling.folder_path) != target_folder:
+                    continue
+                sibling.display_order = position
+                position += 1
         await self.session.flush()
 
     async def process_collection_llm(self, collection_id: uuid.UUID) -> ProcessCollectionSummary:
