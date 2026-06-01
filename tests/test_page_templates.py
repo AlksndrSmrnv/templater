@@ -41,6 +41,22 @@ def start_tag_by_id(html: str, tag_name: str, element_id: str) -> dict[str, str 
     return matches[0]
 
 
+class FirstStartTagCollector(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.first: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.first is None:
+            self.first = tag
+
+
+def first_start_tag(html: str) -> str | None:
+    collector = FirstStartTagCollector()
+    collector.feed(html)
+    return collector.first
+
+
 def install_page_fill_fakes(monkeypatch: pytest.MonkeyPatch, template: Any) -> None:
     class FakeTemplateService:
         def __init__(self, session: object) -> None:
@@ -166,6 +182,49 @@ def test_list_pages_serialize_string_context_as_json_literals() -> None:
     assert "window.PAGE" not in entity_html
     assert 'hx-get="/templater/references-htmx/currency/table"' in reference_html
     assert "reference-list.js" not in reference_html
+
+
+def test_entities_table_refresh_renders_rows_before_oob_meta() -> None:
+    """On htmx refresh (oob_meta=True) the response must START with a table <tr>,
+    not the OOB <div> blocks. htmx 2.0 parses the response inside a <template> and
+    picks the insertion mode from the first tag — a leading <div> makes the parser
+    drop all <tr>/<td>, collapsing the table into one column. See plan / htmx
+    makeFragment behaviour."""
+    html = render_template(
+        "partials/entities_table.html",
+        {
+            "oob_meta": True,
+            "entity_type": "client",
+            "items": [
+                SimpleNamespace(
+                    id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+                    description="Acme",
+                    attributes={},
+                    tags=[],
+                    created_at="2026-01-01",
+                )
+            ],
+            "items_total": 1,
+            "schema": [],
+            "relation_columns": ("accounts", "cards"),
+            "accounts_by_client": {},
+            "cards_by_client": {},
+            "ref_options": {},
+            "labels": {"client": {}, "account": {}, "card": {}},
+            "page": 1,
+            "pages": 1,
+            "has_prev": False,
+            "has_next": False,
+        },
+    )
+
+    assert 'id="table-meta"' in html
+    assert 'id="table-pagination"' in html
+    # The VERY FIRST tag of the response must be <tr>. htmx picks the parse mode
+    # from the leading tag, so any other leading element (e.g. a <div>) would make
+    # the browser drop the table rows. Checking the first tag (not just relative
+    # order vs. #table-meta) guards against re-introducing any leading wrapper.
+    assert first_start_tag(html) == "tr"
 
 
 def test_attribute_form_escapes_json_inside_x_data_attribute() -> None:
