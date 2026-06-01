@@ -66,6 +66,7 @@
     <div class="table-wrap">
         <table class="data-table" id="attrs-table">
             <thead><tr>
+                <th class="no-sort"></th>
                 <th>Сущность</th><th>Имя</th><th>Label</th><th>Тип</th>
                 <th>Required</th><th>Порядок</th><th>Описание</th><th class="no-sort">Используется</th><th class="no-sort"></th>
             </tr></thead>
@@ -88,4 +89,48 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/sortablejs@1.15.6/Sortable.min.js"
+        integrity="sha384-HZZ/fukV+9G8gwTNjN7zQDG0Sp7MsZy5DDN6VfY3Be7V9dvQpEpR2jF2HlyFUUjU"
+        crossorigin="anonymous"></script>
+<script>
+    (function () {
+        let sortable = null;
+
+        function initAttrSortable() {
+            const body = document.getElementById('attrs-body');
+            if (!body || !window.Sortable) return;
+            if (sortable) sortable.destroy();
+            sortable = Sortable.create(body, {
+                handle: '.drag-handle',
+                animation: 150,
+                ghostClass: 'sortable-ghost',
+                chosenClass: 'sortable-chosen',
+                // Перетаскивание разрешено только в пределах одной группы типа сущности
+                onMove(evt) {
+                    return evt.dragged.dataset.entity === evt.related.dataset.entity;
+                },
+                onEnd(evt) {
+                    const entity = evt.item.dataset.entity;
+                    if (!entity) return;
+                    const ids = Array.from(
+                        body.querySelectorAll('tr[data-entity="' + entity + '"]')
+                    ).map((tr) => tr.dataset.id);
+                    htmx.ajax('POST', '/templater/settings-htmx/attributes/reorder', {
+                        values: { entity_type: entity, order: ids.join(',') },
+                        swap: 'none',
+                    });
+                },
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', initAttrSortable);
+        // tbody перерисовывается htmx-ом (refresh-attributes / смена фильтра) — пересоздаём Sortable
+        document.body.addEventListener('htmx:afterSwap', function (e) {
+            if (e.detail.target && e.detail.target.id === 'attrs-body') initAttrSortable();
+        });
+    })();
+</script>
 {% endblock %}

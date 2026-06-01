@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import Any, cast
 
 import pytest
@@ -90,3 +91,39 @@ async def test_create_without_preserve_existing_keeps_legacy_keys_from_values() 
     svc = _service([_attr("kept")])
     result = await svc.validate_attributes("client", {"kept": "v1", "legacy": "x"})
     assert result == {"kept": "v1", "legacy": "x"}
+
+
+class _FakeSession:
+    async def flush(self) -> None:
+        return None
+
+
+def _attr_with_id(name: str) -> AttributeDefinition:
+    attr = _attr(name)
+    attr.id = uuid.uuid4()
+    return attr
+
+
+async def test_reorder_assigns_sequential_display_order() -> None:
+    a, b, c = _attr_with_id("a"), _attr_with_id("b"), _attr_with_id("c")
+    svc = _service([a, b, c])
+    svc.session = cast(AsyncSession, _FakeSession())
+    # новый порядок: c, a, b → display_order 10, 20, 30
+    await svc.reorder("client", [c.id, a.id, b.id])
+    assert (c.display_order, a.display_order, b.display_order) == (10, 20, 30)
+
+
+async def test_reorder_rejects_mismatched_id_set() -> None:
+    a, b = _attr_with_id("a"), _attr_with_id("b")
+    svc = _service([a, b])
+    svc.session = cast(AsyncSession, _FakeSession())
+    with pytest.raises(ValidationFailed, match="не совпадает"):
+        await svc.reorder("client", [a.id, uuid.uuid4()])
+
+
+async def test_reorder_rejects_duplicate_ids() -> None:
+    a, b = _attr_with_id("a"), _attr_with_id("b")
+    svc = _service([a, b])
+    svc.session = cast(AsyncSession, _FakeSession())
+    with pytest.raises(ValidationFailed, match="не совпадает"):
+        await svc.reorder("client", [a.id, b.id, a.id])

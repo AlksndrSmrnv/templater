@@ -174,6 +174,13 @@ h3 { font-size: 17px; margin: 0 0 6px; }
 .data-table tbody tr.active { box-shadow: inset 3px 0 0 var(--primary); }
 .data-table .row-actions { display: flex; gap: 6px; }
 .col-description { width: 320px; }
+.data-table .drag-handle {
+    cursor: grab; color: var(--muted); text-align: center;
+    user-select: none; width: 1%; white-space: nowrap; font-size: 16px; line-height: 1;
+}
+.data-table .drag-handle:active { cursor: grabbing; }
+.data-table tr.sortable-ghost { opacity: 0.4; }
+.data-table tr.sortable-chosen { background: var(--primary-soft); }
 .col-relation {
     width: 1%;
     white-space: nowrap;

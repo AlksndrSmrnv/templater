@@ -5,7 +5,8 @@
         {% set uc = counts.get(attr.id, {}) %}
         {% set uc_records = uc.get("records", 0) %}
         {% set uc_templates = uc.get("templates", 0) %}
-        <tr>
+        <tr data-id="{{ attr.id }}" data-entity="{{ attr.entity_type }}">
+            <td class="drag-handle" title="Перетащите для изменения порядка">⠿</td>
             <td>{{ attr.entity_type }}</td>
             <td><code>{{ attr.name }}</code></td>
             <td>{{ attr.label }}</td>
@@ -35,6 +36,6 @@
     {% endfor %}
 {% else %}
     <tr>
-        <td colspan="9" class="muted" style="text-align:center; padding:24px;">Нет атрибутов</td>
+        <td colspan="10" class="muted" style="text-align:center; padding:24px;">Нет атрибутов</td>
     </tr>
 {% endif %}
