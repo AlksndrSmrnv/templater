@@ -5,10 +5,11 @@ import uuid
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import REFERENCE_TYPES, ReferenceValue
+from app.db.models import ReferenceValue
 from app.repositories.attribute import AttributeDefinitionRepository
 from app.repositories.entity import find_entities_referencing
 from app.repositories.reference import ReferenceValueRepository
+from app.repositories.reference_type import ReferenceTypeRepository
 from app.schemas.reference import ReferenceValueCreate, ReferenceValueUpdate
 from app.services.attribute_schema import AttributeSchemaService
 from app.utils.errors import IntegrityViolation, NotFoundError, ValidationFailed
@@ -20,14 +21,14 @@ class ReferenceService:
         self.repo = ReferenceValueRepository(session)
         self.attrs = AttributeDefinitionRepository(session)
         self.schema = AttributeSchemaService(session)
+        self.ref_types = ReferenceTypeRepository(session)
 
-    @staticmethod
-    def _check_entity_type(entity_type: str) -> None:
-        if entity_type not in REFERENCE_TYPES:
+    async def _check_entity_type(self, entity_type: str) -> None:
+        if not await self.ref_types.exists(entity_type):
             raise ValidationFailed(f"Неизвестный тип справочника: {entity_type}")
 
     async def list_by_type(self, entity_type: str) -> list[ReferenceValue]:
-        self._check_entity_type(entity_type)
+        await self._check_entity_type(entity_type)
         return await self.repo.list_by_type(entity_type)
 
     async def get(self, value_id: uuid.UUID) -> ReferenceValue:
@@ -43,14 +44,14 @@ class ReferenceService:
         mutate / delete a row from a different reference table.
         """
 
-        self._check_entity_type(entity_type)
+        await self._check_entity_type(entity_type)
         value = await self.repo.get(value_id)
         if value is None or value.entity_type != entity_type:
             raise NotFoundError("Запись справочника не найдена")
         return value
 
     async def create(self, data: ReferenceValueCreate) -> ReferenceValue:
-        self._check_entity_type(data.entity_type)
+        await self._check_entity_type(data.entity_type)
         existing = await self.repo.get_by_code(data.entity_type, data.code)
         if existing is not None:
             raise IntegrityViolation(f"Код '{data.code}' уже занят в справочнике '{data.entity_type}'")

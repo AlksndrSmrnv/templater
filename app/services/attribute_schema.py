@@ -9,14 +9,11 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
-    ALL_ATTR_ENTITY_TYPES,
-    REFERENCE_TYPES,
-    AttributeDefinition,
-)
+from app.db.models import DATA_ENTITY_TYPES, AttributeDefinition
 from app.repositories.attribute import AttributeDefinitionRepository
 from app.repositories.entity import count_attribute_usage
 from app.repositories.reference import ReferenceValueRepository
+from app.repositories.reference_type import ReferenceTypeRepository
 from app.schemas.attribute import (
     ALLOWED_TYPES,
     AttributeDefinitionCreate,
@@ -32,9 +29,10 @@ class AttributeSchemaService:
         self.session = session
         self.attrs = AttributeDefinitionRepository(session)
         self.refs = ReferenceValueRepository(session)
+        self.ref_types = ReferenceTypeRepository(session)
 
     async def list_schema(self, entity_type: str) -> list[AttributeDefinition]:
-        self._check_entity_type(entity_type)
+        await self._check_entity_type(entity_type)
         return await self.attrs.list_by_entity(entity_type)
 
     async def list_all(self) -> list[AttributeDefinition]:
@@ -47,13 +45,13 @@ class AttributeSchemaService:
         return attr
 
     async def create(self, data: AttributeDefinitionCreate) -> AttributeDefinition:
-        self._check_entity_type(data.entity_type)
+        await self._check_entity_type(data.entity_type)
         self._check_attribute_name(data.name)
         if data.data_type not in ALLOWED_TYPES:
             raise ValidationFailed(f"Неизвестный тип атрибута: {data.data_type}")
         if data.data_type == "ref":
             ref = (data.options or {}).get("ref_entity")
-            if ref not in REFERENCE_TYPES:
+            if not ref or not await self.ref_types.exists(ref):
                 raise ValidationFailed(
                     "Для атрибута типа 'ref' нужно указать options.ref_entity из справочников"
                 )
@@ -115,9 +113,10 @@ class AttributeSchemaService:
     ) -> dict[uuid.UUID, dict[str, int]]:
         return await count_attribute_usage(self.session, attrs)
 
-    @staticmethod
-    def _check_entity_type(entity_type: str) -> None:
-        if entity_type not in ALL_ATTR_ENTITY_TYPES:
+    async def _check_entity_type(self, entity_type: str) -> None:
+        if entity_type in DATA_ENTITY_TYPES:
+            return
+        if not await self.ref_types.exists(entity_type):
             raise ValidationFailed(f"Неизвестный тип сущности: {entity_type}")
 
     @staticmethod

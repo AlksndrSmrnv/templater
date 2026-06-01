@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Новый справочник — Template Maker{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>➕ Новый справочник</h1>
+    <div class="actions">
+        <a class="btn" href="/templater/references">Назад</a>
+    </div>
+</div>
+<form id="ref-type-form"
+      class="form"
+      autocomplete="off"
+      hx-post="/templater/references-htmx/types"
+      hx-target="#form-errors"
+      hx-swap="innerHTML"
+      x-data="{ columns: [] }">
+    <div id="form-errors" class="errors"></div>
+
+    <div class="form-section">
+        <label>Код *
+            <input type="text" id="code" name="code" required
+                   placeholder="напр. department"
+                   pattern="[a-z][a-z0-9_]*">
+        </label>
+        <p class="muted">Латиницей, строчными буквами. Используется в URL и не меняется потом.</p>
+    </div>
+    <div class="form-section">
+        <label>Название *
+            <input type="text" id="title" name="title" required placeholder="напр. Отделы">
+        </label>
+    </div>
+    <div class="form-section">
+        <label>Иконка (emoji)
+            <input type="text" id="icon" name="icon" maxlength="4" placeholder="📁">
+        </label>
+    </div>
+    <div class="form-section">
+        <label>Описание
+            <textarea id="description" name="description" rows="2"></textarea>
+        </label>
+    </div>
+
+    <h3>Колонки</h3>
+    <p class="muted">Дополнительные поля справочника (кроме кода и названия). Можно добавить позже в Настройках.</p>
+    <div id="columns">
+        <template x-for="(col, idx) in columns" :key="idx">
+            <div class="form-section column-row">
+                <input type="text" name="col_name" x-model="col.name"
+                       placeholder="имя (латиницей, напр. bic)">
+                <input type="text" name="col_label" x-model="col.label"
+                       placeholder="подпись (напр. БИК)">
+                <select name="col_type" x-model="col.type">
+                    {% for t in column_types %}
+                    <option value="{{ t }}">{{ t }}</option>
+                    {% endfor %}
+                </select>
+                <input type="text" name="col_enum" x-model="col.enum"
+                       x-show="col.type === 'enum'"
+                       placeholder="значения через запятую">
+                <label class="inline">
+                    <input type="checkbox" name="col_required" :value="idx" x-model="col.required">
+                    обяз.
+                </label>
+                <button class="btn danger" type="button" @click="columns.splice(idx, 1)">✕</button>
+            </div>
+        </template>
+    </div>
+    <div class="form-section">
+        <button class="btn" type="button"
+                @click="columns.push({ name: '', label: '', type: 'string', required: false, enum: '' })">
+            + Добавить колонку
+        </button>
+    </div>
+
+    <div class="form-actions">
+        <button class="btn primary" type="submit">Создать справочник</button>
+    </div>
+</form>
+{% endblock %}

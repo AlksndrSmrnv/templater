@@ -1,13 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Справочники — Template Maker{% endblock %}
 {% block content %}
-<h1>📚 Справочники</h1>
+<div class="page-header">
+    <h1>📚 Справочники</h1>
+    <div class="actions">
+        <a class="btn primary" href="/templater/references/new-type">➕ Создать справочник</a>
+    </div>
+</div>
 <div class="cards">
-    {% for code, name in references.items() %}
-    <a class="card" href="/templater/references/{{ code }}">
-        <h3>{{ name }}</h3>
-        <p class="muted">/templater/references/{{ code }}</p>
+    {% for ref in references %}
+    <a class="card" href="/templater/references/{{ ref.code }}">
+        <h3>{{ (ref.icon ~ " " ~ ref.title) | trim }}</h3>
+        <p class="muted">/templater/references/{{ ref.code }}</p>
     </a>
+    {% else %}
+    <p class="muted">Справочников пока нет. Нажмите «Создать справочник», чтобы добавить первый.</p>
     {% endfor %}
 </div>
 {% endblock %}

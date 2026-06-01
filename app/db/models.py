@@ -48,22 +48,18 @@ ENTITY_CARD = "card"
 ENTITY_TEMPLATE = "template"
 
 REF_CURRENCY = "currency"
-REF_ACCOUNT_TYPE = "account_type"
-REF_CARD_TYPE = "card_type"
-REF_BANK = "bank"
-REF_CITIZENSHIP = "citizenship"
 
-REFERENCE_TYPES: tuple[str, ...] = (
-    REF_CURRENCY,
-    REF_ACCOUNT_TYPE,
-    REF_CARD_TYPE,
-    REF_BANK,
-    REF_CITIZENSHIP,
-)
-
+# The set of reference types is no longer hardcoded: it lives in the
+# ``reference_types`` registry table (see :class:`ReferenceType`) and is managed
+# from the UI. Use ``ReferenceTypeRepository`` / ``ReferenceTypeService`` to read
+# the current set of reference types and ``all_attr_entity_types``.
 DATA_ENTITY_TYPES: tuple[str, ...] = (ENTITY_CLIENT, ENTITY_ACCOUNT, ENTITY_CARD)
 
-ALL_ATTR_ENTITY_TYPES: tuple[str, ...] = DATA_ENTITY_TYPES + REFERENCE_TYPES
+# Entity-type codes that must never be used as a reference type code (they name
+# core data entities / templates), independent of what's in the registry.
+RESERVED_ENTITY_TYPES: frozenset[str] = frozenset(
+    {ENTITY_CLIENT, ENTITY_ACCOUNT, ENTITY_CARD, ENTITY_TEMPLATE}
+)
 
 
 class AttributeDefinition(Base):
@@ -144,6 +140,26 @@ class Card(Base):
     updated_at: Mapped[datetime] = _updated_at()
 
     account: Mapped[Account] = relationship(back_populates="cards")
+
+
+class ReferenceType(Base):
+    """Registry of reference tables (справочники).
+
+    Each row defines one reference type that the app exposes — its ``code`` is
+    reused as the ``entity_type`` of the matching :class:`ReferenceValue` rows
+    and of the :class:`AttributeDefinition` rows describing its columns. Users
+    create new reference types from the UI; the set is therefore data, not code.
+    """
+
+    __tablename__ = "reference_types"
+
+    code: Mapped[str] = mapped_column(String(64), primary_key=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    icon: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
 
 
 class ReferenceValue(Base):
