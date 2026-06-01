@@ -1188,6 +1188,10 @@ class ExportImportService:
                     existing_template.original_content = new_original
                     existing_template.llm_meta = new_llm_meta
                     existing_template.placeholders = placeholders
+                    # Backups omit llm_debug by design; clear any debug left from
+                    # the previous local template so it can't be misread as the
+                    # prompts/response for the restored content.
+                    existing_template.llm_debug = None
                     existing_template.collection_id = new_collection_id
                     existing_template.folder_path = new_folder_path
                     existing_template.headers = new_headers

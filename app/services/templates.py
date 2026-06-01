@@ -221,6 +221,8 @@ class TemplateService:
             template.content = data.content
             template.original_content = data.content
             template.placeholders = []
+            # New body ⇒ the old prompts/response describe a different document.
+            template.llm_debug = None
             content_replaced = True
         if data.llm_meta is not None:
             template.llm_meta = data.llm_meta
@@ -713,6 +715,10 @@ class TemplateService:
             **(template.llm_meta or {}),
             "has_account_owner": placeholders_have_account_owner(template.placeholders),
         }
+        # Manual, non-LLM save: the previously captured prompts/response no longer
+        # correspond to the saved placeholders, so drop the now-stale debug rather
+        # than leave a misleading record (re-run "Обработать LLM" to refresh it).
+        template.llm_debug = None
         template.content = self.regenerate_content(template)
         await self.session.flush()
         return template

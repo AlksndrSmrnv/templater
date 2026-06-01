@@ -197,6 +197,35 @@ async def test_analyze_persists_llm_debug_on_template() -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_placeholders_clears_stale_llm_debug() -> None:
+    # A manual editor save must drop the previously captured LLM debug — the
+    # saved placeholders may have been hand-edited, so the old prompts/response
+    # no longer describe the saved state.
+    class FakeSession:
+        async def flush(self) -> None:
+            return None
+
+    svc = TemplateService(cast(Any, FakeSession()))
+    template = SimpleNamespace(
+        format="json",
+        content='{"a":"x"}',
+        original_content='{"a":"x"}',
+        placeholders=[],
+        llm_meta={"summary": "ok"},
+        llm_debug={"system_prompt": "sys", "user_prompt": "u", "response_text": "r"},
+    )
+
+    async def fake_get(tid: Any) -> Any:
+        return template
+
+    svc.get = fake_get  # type: ignore[method-assign, assignment]
+
+    await svc.update_placeholders(cast(Any, None), [])
+
+    assert template.llm_debug is None
+
+
+@pytest.mark.asyncio
 async def test_analyze_content_propagates_llm_debug() -> None:
     svc = TemplateService(cast(Any, SimpleNamespace()))
     debug = {
