@@ -41,6 +41,22 @@ def start_tag_by_id(html: str, tag_name: str, element_id: str) -> dict[str, str 
     return matches[0]
 
 
+class FirstStartTagCollector(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.first: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.first is None:
+            self.first = tag
+
+
+def first_start_tag(html: str) -> str | None:
+    collector = FirstStartTagCollector()
+    collector.feed(html)
+    return collector.first
+
+
 def install_page_fill_fakes(monkeypatch: pytest.MonkeyPatch, template: Any) -> None:
     class FakeTemplateService:
         def __init__(self, session: object) -> None:
@@ -202,11 +218,13 @@ def test_entities_table_refresh_renders_rows_before_oob_meta() -> None:
         },
     )
 
-    assert "<tr" in html
     assert 'id="table-meta"' in html
     assert 'id="table-pagination"' in html
-    # Rows must come before the OOB metadata so the response starts with <tr>.
-    assert html.index("<tr") < html.index('id="table-meta"')
+    # The VERY FIRST tag of the response must be <tr>. htmx picks the parse mode
+    # from the leading tag, so any other leading element (e.g. a <div>) would make
+    # the browser drop the table rows. Checking the first tag (not just relative
+    # order vs. #table-meta) guards against re-introducing any leading wrapper.
+    assert first_start_tag(html) == "tr"
 
 
 def test_attribute_form_escapes_json_inside_x_data_attribute() -> None:
