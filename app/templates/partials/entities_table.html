@@ -3,18 +3,14 @@
 {% set relation_count = relation_columns | default(["", ""]) | length %}
 {% set colspan = fields | length + relation_count + 4 %}
 {% set total = items_total | default(rows | length) %}
-{% if oob_meta | default(false) %}
-    <div id="table-meta" hx-swap-oob="innerHTML">
-        Записей: {{ total }}
-        {% if rows | length != total %}
-            · Показано: {{ rows | length }}
-        {% endif %}
-        <span x-show="selected.length > 0" x-cloak> · Выбрано: <span x-text="selected.length"></span></span>
-    </div>
-    <div id="table-pagination" hx-swap-oob="innerHTML">
-        {% include "partials/_entity_pagination.html" %}
-    </div>
-{% endif %}
+{#
+  ВАЖНО: строки таблицы должны идти ПЕРВЫМИ в ответе, а OOB-блоки meta/pagination —
+  последними. htmx 2.0 парсит ответ внутри <template> и выбирает режим вставки по
+  первому тегу: если ответ начинается с <div>, парсер уходит в «in body» и молча
+  отбрасывает все <tr>/<td> (данные «съезжают» в один столбец). Стартовый <tr>
+  заставляет парсер строить таблицу корректно, а завершающие OOB-<div> подхватываются
+  механизмом hx-swap-oob.
+#}
 {% if rows %}
     {% for row in rows %}
         {% set row_id = row.id | string %}
@@ -106,4 +102,16 @@
     <tr>
         <td colspan="{{ colspan }}" class="muted" style="text-align:center; padding:24px;">Нет данных</td>
     </tr>
+{% endif %}
+{% if oob_meta | default(false) %}
+    <div id="table-meta" hx-swap-oob="innerHTML">
+        Записей: {{ total }}
+        {% if rows | length != total %}
+            · Показано: {{ rows | length }}
+        {% endif %}
+        <span x-show="selected.length > 0" x-cloak> · Выбрано: <span x-text="selected.length"></span></span>
+    </div>
+    <div id="table-pagination" hx-swap-oob="innerHTML">
+        {% include "partials/_entity_pagination.html" %}
+    </div>
 {% endif %}

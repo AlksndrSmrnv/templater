@@ -168,6 +168,47 @@ def test_list_pages_serialize_string_context_as_json_literals() -> None:
     assert "reference-list.js" not in reference_html
 
 
+def test_entities_table_refresh_renders_rows_before_oob_meta() -> None:
+    """On htmx refresh (oob_meta=True) the response must START with a table <tr>,
+    not the OOB <div> blocks. htmx 2.0 parses the response inside a <template> and
+    picks the insertion mode from the first tag — a leading <div> makes the parser
+    drop all <tr>/<td>, collapsing the table into one column. See plan / htmx
+    makeFragment behaviour."""
+    html = render_template(
+        "partials/entities_table.html",
+        {
+            "oob_meta": True,
+            "entity_type": "client",
+            "items": [
+                SimpleNamespace(
+                    id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+                    description="Acme",
+                    attributes={},
+                    tags=[],
+                    created_at="2026-01-01",
+                )
+            ],
+            "items_total": 1,
+            "schema": [],
+            "relation_columns": ("accounts", "cards"),
+            "accounts_by_client": {},
+            "cards_by_client": {},
+            "ref_options": {},
+            "labels": {"client": {}, "account": {}, "card": {}},
+            "page": 1,
+            "pages": 1,
+            "has_prev": False,
+            "has_next": False,
+        },
+    )
+
+    assert "<tr" in html
+    assert 'id="table-meta"' in html
+    assert 'id="table-pagination"' in html
+    # Rows must come before the OOB metadata so the response starts with <tr>.
+    assert html.index("<tr") < html.index('id="table-meta"')
+
+
 def test_attribute_form_escapes_json_inside_x_data_attribute() -> None:
     html = render_template(
         "partials/attribute_form.html",
