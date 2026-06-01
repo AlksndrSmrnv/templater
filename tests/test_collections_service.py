@@ -183,6 +183,10 @@ async def test_folder_ops_reject_missing_target() -> None:
     with pytest.raises(ValidationFailed):
         await svc.rename_folder(coll.id, ["Ghost"], "X")  # path missing
     with pytest.raises(ValidationFailed):
+        # No-op rename (same name) of a missing folder must still be rejected,
+        # not silently reported as success.
+        await svc.rename_folder(coll.id, ["Ghost"], "Ghost")
+    with pytest.raises(ValidationFailed):
         await svc.delete_folder(coll.id, ["Ghost"])  # path missing
 
 

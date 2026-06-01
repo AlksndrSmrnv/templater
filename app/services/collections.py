@@ -256,13 +256,15 @@ class CollectionService:
         if not clean_name:
             raise ValidationFailed("Имя папки не может быть пустым")
         new_path = [*old_path[:-1], clean_name]
-        if new_path == old_path:
-            return new_path
 
         templates = await self.templates.list_by_collection(collection_id)
         all_paths = _all_folder_paths(collection.folders, templates)
+        # Validate the folder exists *before* the no-op short-circuit, otherwise
+        # renaming a missing folder to its own name would falsely report success.
         if tuple(old_path) not in all_paths:
             raise ValidationFailed("Папка не найдена")
+        if new_path == old_path:
+            return new_path
         # Collision: a sibling/other folder already occupies the new path. Exclude
         # the folder being renamed and its descendants from the check.
         others = {p for p in all_paths if not _starts_with(list(p), old_path)}
