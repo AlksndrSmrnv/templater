@@ -312,7 +312,13 @@ def test_filled_templates_table_copy_fetch_uses_templater_prefix() -> None:
 
 
 def test_references_index_displays_templater_prefixed_paths() -> None:
-    html = render_template("references/index.html", {"active": "references", "references": {"currency": "Валюты"}})
+    html = render_template(
+        "references/index.html",
+        {
+            "active": "references",
+            "references": [SimpleNamespace(code="currency", icon="💱", title="Валюты")],
+        },
+    )
 
     assert '<p class="muted">/templater/references/currency</p>' in html
     assert '<p class="muted">/references/currency</p>' not in html

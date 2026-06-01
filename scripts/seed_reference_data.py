@@ -1,4 +1,4 @@
-"""Idempotently seed default reference values (currencies, types, banks, citizenships).
+"""Idempotently seed default reference values (currencies).
 
 Run via `python -m scripts.seed_reference_data`. Existing rows (matched by
 entity_type + code) are left untouched.
@@ -26,37 +26,6 @@ SEED: dict[str, list[dict[str, Any]]] = {
         {"code": "CHF", "name": "Швейцарский франк", "attributes": {"iso_code": "CHF", "numeric_code": "756", "symbol": "Fr"}},
         {"code": "JPY", "name": "Японская иена", "attributes": {"iso_code": "JPY", "numeric_code": "392", "symbol": "¥"}},
         {"code": "TRY", "name": "Турецкая лира", "attributes": {"iso_code": "TRY", "numeric_code": "949", "symbol": "₺"}},
-    ],
-    "account_type": [
-        {"code": "current", "name": "Текущий"},
-        {"code": "savings", "name": "Сберегательный"},
-        {"code": "deposit", "name": "Депозитный"},
-        {"code": "card", "name": "Карточный"},
-        {"code": "loan", "name": "Ссудный"},
-        {"code": "escrow", "name": "Эскроу"},
-    ],
-    "card_type": [
-        {"code": "debit", "name": "Дебетовая"},
-        {"code": "credit", "name": "Кредитная"},
-        {"code": "prepaid", "name": "Предоплаченная"},
-        {"code": "virtual", "name": "Виртуальная"},
-    ],
-    "bank": [
-        {"code": "SBER", "name": "Сбербанк", "attributes": {"bic": "044525225", "swift": "SABRRUMM", "country": "RU"}},
-        {"code": "TINKOFF", "name": "Тинькофф Банк", "attributes": {"bic": "044525974", "swift": "TICSRUMM", "country": "RU"}},
-        {"code": "VTB", "name": "ВТБ", "attributes": {"bic": "044525187", "swift": "VTBRRUMM", "country": "RU"}},
-        {"code": "ALFA", "name": "Альфа-Банк", "attributes": {"bic": "044525593", "swift": "ALFARUMM", "country": "RU"}},
-        {"code": "GAZ", "name": "Газпромбанк", "attributes": {"bic": "044525823", "swift": "GAZPRUMM", "country": "RU"}},
-    ],
-    "citizenship": [
-        {"code": "RU", "name": "Россия", "attributes": {"iso2": "RU", "iso3": "RUS"}},
-        {"code": "BY", "name": "Беларусь", "attributes": {"iso2": "BY", "iso3": "BLR"}},
-        {"code": "KZ", "name": "Казахстан", "attributes": {"iso2": "KZ", "iso3": "KAZ"}},
-        {"code": "UA", "name": "Украина", "attributes": {"iso2": "UA", "iso3": "UKR"}},
-        {"code": "US", "name": "США", "attributes": {"iso2": "US", "iso3": "USA"}},
-        {"code": "CN", "name": "Китай", "attributes": {"iso2": "CN", "iso3": "CHN"}},
-        {"code": "DE", "name": "Германия", "attributes": {"iso2": "DE", "iso3": "DEU"}},
-        {"code": "GB", "name": "Великобритания", "attributes": {"iso2": "GB", "iso3": "GBR"}},
     ],
 }
 

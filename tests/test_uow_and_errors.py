@@ -110,12 +110,21 @@ class FailingReferenceRepository:
         raise IntegrityError("insert reference", None, Exception("duplicate"))
 
 
+class FakeReferenceTypeRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def exists(self, code: str) -> bool:
+        return True
+
+
 @pytest.mark.asyncio
 async def test_reference_create_wraps_unique_race(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = RecordingSession()
     monkeypatch.setattr(references, "ReferenceValueRepository", FailingReferenceRepository)
+    monkeypatch.setattr(references, "ReferenceTypeRepository", FakeReferenceTypeRepository)
     monkeypatch.setattr(references, "AttributeSchemaService", FakeAttributeSchemaService)
 
     with pytest.raises(IntegrityViolation):

@@ -10,8 +10,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
-    ALL_ATTR_ENTITY_TYPES,
-    REFERENCE_TYPES,
+    DATA_ENTITY_TYPES,
     Account,
     AttributeDefinition,
     Card,
@@ -27,6 +26,7 @@ from app.repositories.entity import (
     ClientRepository,
 )
 from app.repositories.reference import ReferenceValueRepository
+from app.repositories.reference_type import ReferenceTypeRepository
 from app.repositories.template import TemplateRepository
 from app.schemas.attribute import ALLOWED_TYPES
 from app.schemas.exchange import ExportPackage, ExportRequest, ImportSummary
@@ -210,16 +210,17 @@ class ExportImportService:
         client_objs = await self.clients.get_many(list(client_ids))
 
         # collect reference IDs used in attributes
+        ref_codes = set(await ReferenceTypeRepository(self.session).codes())
         all_defs = await self.attrs.list_all()
         ref_attrs_by_owner: dict[str, list[tuple[str, str]]] = {}
         for d in all_defs:
             if d.data_type != "ref":
                 continue
             target = _as_dict(d.options).get("ref_entity")
-            if target in REFERENCE_TYPES:
+            if target in ref_codes:
                 ref_attrs_by_owner.setdefault(d.entity_type, []).append((d.name, target))
 
-        ref_ids: dict[str, set[uuid.UUID]] = {t: set() for t in REFERENCE_TYPES}
+        ref_ids: dict[str, set[uuid.UUID]] = {t: set() for t in ref_codes}
         for entity_type, items in (("client", client_objs), ("account", account_objs), ("card", card_objs)):
             for o in items:
                 for attr_name, target_type in ref_attrs_by_owner.get(entity_type, []):
@@ -314,6 +315,11 @@ class ExportImportService:
         if shape_errors:
             return _zeroed_summary()
 
+        # Reference types are data, not code: snapshot the current set once (after
+        # the cheap shape guards above, which must not touch the DB).
+        ref_codes = set(await ReferenceTypeRepository(self.session).codes())
+        all_attr_types = set(DATA_ENTITY_TYPES) | ref_codes
+
         def conflict(kind: str, raw: dict[str, Any]) -> bool:
             """Record a conflict according to ``policy``. Returns True if caller
             should stop processing this row (skip / fail), False if caller may
@@ -355,7 +361,7 @@ class ExportImportService:
                 # are validated up front regardless of policy.
                 entity_type_raw = raw.get("entity_type")
                 raw_name = raw.get("name")
-                if not isinstance(entity_type_raw, str) or entity_type_raw not in ALL_ATTR_ENTITY_TYPES:
+                if not isinstance(entity_type_raw, str) or entity_type_raw not in all_attr_types:
                     errors.append(f"attribute_schema {raw_name}: неизвестный entity_type '{entity_type_raw}'")
                     continue
                 entity_type = entity_type_raw
@@ -403,7 +409,7 @@ class ExportImportService:
                     continue
 
                 options = _as_dict(raw.get("options"))
-                if data_type == "ref" and options.get("ref_entity") not in REFERENCE_TYPES:
+                if data_type == "ref" and options.get("ref_entity") not in ref_codes:
                     errors.append(f"attribute_schema {entity_type}/{name}: ref_entity вне справочников")
                     continue
                 if data_type == "enum" and not (
@@ -532,7 +538,7 @@ class ExportImportService:
         # Prefetch existing references so the per-row lookups below are dict hits
         # instead of 2-3 queries each (autoflush is off and nothing is committed
         # mid-loop, so a snapshot taken now matches what live queries would return).
-        present_ref_types = [t for t in references_map if t in REFERENCE_TYPES]
+        present_ref_types = [t for t in references_map if t in ref_codes]
         existing_ref_by_id: dict[str, ReferenceValue] = {}
         existing_ref_by_code: dict[tuple[str, str], ReferenceValue] = {}
         if present_ref_types:
@@ -569,7 +575,7 @@ class ExportImportService:
                 ):
                     existing_ref_by_id[str(row.id)] = row
         for ref_type, items in references_map.items():
-            if ref_type not in REFERENCE_TYPES:
+            if ref_type not in ref_codes:
                 errors.append(f"references: неизвестный тип справочника '{ref_type}'")
                 continue
             if not isinstance(items, list):

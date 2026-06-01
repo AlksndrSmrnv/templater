@@ -10,7 +10,6 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.db.models import ALL_ATTR_ENTITY_TYPES, REFERENCE_TYPES
 from app.repositories.settings import SettingsRepository
 from app.routes.deps import SessionDep, TemplatesDep
 from app.routes.htmx_utils import (
@@ -27,6 +26,7 @@ from app.schemas.attribute import (
     AttributeDefinitionUpdate,
 )
 from app.services.attribute_schema import AttributeSchemaService
+from app.services.reference_types import ReferenceTypeService
 from app.utils.errors import DomainError
 
 router = APIRouter()
@@ -44,6 +44,7 @@ async def page_settings(
     svc = AttributeSchemaService(session)
     attributes = await svc.list_all()
     usage_counts = await svc.usage(attributes)
+    entity_types = await ReferenceTypeService(session).all_attr_entity_types()
     return templates.TemplateResponse(
         request,
         "settings.html",
@@ -51,7 +52,7 @@ async def page_settings(
             "active": "settings",
             "llm_active": s.llm_active,
             "llm_model": s.gigachat_model,
-            "entity_types": list(ALL_ATTR_ENTITY_TYPES),
+            "entity_types": entity_types,
             "attributes": attributes,
             "usage_counts": usage_counts,
             "selected_entity_type": "",
@@ -130,14 +131,16 @@ async def htmx_attribute_new(
     request: Request,
     entity_type: str = "",
     templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
 ) -> Response:
+    ref_svc = ReferenceTypeService(session)
     return templates.TemplateResponse(
         request,
         "partials/attribute_form.html",
         {
             "attribute": None,
-            "entity_types": list(ALL_ATTR_ENTITY_TYPES),
-            "reference_types": list(REFERENCE_TYPES),
+            "entity_types": await ref_svc.all_attr_entity_types(),
+            "reference_types": await ref_svc.codes(),
             "data_types": sorted(ALLOWED_TYPES),
             "selected_entity_type": entity_type,
         },
@@ -162,13 +165,14 @@ async def htmx_attribute_edit(
             details=exc.details,
             status_code=exc.status_code,
         )
+    ref_svc = ReferenceTypeService(session)
     return templates.TemplateResponse(
         request,
         "partials/attribute_form.html",
         {
             "attribute": attribute,
-            "entity_types": list(ALL_ATTR_ENTITY_TYPES),
-            "reference_types": list(REFERENCE_TYPES),
+            "entity_types": await ref_svc.all_attr_entity_types(),
+            "reference_types": await ref_svc.codes(),
             "data_types": sorted(ALLOWED_TYPES),
             "selected_entity_type": attribute.entity_type,
         },
