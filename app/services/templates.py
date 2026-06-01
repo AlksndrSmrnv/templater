@@ -294,6 +294,9 @@ class TemplateService:
         template.content = result["content"]
         template.placeholders = result["placeholders"]
         template.llm_meta = result["llm_meta"]
+        # Persist the LLM prompts/response so they stay viewable later — e.g.
+        # after a bulk "process collection" run from the collections menu.
+        template.llm_debug = result.get("llm_debug")
         await self.session.flush()
         return template
 

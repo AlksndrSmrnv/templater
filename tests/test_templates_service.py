@@ -160,6 +160,43 @@ async def test_analyze_content_returns_preview_without_mutating_model() -> None:
 
 
 @pytest.mark.asyncio
+async def test_analyze_persists_llm_debug_on_template() -> None:
+    # The debug must be stored on the template so it stays viewable after the
+    # fact — e.g. once a template was processed in bulk from the collections menu.
+    class FakeSession:
+        async def flush(self) -> None:
+            return None
+
+    svc = TemplateService(cast(Any, FakeSession()))
+    debug = {"system_prompt": "sys", "user_prompt": "usr", "response_text": "resp"}
+
+    async def fake_analyze_content(
+        *, fmt: str, original_content: str, llm_service: Any | None = None
+    ) -> dict[str, Any]:
+        return {
+            "content": original_content,
+            "placeholders": [],
+            "llm_meta": {"summary": "ok"},
+            "llm_debug": debug,
+        }
+
+    svc.analyze_content = fake_analyze_content  # type: ignore[method-assign]
+
+    template = SimpleNamespace(
+        format="json",
+        content='{"a":"x"}',
+        original_content='{"a":"x"}',
+        placeholders=[],
+        llm_meta={},
+        llm_debug=None,
+    )
+
+    await svc.analyze(cast(Any, template))
+
+    assert template.llm_debug == debug
+
+
+@pytest.mark.asyncio
 async def test_analyze_content_propagates_llm_debug() -> None:
     svc = TemplateService(cast(Any, SimpleNamespace()))
     debug = {
