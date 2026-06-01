@@ -428,8 +428,17 @@ async def htmx_delete(
     session: AsyncSession = SessionDep,
 ) -> Response:
     check_entity_type(entity_type)
-    await _delete_entity(session, entity_type, entity_id)
-    await commit_or_409(session, message="Не удалось удалить запись — есть связанные данные")
+    try:
+        await _delete_entity(session, entity_type, entity_id)
+        await commit_or_409(session, message="Не удалось удалить запись — есть связанные данные")
+    except DomainError as exc:
+        # Статус 200 (а не exc.status_code): htmx 2.0 по умолчанию не обрабатывает
+        # HX-Trigger на 4xx-ответах, поэтому тост не показался бы. Та же конвенция,
+        # что и в templates_reg.py.
+        return Response(
+            status_code=200,
+            headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
+        )
     headers = {"HX-Trigger": toast_header("Удалено", refresh_entities=True, close_drawer=True)}
     if redirect:
         headers["HX-Redirect"] = f"/templater/{entity_type}s"
