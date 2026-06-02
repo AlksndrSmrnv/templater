@@ -25,6 +25,14 @@ class TemplateRepository:
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def list_ungrouped(self) -> list[MessageTemplate]:
+        stmt = (
+            select(MessageTemplate)
+            .where(MessageTemplate.collection_id.is_(None))
+            .order_by(MessageTemplate.display_order, MessageTemplate.created_at)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def delete_by_collection(self, collection_id: uuid.UUID) -> int:
         templates = await self.list_by_collection(collection_id)
         for template in templates:

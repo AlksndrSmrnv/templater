@@ -807,6 +807,26 @@ def test_collections_tree_shows_ungrouped_and_empty_state() -> None:
     assert "Пока нет шаблонов" in empty
 
 
+def test_collections_tree_renders_root_folders_block() -> None:
+    item = _tree_template("Loose grouped")
+    context = {
+        "collection_nodes": [],
+        "root_tree": {"folders": {"Inbox": {"folders": {}, "templates": [item]}}, "templates": []},
+        "ungrouped_tree": {"folders": {}, "templates": []},
+        "ungrouped_count": 0,
+        "search": "",
+    }
+    html = render_template("partials/collections_tree.html", context)
+    assert "Папки" in html
+    assert "Inbox" in html
+    # Root folder ops target the dedicated /collections/root/folders endpoints.
+    forms = [tag for tag in start_tags(html, "form") if tag.get("hx-post")]
+    assert any(
+        (tag.get("hx-post") or "").endswith("/collections/root/folders") for tag in forms
+    )
+    assert "Пока нет шаблонов" not in html  # root folders count as content
+
+
 def test_collections_tree_process_button_enabled_when_llm_inactive() -> None:
     item = _tree_template("A2A Transfer")
     tree = {"folders": {}, "templates": [item]}
