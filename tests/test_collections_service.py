@@ -9,7 +9,11 @@ from types import SimpleNamespace
 import pytest
 
 from app.db.models import Collection, MessageTemplate
-from app.services.collections import CollectionService, build_folder_tree
+from app.services.collections import (
+    ROOT_FOLDERS_KEY,
+    CollectionService,
+    build_folder_tree,
+)
 from app.services.templates import TemplateService
 from app.utils.errors import ValidationFailed
 
@@ -128,7 +132,11 @@ def _tpl_in(coll_id: uuid.UUID, name: str, folder_path: list[str], order: int) -
 
 class _FakeCollectionRepo:
     def __init__(self, collections: list[SimpleNamespace]) -> None:
+        self.collections = collections
         self.by_id = {c.id: c for c in collections}
+
+    async def list_all(self) -> list[SimpleNamespace]:
+        return list(self.collections)
 
     async def get(self, collection_id: uuid.UUID) -> SimpleNamespace | None:
         return self.by_id.get(collection_id)
@@ -138,8 +146,14 @@ class _FakeTemplateRepo:
     def __init__(self, templates: list[SimpleNamespace]) -> None:
         self.templates = templates
 
+    async def list_all(self) -> list[SimpleNamespace]:
+        return list(self.templates)
+
     async def list_by_collection(self, collection_id: uuid.UUID) -> list[SimpleNamespace]:
         return [t for t in self.templates if t.collection_id == collection_id]
+
+    async def list_ungrouped(self) -> list[SimpleNamespace]:
+        return [t for t in self.templates if getattr(t, "collection_id", None) is None]
 
     async def get(self, template_id: uuid.UUID) -> SimpleNamespace | None:
         return next((t for t in self.templates if t.id == template_id), None)
@@ -149,12 +163,29 @@ class _FakeTemplateRepo:
         return [t for t in self.templates if t.id in wanted]
 
 
+class _FakeSettingsRepo:
+    """Key/value stand-in for ``SettingsRepository`` backed by a plain dict."""
+
+    def __init__(self, values: dict[str, object] | None = None) -> None:
+        self.values = dict(values or {})
+
+    async def get(self, key: str, default: object = None) -> object:
+        return self.values.get(key, default)
+
+    async def set(self, key: str, value: object) -> None:
+        self.values[key] = value
+
+
 def _service(
-    collections: list[SimpleNamespace], templates: list[SimpleNamespace]
+    collections: list[SimpleNamespace],
+    templates: list[SimpleNamespace],
+    *,
+    settings: _FakeSettingsRepo | None = None,
 ) -> CollectionService:
     svc = CollectionService(FakeSession())  # type: ignore[arg-type]
     svc.repo = _FakeCollectionRepo(collections)  # type: ignore[assignment]
     svc.templates = _FakeTemplateRepo(templates)  # type: ignore[assignment]
+    svc.settings = settings or _FakeSettingsRepo()  # type: ignore[assignment]
     return svc
 
 
@@ -258,3 +289,75 @@ async def test_move_request_across_collections_and_to_ungrouped() -> None:
     # Drop into "Без коллекции": collection None, root folder.
     await svc.move_request(t.id, None, [], [t.id])
     assert t.collection_id is None and t.folder_path == []
+
+
+# ---- root-level folders (collection_id=None) ----------------------------------
+
+
+def _tpl_root(name: str, folder_path: list[str], order: int) -> SimpleNamespace:
+    t = _tpl(name, folder_path, order)
+    t.collection_id = None
+    return t
+
+
+@pytest.mark.asyncio
+async def test_root_create_folder_persists_to_settings() -> None:
+    settings = _FakeSettingsRepo()
+    svc = _service([], [], settings=settings)
+
+    path = await svc.create_folder(None, [], "Inbox")
+    assert path == ["Inbox"]
+    assert settings.values[ROOT_FOLDERS_KEY] == [["Inbox"]]
+
+    # Subfolder under an existing root folder.
+    await svc.create_folder(None, ["Inbox"], "Urgent")
+    assert ["Inbox", "Urgent"] in settings.values[ROOT_FOLDERS_KEY]
+
+    with pytest.raises(ValidationFailed):
+        await svc.create_folder(None, [], "Inbox")  # duplicate
+    with pytest.raises(ValidationFailed):
+        await svc.create_folder(None, ["Ghost"], "x")  # parent missing
+
+
+@pytest.mark.asyncio
+async def test_root_rename_folder_reprefixes_ungrouped_templates() -> None:
+    settings = _FakeSettingsRepo({ROOT_FOLDERS_KEY: [["Transfers"], ["Transfers", "A2A"]]})
+    inside = _tpl_root("b", ["Transfers", "A2A"], 0)
+    svc = _service([], [inside], settings=settings)
+
+    new_path = await svc.rename_folder(None, ["Transfers"], "Payments")
+    assert new_path == ["Payments"]
+    assert inside.folder_path == ["Payments", "A2A"]
+    assert settings.values[ROOT_FOLDERS_KEY] == [["Payments"], ["Payments", "A2A"]]
+
+
+@pytest.mark.asyncio
+async def test_root_delete_folder_only_when_empty() -> None:
+    settings = _FakeSettingsRepo({ROOT_FOLDERS_KEY: [["Empty"], ["Full"]]})
+    full = _tpl_root("t", ["Full"], 0)
+    svc = _service([], [full], settings=settings)
+
+    await svc.delete_folder(None, ["Empty"])
+    assert settings.values[ROOT_FOLDERS_KEY] == [["Full"]]
+
+    with pytest.raises(ValidationFailed):
+        await svc.delete_folder(None, ["Full"])  # not empty
+    assert settings.values[ROOT_FOLDERS_KEY] == [["Full"]]
+
+
+@pytest.mark.asyncio
+async def test_build_workspace_tree_splits_root_folders_and_loose() -> None:
+    settings = _FakeSettingsRepo({ROOT_FOLDERS_KEY: [["Inbox"], ["Inbox", "Urgent"]]})
+    in_folder = _tpl_root("grouped", ["Inbox"], 0)
+    loose = _tpl_root("loose", [], 1)
+    svc = _service([], [in_folder, loose], settings=settings)
+
+    tree = await svc.build_workspace_tree()
+    # Root folders (incl. the empty subfolder) surface at the top.
+    assert "Inbox" in tree["root_tree"]["folders"]
+    assert "Urgent" in tree["root_tree"]["folders"]["Inbox"]["folders"]
+    assert [t.name for t in tree["root_tree"]["folders"]["Inbox"]["templates"]] == ["grouped"]
+    assert tree["root_tree"]["templates"] == []
+    # Only the truly loose template stays in "Без коллекции".
+    assert [t.name for t in tree["ungrouped_tree"]["templates"]] == ["loose"]
+    assert tree["ungrouped_count"] == 1

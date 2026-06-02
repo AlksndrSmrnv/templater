@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Collection, MessageTemplate
 from app.llm.runner import llm_service
 from app.repositories.collection import CollectionRepository
+from app.repositories.settings import SettingsRepository
 from app.repositories.template import TemplateRepository
 from app.schemas.collection import ImportCollectionSummary, ProcessCollectionSummary
 from app.services.importers import parse_postman_collection
@@ -25,6 +26,12 @@ from app.services.templates import TemplateService, apply_dynamic_headers
 from app.utils.errors import NotFoundError, ValidationFailed
 
 log = logging.getLogger(__name__)
+
+# ``AppSetting`` key holding the root-level folder list (folders for templates
+# that belong to no collection). Mirrors ``Collection.folders`` in shape:
+# ``list[list[str]]``. Lets empty root folders survive a tree rebuild, just like
+# a collection's own ``folders`` column does for grouped templates.
+ROOT_FOLDERS_KEY = "root_folders"
 
 
 def _haystack(template: MessageTemplate) -> str:
@@ -123,6 +130,7 @@ class CollectionService:
         self.session = session
         self.repo = CollectionRepository(session)
         self.templates = TemplateRepository(session)
+        self.settings = SettingsRepository(session)
 
     async def list_all(self) -> list[Collection]:
         return await self.repo.list_all()
@@ -161,10 +169,23 @@ class CollectionService:
                     "tree": build_folder_tree(items, extra_folders=collection.folders),
                 }
             )
+
+        # Root-level folders live at the top of the tree, as siblings of the
+        # collections. ``ungrouped_full`` nests the no-collection templates by
+        # their ``folder_path`` and seeds the explicit (possibly empty) root
+        # folders; we split it so folders render in the top "Папки" block and the
+        # truly loose templates (empty folder_path) stay in "Без коллекции". While
+        # searching we don't seed empty folders, so the tree shows only matches.
+        root_folders = await self.settings.get(ROOT_FOLDERS_KEY) or []
+        ungrouped_full = build_folder_tree(
+            ungrouped, extra_folders=None if query else root_folders
+        )
+        loose = ungrouped_full["templates"]
         return {
             "collection_nodes": collection_nodes,
-            "ungrouped_tree": build_folder_tree(ungrouped),
-            "ungrouped_count": len(ungrouped),
+            "root_tree": {"folders": ungrouped_full["folders"], "templates": []},
+            "ungrouped_tree": {"folders": {}, "templates": loose},
+            "ungrouped_count": len(loose),
             "search": search,
         }
 
@@ -220,35 +241,63 @@ class CollectionService:
         await self.repo.delete(collection)
         return removed
 
+    async def _folder_context(
+        self, collection_id: uuid.UUID | None
+    ) -> tuple[list[list[str]], list[MessageTemplate]]:
+        """Load the explicit folder list and the relevant templates for a folder
+        space. ``collection_id is None`` is the root space: folders come from the
+        ``root_folders`` app setting and templates are the ungrouped ones."""
+
+        if collection_id is None:
+            folders = list(await self.settings.get(ROOT_FOLDERS_KEY) or [])
+            templates = await self.templates.list_ungrouped()
+            return folders, templates
+        collection = await self.get(collection_id)
+        templates = await self.templates.list_by_collection(collection_id)
+        return collection.folders, templates
+
+    async def _save_folders(
+        self, collection_id: uuid.UUID | None, folders: list[list[str]]
+    ) -> None:
+        """Persist an updated folder list back to its home (app setting for the
+        root space, ``Collection.folders`` otherwise)."""
+
+        if collection_id is None:
+            await self.settings.set(ROOT_FOLDERS_KEY, folders)
+        else:
+            collection = await self.get(collection_id)  # identity map hit; cheap
+            collection.folders = folders
+        await self.session.flush()
+
     async def create_folder(
-        self, collection_id: uuid.UUID, parent_path: list[str], name: str
+        self, collection_id: uuid.UUID | None, parent_path: list[str], name: str
     ) -> list[str]:
         """Add an (initially empty) folder under ``parent_path``. Persisted on the
-        collection so it survives until requests are dropped into it."""
+        collection (or the root-folders setting) so it survives until requests are
+        dropped into it. ``collection_id is None`` targets the root space."""
 
-        collection = await self.get(collection_id)
+        folders, templates = await self._folder_context(collection_id)
         parent = _norm_path(parent_path)
         clean_name = name.strip()
         if not clean_name:
             raise ValidationFailed("Имя папки не может быть пустым")
         new_path = [*parent, clean_name]
-        templates = await self.templates.list_by_collection(collection_id)
-        existing = _all_folder_paths(collection.folders, templates)
+        existing = _all_folder_paths(folders, templates)
         if parent and tuple(parent) not in existing:
             raise ValidationFailed("Родительская папка не найдена")
         if tuple(new_path) in existing:
             raise ValidationFailed("Папка с таким именем уже существует")
-        collection.folders = [*collection.folders, new_path]
-        await self.session.flush()
+        await self._save_folders(collection_id, [*folders, new_path])
         return new_path
 
     async def rename_folder(
-        self, collection_id: uuid.UUID, path: list[str], new_name: str
+        self, collection_id: uuid.UUID | None, path: list[str], new_name: str
     ) -> list[str]:
         """Rename the folder at ``path`` to ``new_name``, re-prefixing every
-        descendant folder path on both templates and the explicit folder list."""
+        descendant folder path on both templates and the explicit folder list.
+        ``collection_id is None`` targets the root space."""
 
-        collection = await self.get(collection_id)
+        folders, templates = await self._folder_context(collection_id)
         old_path = _norm_path(path)
         if not old_path:
             raise ValidationFailed("Не указана папка для переименования")
@@ -257,8 +306,7 @@ class CollectionService:
             raise ValidationFailed("Имя папки не может быть пустым")
         new_path = [*old_path[:-1], clean_name]
 
-        templates = await self.templates.list_by_collection(collection_id)
-        all_paths = _all_folder_paths(collection.folders, templates)
+        all_paths = _all_folder_paths(folders, templates)
         # Validate the folder exists *before* the no-op short-circuit, otherwise
         # renaming a missing folder to its own name would falsely report success.
         if tuple(old_path) not in all_paths:
@@ -277,42 +325,43 @@ class CollectionService:
                 template.folder_path = [*new_path, *fp[len(old_path):]]
 
         updated_folders: list[list[str]] = []
-        for raw in collection.folders:
+        for raw in folders:
             segments = _norm_path(raw)
             if _starts_with(segments, old_path):
                 updated_folders.append([*new_path, *segments[len(old_path):]])
             else:
                 updated_folders.append(segments)
-        collection.folders = updated_folders
-        await self.session.flush()
+        await self._save_folders(collection_id, updated_folders)
         return new_path
 
-    async def delete_folder(self, collection_id: uuid.UUID, path: list[str]) -> None:
+    async def delete_folder(
+        self, collection_id: uuid.UUID | None, path: list[str]
+    ) -> None:
         """Delete an empty folder. Refuses if any request or sub-folder lives under
-        it — the caller must move/remove the contents first."""
+        it — the caller must move/remove the contents first. ``collection_id is
+        None`` targets the root space."""
 
-        collection = await self.get(collection_id)
+        folders, templates = await self._folder_context(collection_id)
         target = _norm_path(path)
         if not target:
             raise ValidationFailed("Не указана папка для удаления")
-        templates = await self.templates.list_by_collection(collection_id)
-        if tuple(target) not in _all_folder_paths(collection.folders, templates):
+        if tuple(target) not in _all_folder_paths(folders, templates):
             raise ValidationFailed("Папка не найдена")
         has_templates = any(
             _starts_with(_norm_path(t.folder_path), target) for t in templates
         )
         has_children = any(
             len(p := _norm_path(raw)) > len(target) and _starts_with(p, target)
-            for raw in collection.folders
+            for raw in folders
         )
         if has_templates or has_children:
             raise ValidationFailed(
                 "Папка не пуста — сначала переместите или удалите вложенные запросы и папки"
             )
-        collection.folders = [
-            segments for raw in collection.folders if (segments := _norm_path(raw)) != target
-        ]
-        await self.session.flush()
+        await self._save_folders(
+            collection_id,
+            [segments for raw in folders if (segments := _norm_path(raw)) != target],
+        )
 
     async def move_request(
         self,

@@ -148,13 +148,15 @@ async def htmx_delete_collection(
     )
 
 
-@router.post("/collections/{collection_id}/folders")
-async def htmx_create_folder(
-    collection_id: uuid.UUID,
+async def _create_folder(
+    collection_id: uuid.UUID | None,
     request: Request,
-    templates: Jinja2Templates = TemplatesDep,
-    session: AsyncSession = SessionDep,
+    templates: Jinja2Templates,
+    session: AsyncSession,
 ) -> Response:
+    """Shared body for collection and root folder creation. ``collection_id is
+    None`` targets the root space."""
+
     form = await request.form()
     parent = _parse_path(form_str(form, "parent"))
     name = form_str(form, "name")
@@ -177,12 +179,11 @@ async def htmx_create_folder(
     )
 
 
-@router.post("/collections/{collection_id}/folders/rename")
-async def htmx_rename_folder(
-    collection_id: uuid.UUID,
+async def _rename_folder(
+    collection_id: uuid.UUID | None,
     request: Request,
-    templates: Jinja2Templates = TemplatesDep,
-    session: AsyncSession = SessionDep,
+    templates: Jinja2Templates,
+    session: AsyncSession,
 ) -> Response:
     form = await request.form()
     path = _parse_path(form_str(form, "path"))
@@ -206,12 +207,11 @@ async def htmx_rename_folder(
     )
 
 
-@router.delete("/collections/{collection_id}/folders")
-async def htmx_delete_folder(
-    collection_id: uuid.UUID,
+async def _delete_folder(
+    collection_id: uuid.UUID | None,
     request: Request,
-    templates: Jinja2Templates = TemplatesDep,
-    session: AsyncSession = SessionDep,
+    templates: Jinja2Templates,
+    session: AsyncSession,
 ) -> Response:
     form = await request.form()
     path = _parse_path(form_str(form, "path"))
@@ -232,6 +232,67 @@ async def htmx_delete_folder(
         session,
         headers={"HX-Trigger": toast_header("Папка удалена")},
     )
+
+
+# Root-folder routes MUST be declared before the ``/collections/{collection_id}``
+# ones: FastAPI captures ``{collection_id}`` as a string at routing time and only
+# validates it as a UUID afterwards, so the literal ``root`` would otherwise match
+# the parametrized route and 422 before reaching these handlers.
+@router.post("/collections/root/folders")
+async def htmx_create_root_folder(
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    return await _create_folder(None, request, templates, session)
+
+
+@router.post("/collections/root/folders/rename")
+async def htmx_rename_root_folder(
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    return await _rename_folder(None, request, templates, session)
+
+
+@router.delete("/collections/root/folders")
+async def htmx_delete_root_folder(
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    return await _delete_folder(None, request, templates, session)
+
+
+@router.post("/collections/{collection_id}/folders")
+async def htmx_create_folder(
+    collection_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    return await _create_folder(collection_id, request, templates, session)
+
+
+@router.post("/collections/{collection_id}/folders/rename")
+async def htmx_rename_folder(
+    collection_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    return await _rename_folder(collection_id, request, templates, session)
+
+
+@router.delete("/collections/{collection_id}/folders")
+async def htmx_delete_folder(
+    collection_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    return await _delete_folder(collection_id, request, templates, session)
 
 
 @router.post("/collections/move-request")

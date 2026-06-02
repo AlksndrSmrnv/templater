@@ -1,4 +1,4 @@
-{% macro render_node(node, collection_id, path, editable) %}
+{% macro render_node(node, collection_id, folder_ns, path, editable) %}
     {% for folder_name, child in node.folders.items() %}
     {% set fpath = path + [folder_name] %}
     <li class="tree-folder" x-data="{ open: true, editing: false, creating: false }">
@@ -8,7 +8,7 @@
             <span class="tree-folder-name" x-show="!editing" @click="open = !open">{{ folder_name }}</span>
             {% if editable %}
             <form class="tree-inline-form" x-show="editing" x-cloak
-                  hx-post="/templater/collections/{{ collection_id }}/folders/rename"
+                  hx-post="/templater/collections/{{ folder_ns }}/folders/rename"
                   hx-target="#collections-tree" hx-swap="innerHTML">
                 <input type="hidden" name="path" value="{{ fpath | tojson | forceescape }}">
                 <input class="tree-rename-input" type="text" name="name" value="{{ folder_name }}"
@@ -23,7 +23,7 @@
                 <a class="tree-act" title="Новый запрос в этой папке"
                    href="/templater/templates/new?collection_id={{ collection_id }}&folder={{ fpath | tojson | urlencode }}">+</a>
                 <button type="button" class="tree-act danger" title="Удалить папку (только пустую)"
-                        hx-delete="/templater/collections/{{ collection_id }}/folders"
+                        hx-delete="/templater/collections/{{ folder_ns }}/folders"
                         hx-vals="{{ {'path': (fpath | tojson)} | tojson | forceescape }}"
                         hx-confirm="Удалить папку «{{ folder_name }}»?"
                         hx-target="#collections-tree" hx-swap="innerHTML">🗑</button>
@@ -32,7 +32,7 @@
         </div>
         {% if editable %}
         <form class="tree-inline-form tree-subfolder-form" x-show="creating" x-cloak
-              hx-post="/templater/collections/{{ collection_id }}/folders"
+              hx-post="/templater/collections/{{ folder_ns }}/folders"
               hx-target="#collections-tree" hx-swap="innerHTML">
             <input type="hidden" name="parent" value="{{ fpath | tojson | forceescape }}">
             <input type="text" name="name" placeholder="Имя подпапки" required @click.stop>
@@ -41,7 +41,7 @@
         <ul class="tree-list" x-show="open"
             data-collection-id="{{ collection_id }}"
             data-folder-path="{{ fpath | tojson | forceescape }}">
-            {{ render_node(child, collection_id, fpath, editable) }}
+            {{ render_node(child, collection_id, folder_ns, fpath, editable) }}
         </ul>
     </li>
     {% endfor %}
@@ -60,6 +60,33 @@
     </li>
     {% endfor %}
 {% endmacro %}
+
+{% set root_tree = root_tree | default({"folders": {}, "templates": []}) %}
+{% if not search or root_tree.folders %}
+<div class="tree-collection" x-data="{ open: true, creating: false }">
+    <div class="tree-collection-head">
+        <div class="tree-collection-title" @click="open = !open">
+            <span class="tree-caret" x-text="open ? '▾' : '▸'"></span>
+            <span class="tree-collection-icon">📁</span>
+            <span class="tree-collection-name">Папки</span>
+        </div>
+        <div class="tree-collection-actions">
+            <button class="btn small" title="Новая папка в корне"
+                    @click.stop="creating = !creating">📁+</button>
+        </div>
+    </div>
+    <form class="tree-inline-form" x-show="creating" x-cloak
+          hx-post="/templater/collections/root/folders"
+          hx-target="#collections-tree" hx-swap="innerHTML">
+        <input type="hidden" name="parent" value="[]">
+        <input type="text" name="name" placeholder="Имя папки" required>
+    </form>
+    <ul class="tree-list tree-root" x-show="open"
+        data-collection-id="" data-folder-path="[]">
+        {{ render_node(root_tree, "", "root", [], true) }}
+    </ul>
+</div>
+{% endif %}
 
 {% for cn in collection_nodes %}
 <div class="tree-collection" x-data="{ open: true, creating: false }">
@@ -98,7 +125,7 @@
     </form>
     <ul class="tree-list tree-root" x-show="open"
         data-collection-id="{{ cn.collection.id }}" data-folder-path="[]">
-        {{ render_node(cn.tree, cn.collection.id|string, [], true) }}
+        {{ render_node(cn.tree, cn.collection.id|string, cn.collection.id|string, [], true) }}
     </ul>
 </div>
 {% endfor %}
@@ -115,12 +142,12 @@
     </div>
     <ul class="tree-list tree-root" x-show="open"
         data-collection-id="" data-folder-path="[]">
-        {{ render_node(ungrouped_tree, "", [], false) }}
+        {{ render_node(ungrouped_tree, "", "", [], false) }}
     </ul>
 </div>
 {% endif %}
 
-{% if not collection_nodes and not ungrouped_count %}
+{% if not collection_nodes and not ungrouped_count and not root_tree.folders %}
 <p class="muted tree-empty">
     {% if search %}Ничего не найдено.{% else %}Пока нет шаблонов. Импортируйте коллекцию или создайте шаблон.{% endif %}
 </p>
