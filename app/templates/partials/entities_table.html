@@ -34,7 +34,7 @@
                 {% set raw = (row.attributes or {}).get(field.name) %}
                 <td>
                     {% if field.data_type == "bool" %}
-                        {% if raw %}<iconify-icon icon="lucide:check"></iconify-icon>{% else %}<iconify-icon icon="lucide:x" style="color:var(--muted)"></iconify-icon>{% endif %}
+                        {% if raw %}✓{% else %}<span class="muted">✗</span>{% endif %}
                     {% else %}
                         {{ raw or "" }}
                     {% endif %}
