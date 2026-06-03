@@ -171,6 +171,23 @@ async def test_update_enum_rejects_empty_values() -> None:
     assert attr.options == {"values": ["USD", "EUR"]}
 
 
+async def test_update_enum_rejection_does_not_mutate_other_fields() -> None:
+    # A rejected enum update must be atomic: validation happens before any field is
+    # mutated, so label/is_required/etc. stay untouched (no half-applied dirty state).
+    attr = _enum_attr()
+    svc = _update_service(attr)
+    with pytest.raises(ValidationFailed, match="enum"):
+        await svc.update(
+            attr.id,
+            AttributeDefinitionUpdate(
+                label="New label", is_required=True, options={"values": []}
+            ),
+        )
+    assert attr.label == "Валюта"
+    assert attr.is_required is False
+    assert attr.options == {"values": ["USD", "EUR"]}
+
+
 async def test_update_enum_accepts_new_values() -> None:
     attr = _enum_attr()
     svc = _update_service(attr)

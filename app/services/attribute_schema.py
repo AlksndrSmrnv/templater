@@ -76,6 +76,13 @@ class AttributeSchemaService:
         attr = await self.attrs.get_by_id(attr_id)
         if attr is None:
             raise NotFoundError("Атрибут не найден")
+        # Validate everything before mutating the ORM object, so a rejected update
+        # can't leave the instance half-changed (dirty) for a later commit.
+        # data_type is immutable on update, so an enum attribute must keep a
+        # non-empty options.values — otherwise clearing the field would leave an
+        # empty dropdown and break validate_attributes() for stored values.
+        if data.options is not None and attr.data_type == "enum":
+            self._check_enum_options(data.options)
         if data.label is not None:
             attr.label = data.label
         if data.is_required is not None:
@@ -85,11 +92,6 @@ class AttributeSchemaService:
         if data.description is not None:
             attr.description = data.description
         if data.options is not None:
-            # data_type is immutable on update, so an enum attribute must keep a
-            # non-empty options.values — otherwise clearing the field would leave
-            # an empty dropdown and break validate_attributes() for stored values.
-            if attr.data_type == "enum":
-                self._check_enum_options(data.options)
             attr.options = data.options
         await self.session.flush()
         return attr
