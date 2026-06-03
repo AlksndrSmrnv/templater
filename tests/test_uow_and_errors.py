@@ -9,12 +9,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import main
-from app.db.models import AttributeDefinition, Client, ReferenceValue
+from app.db.models import AttributeDefinition, Client
 from app.routes.uow import commit_and_refresh, commit_or_409
 from app.schemas.attribute import AttributeDefinitionCreate
 from app.schemas.entity import ClientCreate
-from app.schemas.reference import ReferenceValueCreate
-from app.services import attribute_schema, entities, references
+from app.services import attribute_schema, entities
 from app.utils.errors import IntegrityViolation
 
 
@@ -97,42 +96,6 @@ async def test_client_service_create_does_not_commit(monkeypatch: pytest.MonkeyP
     assert client.attributes == {"fullName": "Alice"}
     assert session.commits == 0
     assert session.refreshed is None
-
-
-class FailingReferenceRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def get_by_code(self, entity_type: str, code: str) -> None:
-        return None
-
-    async def add(self, value: ReferenceValue) -> ReferenceValue:
-        raise IntegrityError("insert reference", None, Exception("duplicate"))
-
-
-class FakeReferenceTypeRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def exists(self, code: str) -> bool:
-        return True
-
-
-@pytest.mark.asyncio
-async def test_reference_create_wraps_unique_race(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    session = RecordingSession()
-    monkeypatch.setattr(references, "ReferenceValueRepository", FailingReferenceRepository)
-    monkeypatch.setattr(references, "ReferenceTypeRepository", FakeReferenceTypeRepository)
-    monkeypatch.setattr(references, "AttributeSchemaService", FakeAttributeSchemaService)
-
-    with pytest.raises(IntegrityViolation):
-        await references.ReferenceService(cast(AsyncSession, session)).create(
-            ReferenceValueCreate(entity_type="currency", code="USD", name="US Dollar")
-        )
-
-    assert session.rolled_back is True
 
 
 class FailingAttributeRepository:

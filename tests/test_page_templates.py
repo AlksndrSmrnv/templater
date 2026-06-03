@@ -122,25 +122,6 @@ def test_entity_form_uses_htmx_create_without_static_js() -> None:
     assert "/templater/static/js/entity-form.js" not in html
 
 
-def test_reference_form_serializes_page_context_as_json_literals() -> None:
-    html = render_template(
-        "references/form.html",
-        {
-            "active": "references",
-            "entity_type": "currency",
-            "title": "Валюта",
-            "value_id": "5f9a67c4-1111-2222-3333-444444444444",
-        },
-    )
-
-    page_line = next(line.strip() for line in html.splitlines() if line.strip().startswith("window.PAGE"))
-
-    assert page_line == 'window.PAGE = { entityType: "currency", valueId: "5f9a67c4-1111-2222-3333-444444444444" };'
-    assert "&#34;" not in page_line
-    assert 'hx-put="/templater/references-htmx/currency/5f9a67c4-1111-2222-3333-444444444444"' in html
-    assert "reference-form.js" not in html
-
-
 def test_list_pages_serialize_string_context_as_json_literals() -> None:
     entity_html = render_template(
         "entities/list.html",
@@ -151,7 +132,6 @@ def test_list_pages_serialize_string_context_as_json_literals() -> None:
             "schema": [SimpleNamespace(name="inn", label="ИНН")],
             "items": [],
             "items_total": 0,
-            "ref_options": {},
             "accounts_by_client": {},
             "cards_by_client": {},
             "cards_by_account": {},
@@ -159,29 +139,13 @@ def test_list_pages_serialize_string_context_as_json_literals() -> None:
             "labels": {"client": {}, "account": {}, "card": {}},
         },
     )
-    reference_html = render_template(
-        "references/list.html",
-        {
-            "active": "references",
-            "entity_type": "currency",
-            "title": "Currencies",
-        },
-    )
 
-    reference_page_line = next(
-        line.strip() for line in reference_html.splitlines() if line.strip().startswith("window.PAGE")
-    )
-
-    assert reference_page_line == 'window.PAGE = { entityType: "currency", isReference: true };'
-    assert "&#34;" not in reference_page_line
     assert "sort: &#34;created_at&#34;" in entity_html
     assert "direction: &#34;desc&#34;" in entity_html
     assert 'hx-get="/templater/entities-htmx/client/table"' in entity_html
     assert 'hx-trigger="input changed delay:200ms, refresh"' in entity_html
     assert '@input.debounce.200ms="dispatchFilters()"' in entity_html
     assert "window.PAGE" not in entity_html
-    assert 'hx-get="/templater/references-htmx/currency/table"' in reference_html
-    assert "reference-list.js" not in reference_html
 
 
 def test_entities_table_refresh_renders_rows_before_oob_meta() -> None:
@@ -235,7 +199,6 @@ def test_attribute_form_escapes_json_inside_x_data_attribute() -> None:
             "entity_types": ["client"],
             "selected_entity_type": "client",
             "data_types": ["string", "enum"],
-            "reference_types": [],
         },
     )
 
@@ -309,19 +272,6 @@ def test_filled_templates_table_copy_fetch_uses_templater_prefix() -> None:
 
     assert "fetch('/templater/filled-templates/3db678b1-1111-2222-3333-444444444444/raw')" in html
     assert "fetch('/filled-templates/" not in html
-
-
-def test_references_index_displays_templater_prefixed_paths() -> None:
-    html = render_template(
-        "references/index.html",
-        {
-            "active": "references",
-            "references": [SimpleNamespace(code="currency", icon="💱", title="Валюты")],
-        },
-    )
-
-    assert '<p class="muted">/templater/references/currency</p>' in html
-    assert '<p class="muted">/references/currency</p>' not in html
 
 
 def test_entity_list_has_table_meta_and_detail_drawer() -> None:

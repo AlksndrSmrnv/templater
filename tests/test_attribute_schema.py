@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AttributeDefinition
+from app.schemas.attribute import AttributeDefinitionUpdate
 from app.services.attribute_schema import AttributeSchemaService
 from app.utils.errors import ValidationFailed
 
@@ -127,3 +128,68 @@ async def test_reorder_rejects_duplicate_ids() -> None:
     svc.session = cast(AsyncSession, _FakeSession())
     with pytest.raises(ValidationFailed, match="не совпадает"):
         await svc.reorder("client", [a.id, b.id, a.id])
+
+
+class _GetByIdAttrRepo:
+    """Stub AttributeDefinitionRepository exposing only get_by_id (for update)."""
+
+    def __init__(self, attr: AttributeDefinition):
+        self._attr = attr
+
+    async def get_by_id(self, attr_id: uuid.UUID) -> AttributeDefinition:
+        return self._attr
+
+
+def _enum_attr() -> AttributeDefinition:
+    attr = AttributeDefinition(
+        entity_type="client",
+        name="currency",
+        label="Валюта",
+        data_type="enum",
+        is_required=False,
+        options={"values": ["USD", "EUR"]},
+    )
+    attr.id = uuid.uuid4()
+    return attr
+
+
+def _update_service(attr: AttributeDefinition) -> AttributeSchemaService:
+    svc = AttributeSchemaService(cast(AsyncSession, None))
+    svc.attrs = cast(Any, _GetByIdAttrRepo(attr))
+    svc.session = cast(AsyncSession, _FakeSession())
+    return svc
+
+
+async def test_update_enum_rejects_empty_values() -> None:
+    # Clearing enum_values in the edit UI must NOT save {"values": []} — that would
+    # leave an empty dropdown and break validate_attributes() for stored values.
+    attr = _enum_attr()
+    svc = _update_service(attr)
+    with pytest.raises(ValidationFailed, match="enum"):
+        await svc.update(attr.id, AttributeDefinitionUpdate(options={"values": []}))
+    # The stored options must be left untouched on the rejected update.
+    assert attr.options == {"values": ["USD", "EUR"]}
+
+
+async def test_update_enum_rejection_does_not_mutate_other_fields() -> None:
+    # A rejected enum update must be atomic: validation happens before any field is
+    # mutated, so label/is_required/etc. stay untouched (no half-applied dirty state).
+    attr = _enum_attr()
+    svc = _update_service(attr)
+    with pytest.raises(ValidationFailed, match="enum"):
+        await svc.update(
+            attr.id,
+            AttributeDefinitionUpdate(
+                label="New label", is_required=True, options={"values": []}
+            ),
+        )
+    assert attr.label == "Валюта"
+    assert attr.is_required is False
+    assert attr.options == {"values": ["USD", "EUR"]}
+
+
+async def test_update_enum_accepts_new_values() -> None:
+    attr = _enum_attr()
+    svc = _update_service(attr)
+    result = await svc.update(attr.id, AttributeDefinitionUpdate(options={"values": ["USD", "RUB"]}))
+    assert result.options == {"values": ["USD", "RUB"]}

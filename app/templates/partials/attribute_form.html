@@ -51,17 +51,9 @@
             <input type="text"
                    name="enum_values"
                    value="{{ ((options or {}).get('values', []) | join(', ')) if is_edit else '' }}"
-                   placeholder="vip, standard, blocked">
+                   placeholder="USD, EUR, RUB">
         </label>
-    </div>
-    <div class="form-section" x-show="dataType === 'ref'">
-        <label>Справочник
-            <select name="ref_entity">
-                {% for ref_type in reference_types %}
-                    <option value="{{ ref_type }}" {% if (options or {}).get("ref_entity") == ref_type %}selected{% endif %}>{{ ref_type }}</option>
-                {% endfor %}
-            </select>
-        </label>
+        <div class="muted" style="font-size:12px; margin-top:4px;">Перечислите допустимые значения через запятую — при создании записи поле станет выпадающим списком из этих значений.</div>
     </div>
     <div class="form-section">
         <label><input type="checkbox" name="is_required" value="true" {% if is_edit and attribute.is_required %}checked{% endif %}> Обязательное</label>

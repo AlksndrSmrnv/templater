@@ -45,10 +45,6 @@ echo ">> Применяю миграции Alembic..."
 echo "   (ошибка подключения здесь = PostgreSQL недоступен или неверный DATABASE_DSN)"
 uv run alembic upgrade head
 
-# 4. Сидинг базовых справочников (идемпотентно).
-echo ">> Засеиваю базовые справочники..."
-uv run python -m scripts.seed_reference_data
-
-# 5. Запуск приложения.
+# 4. Запуск приложения.
 echo ">> Запускаю приложение на http://127.0.0.1:8000  (Ctrl+C для остановки)"
 exec uv run uvicorn app.main:app --reload

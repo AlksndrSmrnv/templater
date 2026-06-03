@@ -17,7 +17,6 @@ from app.routes import (
     export_import,
     filled_templates,
     home,
-    references,
     send,
     templates_reg,
 )
@@ -52,7 +51,6 @@ def create_app() -> FastAPI:
     app.include_router(build_entity_pages_router("account", "accounts"), prefix=app_prefix)
     app.include_router(build_entity_pages_router("card", "cards"), prefix=app_prefix)
     app.include_router(entities_htmx.router, prefix=app_prefix)
-    app.include_router(references.router, prefix=app_prefix)
     app.include_router(templates_reg.router, prefix=app_prefix)
     app.include_router(collections.router, prefix=app_prefix)
     app.include_router(filled_templates.router, prefix=app_prefix)

@@ -12,8 +12,8 @@
             <td>{{ attr.label }}</td>
             <td>
                 {{ attr.data_type }}
-                {% if attr.data_type == "ref" and (attr.options or {}).get("ref_entity") %}
-                    → {{ (attr.options or {}).get("ref_entity") }}
+                {% if attr.data_type == "enum" and (attr.options or {}).get("values") %}
+                    <span class="muted">({{ (attr.options or {}).get("values") | join(", ") }})</span>
                 {% endif %}
             </td>
             <td>{% if attr.is_required %}✓{% endif %}</td>

@@ -9,7 +9,7 @@ from sqlalchemy import Text, func, or_, select
 from sqlalchemy import cast as sa_cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Account, Card, Client, MessageTemplate, ReferenceValue
+from app.db.models import Account, Card, Client, MessageTemplate
 
 # Real columns (not JSONB attributes) the entity list may sort on.
 _REAL_SORT_COLUMNS = frozenset({"description", "created_at", "updated_at"})
@@ -301,9 +301,8 @@ async def count_attribute_usage(
 
     Returns a map ``attr.id -> {"records": int, "templates": int}``:
 
-    - ``records``: entity rows holding a (non-empty) value under ``attr.name`` in their JSONB
-      ``attributes``. Data entities map to Client/Account/Card; reference types live in
-      ``reference_values`` filtered by ``entity_type``.
+    - ``records``: entity rows (Client/Account/Card) holding a (non-empty) value under
+      ``attr.name`` in their JSONB ``attributes``.
     - ``templates``: message templates whose content mentions ``attr.name`` — a substring
       heuristic, so the figure is approximate and only meant as a deletion warning.
 
@@ -322,14 +321,14 @@ async def count_attribute_usage(
 
     # Records: one query per entity type using count(*) FILTER (WHERE attributes ? name).
     for entity_type, group in by_type.items():
-        model = cast(Any, data_models.get(entity_type)) or ReferenceValue
+        model = cast(Any, data_models.get(entity_type))
+        if model is None:
+            continue
         cols = [
             func.count().filter(model.attributes.has_key(a.name)).label(f"c{i}")
             for i, a in enumerate(group)
         ]
         stmt = select(*cols).select_from(model)
-        if data_models.get(entity_type) is None:
-            stmt = stmt.where(ReferenceValue.entity_type == entity_type)
         row = (await session.execute(stmt)).one()._mapping
         for i, a in enumerate(group):
             result[a.id]["records"] = int(row[f"c{i}"])
@@ -339,30 +338,4 @@ async def count_attribute_usage(
     for a in attrs:
         result[a.id]["templates"] = sum(1 for content in contents if a.name in content)
 
-    return result
-
-
-async def find_entities_referencing(
-    session: AsyncSession,
-    *,
-    ref_entity_type: str,
-    target_id: uuid.UUID,
-    attribute_names_by_entity: dict[str, list[str]],
-) -> dict[str, int]:
-    """For each owner entity_type → list of attribute names that reference ``ref_entity_type``,
-    count how many entity rows hold ``target_id`` in any of those attributes.
-    """
-
-    result: dict[str, int] = {}
-    table_map: dict[str, Any] = {"client": Client, "account": Account, "card": Card}
-    target_str = str(target_id)
-    for owner, attrs in attribute_names_by_entity.items():
-        model = cast(Any, table_map.get(owner))
-        if model is None or not attrs:
-            continue
-        conditions = [model.attributes[name].astext == target_str for name in attrs]
-        stmt = select(func.count(model.id)).where(or_(*conditions))
-        count = int((await session.execute(stmt)).scalar_one())
-        if count:
-            result[owner] = count
     return result
