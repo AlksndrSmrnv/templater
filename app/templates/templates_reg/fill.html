@@ -16,9 +16,9 @@
 {% set _owner = _preset.get("accountOwner", {}) %}
 <div x-data="{
     state: {
-        sender: { clientId: {{ _sender.get('clientId', '') | tojson }}, accountId: {{ _sender.get('accountId', '') | tojson }}, cardId: {{ _sender.get('cardId', '') | tojson }} },
-        receiver: { clientId: {{ _receiver.get('clientId', '') | tojson }}, accountId: {{ _receiver.get('accountId', '') | tojson }}, cardId: {{ _receiver.get('cardId', '') | tojson }} }{% if has_account_owner %},
-        accountOwner: { clientId: {{ _owner.get('clientId', '') | tojson }}, accountId: {{ _owner.get('accountId', '') | tojson }}, cardId: {{ _owner.get('cardId', '') | tojson }} }{% endif %}
+        sender: { clientId: {{ _sender.get('clientId', '') | tojson | forceescape }}, accountId: {{ _sender.get('accountId', '') | tojson | forceescape }}, cardId: {{ _sender.get('cardId', '') | tojson | forceescape }} },
+        receiver: { clientId: {{ _receiver.get('clientId', '') | tojson | forceescape }}, accountId: {{ _receiver.get('accountId', '') | tojson | forceescape }}, cardId: {{ _receiver.get('cardId', '') | tojson | forceescape }} }{% if has_account_owner %},
+        accountOwner: { clientId: {{ _owner.get('clientId', '') | tojson | forceescape }}, accountId: {{ _owner.get('accountId', '') | tojson | forceescape }}, cardId: {{ _owner.get('cardId', '') | tojson | forceescape }} }{% endif %}
     },
     init() {
         /* Preselected roles: load their accounts/cards lists by firing the same

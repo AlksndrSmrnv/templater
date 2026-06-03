@@ -356,7 +356,9 @@ def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
     )
 
     assert 'id="role-panels"' in html
-    assert 'accountOwner: { clientId: "", accountId: "", cardId: "" }' in html
+    # Preset strings are tojson'd then HTML-escaped (&#34;) so they stay inside
+    # the double-quoted x-data attribute instead of terminating it early.
+    assert "accountOwner: { clientId: &#34;&#34;, accountId: &#34;&#34;, cardId: &#34;&#34; }" in html
     assert 'hx-post="/templater/templates-htmx/3db678b1-1111-2222-3333-444444444444/fill/render"' in html
     assert 'id="sender-client"' not in html
     assert "pickFromList(event, role, kind)" in html
@@ -380,6 +382,30 @@ def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
         assert card_list.get("role") == "listbox"
         assert account_list.get("hx-params") == "client_id"
         assert card_list.get("hx-params") == "client_id"
+
+
+def test_template_fill_page_preset_cannot_break_out_of_x_data_attribute() -> None:
+    # A query-controlled preset value containing a double quote must not
+    # terminate the double-quoted x-data attribute or inject a new attribute.
+    html = render_template(
+        "templates_reg/fill.html",
+        {
+            "active": "templates",
+            "template": SimpleNamespace(id="x", name="Fill", format="json"),
+            "has_account_owner": False,
+            "clients": [],
+            "labels": {"client": {}, "account": {}, "card": {}},
+            "preset": {
+                "sender": {"clientId": 'x" onmouseover="alert(1)', "accountId": "", "cardId": ""},
+                "receiver": {"clientId": "", "accountId": "", "cardId": ""},
+                "accountOwner": {"clientId": "", "accountId": "", "cardId": ""},
+            },
+        },
+    )
+    # No raw breakout sequence; the payload's quotes are JSON-escaped (\") and
+    # then HTML-escaped (&#34;), so a backslash precedes each escaped quote.
+    assert 'x" onmouseover="alert(1)' not in html
+    assert "onmouseover=\\&#34;alert(1)" in html
 
 
 def test_template_fill_partials_use_data_attributes_for_delegated_selection() -> None:
