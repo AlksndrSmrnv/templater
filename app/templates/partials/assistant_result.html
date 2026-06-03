@@ -26,7 +26,7 @@
     </div>
 
     {% if unresolved %}
-    <p class="assistant-warn">⚠️ Не заполнены поля: {{ unresolved | join(", ") }}. Проверьте
+    <p class="assistant-warn"><iconify-icon icon="lucide:triangle-alert"></iconify-icon> Не заполнены поля: {{ unresolved | join(", ") }}. Проверьте
         выбор счёта/карты в редакторе заполнения.</p>
     {% endif %}
 

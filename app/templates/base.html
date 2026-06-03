@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Template Maker{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/templater/static/css/app.css">
     <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"
             integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+"
@@ -12,6 +15,8 @@
     <script src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"
             integrity="sha384-l8f0VcPi/M1iHPv8egOnY/15TDwqgbOR1anMIJWvU6nLRgZVLTLSaNqi/TOoT5Fh"
             crossorigin="anonymous"
+            defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/iconify-icon@2.1.0/dist/iconify-icon.min.js"
             defer></script>
     {% block head_extra %}{% endblock %}
 </head>
@@ -30,31 +35,31 @@
     }
 }" @show-toast.window="showToast($event)" @showToast.window="showToast($event)">
 <header class="topbar">
-    <div class="brand"><a href="/templater/">📝 Template Maker</a></div>
+    <div class="brand"><a href="/templater/"><iconify-icon icon="lucide:notebook-pen"></iconify-icon> Template Maker</a></div>
     <nav class="topnav">
         <a href="/templater/" class="{% if active == 'home' %}active{% endif %}" title="Главная">
-            <span class="nav-icon">🏠</span><span class="nav-label">Главная</span>
+            <span class="nav-icon"><iconify-icon icon="lucide:house"></iconify-icon></span><span class="nav-label">Главная</span>
         </a>
         <span class="nav-group{% if active == 'data' %} active{% endif %}" title="Тестовые данные">
-            <span class="nav-icon">🗂️</span><span class="nav-label">Тестовые данные</span>
+            <span class="nav-icon"><iconify-icon icon="lucide:database"></iconify-icon></span><span class="nav-label">Тестовые данные</span>
             <div class="nav-submenu">
-                <a href="/templater/clients">👥 Клиенты</a>
-                <a href="/templater/accounts">🏦 Счета</a>
-                <a href="/templater/cards">💳 Карты</a>
+                <a href="/templater/clients"><iconify-icon icon="lucide:users"></iconify-icon> Клиенты</a>
+                <a href="/templater/accounts"><iconify-icon icon="lucide:landmark"></iconify-icon> Счета</a>
+                <a href="/templater/cards"><iconify-icon icon="lucide:credit-card"></iconify-icon> Карты</a>
             </div>
         </span>
         <span class="nav-group{% if active == 'templates' %} active{% endif %}" title="Шаблоны сообщений">
-            <span class="nav-icon">✉️</span><span class="nav-label">Шаблоны сообщений</span>
+            <span class="nav-icon"><iconify-icon icon="lucide:mail"></iconify-icon></span><span class="nav-label">Шаблоны сообщений</span>
             <div class="nav-submenu">
-                <a href="/templater/templates">📄 Шаблоны</a>
-                <a href="/templater/filled-templates">📦 Заполненные шаблоны</a>
+                <a href="/templater/templates"><iconify-icon icon="lucide:file-text"></iconify-icon> Шаблоны</a>
+                <a href="/templater/filled-templates"><iconify-icon icon="lucide:package"></iconify-icon> Заполненные шаблоны</a>
             </div>
         </span>
         <a href="/templater/send" class="{% if active == 'send' %}active{% endif %} disabled" title="Отправка сообщений — в разработке">
-            <span class="nav-icon">📨</span><span class="nav-label">Отправка сообщений</span>
+            <span class="nav-icon"><iconify-icon icon="lucide:send"></iconify-icon></span><span class="nav-label">Отправка сообщений</span>
         </a>
         <a href="/templater/settings" class="{% if active == 'settings' %}active{% endif %}" title="Настройки">
-            <span class="nav-icon">⚙️</span><span class="nav-label">Настройки</span>
+            <span class="nav-icon"><iconify-icon icon="lucide:settings"></iconify-icon></span><span class="nav-label">Настройки</span>
         </a>
     </nav>
 </header>

@@ -3,9 +3,9 @@
 {% if _pages > 1 %}
     <button class="btn" type="button"
             @click="page = {{ _page - 1 }}; dispatchPage()"
-            {% if not (has_prev | default(false)) %}disabled{% endif %}>← Назад</button>
+            {% if not (has_prev | default(false)) %}disabled{% endif %}><iconify-icon icon="lucide:arrow-left"></iconify-icon> Назад</button>
     <span class="muted">Стр. {{ _page }} из {{ _pages }}</span>
     <button class="btn" type="button"
             @click="page = {{ _page + 1 }}; dispatchPage()"
-            {% if not (has_next | default(false)) %}disabled{% endif %}>Вперёд →</button>
+            {% if not (has_next | default(false)) %}disabled{% endif %}>Вперёд <iconify-icon icon="lucide:arrow-right"></iconify-icon></button>
 {% endif %}

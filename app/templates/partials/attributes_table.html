@@ -16,7 +16,7 @@
                     <span class="muted">({{ (attr.options or {}).get("values") | join(", ") }})</span>
                 {% endif %}
             </td>
-            <td>{% if attr.is_required %}✓{% endif %}</td>
+            <td>{% if attr.is_required %}<iconify-icon icon="lucide:check"></iconify-icon>{% endif %}</td>
             <td>{{ attr.display_order }}</td>
             <td>{{ attr.description }}</td>
             <td class="muted">{{ uc_records }} зап. / ~{{ uc_templates }} шаб.</td>

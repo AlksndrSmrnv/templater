@@ -1,5 +1,5 @@
 {% if request is defined and request.query_params.get("saved") == "1" %}
-    <div class="saved-banner" role="status">✅ Сохранено</div>
+    <div class="saved-banner" role="status"><iconify-icon icon="lucide:circle-check"></iconify-icon> Сохранено</div>
     <script>
         (() => {
             const url = new URL(window.location.href);

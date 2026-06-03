@@ -65,7 +65,7 @@
             <div class="detail-label">{{ field.label }}</div>
             <div class="detail-value{% if field.data_type == 'text' %} detail-value--text{% endif %}">
                 {% if field.data_type == "bool" %}
-                    {% if raw %}✓{% else %}✗{% endif %}
+                    {% if raw %}<iconify-icon icon="lucide:check"></iconify-icon>{% else %}<iconify-icon icon="lucide:x" style="color:var(--muted)"></iconify-icon>{% endif %}
                 {% else %}
                     {{ raw or "—" }}
                 {% endif %}
