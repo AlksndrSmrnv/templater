@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import uuid
 from typing import Any, cast
 
@@ -12,15 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     DATA_ENTITY_TYPES,
-    RESERVED_ENTITY_TYPES,
     Account,
     AttributeDefinition,
     Card,
     Client,
     Collection,
     MessageTemplate,
-    ReferenceType,
-    ReferenceValue,
 )
 from app.repositories.attribute import AttributeDefinitionRepository
 from app.repositories.entity import (
@@ -28,18 +24,12 @@ from app.repositories.entity import (
     CardRepository,
     ClientRepository,
 )
-from app.repositories.reference import ReferenceValueRepository
-from app.repositories.reference_type import ReferenceTypeRepository
 from app.repositories.template import TemplateRepository
 from app.schemas.attribute import ALLOWED_TYPES
 from app.schemas.exchange import ExportPackage, ExportRequest, ImportSummary
 from app.services.attribute_schema import AttributeSchemaService
 from app.services.templates import normalize_placeholders
 from app.utils.errors import ValidationFailed
-
-
-# Reference-type code shape (mirrors ReferenceTypeService._CODE_RE).
-_REF_TYPE_CODE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -179,30 +169,10 @@ def _validate_optional_str(value: Any) -> tuple[str | None, str | None]:
     return value, None
 
 
-def _ref_write_fields(
-    ref_type: str, code: str, raw: dict[str, Any], fallback_description: str
-) -> tuple[str | None, str | None, str | None]:
-    """Validate ``name`` (required) and ``description`` (optional) for a
-    reference write, mirroring the CRUD Pydantic constraints.
-
-    Returns ``(name, description, error)``. ``description`` falls back to
-    ``fallback_description`` when the field is absent.
-    """
-
-    name, name_err = _validate_required_str(raw.get("name"), 255)
-    if name_err:
-        return None, None, f"reference {ref_type}/{code}: name {name_err}"
-    desc, desc_err = _validate_optional_str(raw.get("description"))
-    if desc_err:
-        return None, None, f"reference {ref_type}/{code}: description {desc_err}"
-    return name, (desc if desc is not None else fallback_description), None
-
-
 class ExportImportService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.attrs = AttributeDefinitionRepository(session)
-        self.refs = ReferenceValueRepository(session)
         self.clients = ClientRepository(session)
         self.accounts = AccountRepository(session)
         self.cards = CardRepository(session)
@@ -216,42 +186,7 @@ class ExportImportService:
         client_ids = set(req.clients) | {a.client_id for a in account_objs}
         client_objs = await self.clients.get_many(list(client_ids))
 
-        # collect reference IDs used in attributes
-        ref_type_repo = ReferenceTypeRepository(self.session)
-        ref_type_objs = await ref_type_repo.list_all()
-        ref_codes = {rt.code for rt in ref_type_objs}
         all_defs = await self.attrs.list_all()
-        ref_attrs_by_owner: dict[str, list[tuple[str, str]]] = {}
-        for d in all_defs:
-            if d.data_type != "ref":
-                continue
-            target = _as_dict(d.options).get("ref_entity")
-            if target in ref_codes:
-                ref_attrs_by_owner.setdefault(d.entity_type, []).append((d.name, target))
-
-        ref_ids: dict[str, set[uuid.UUID]] = {t: set() for t in ref_codes}
-        for entity_type, items in (("client", client_objs), ("account", account_objs), ("card", card_objs)):
-            for o in items:
-                for attr_name, target_type in ref_attrs_by_owner.get(entity_type, []):
-                    val = (o.attributes or {}).get(attr_name)
-                    if not val:
-                        continue
-                    try:
-                        # A legacy value of a since-deleted attribute may not be a
-                        # UUID (validation preserves unknown keys unchecked).
-                        # Skip it instead of letting uuid.UUID(...) 500 the export.
-                        ref_ids[target_type].add(uuid.UUID(str(val)))
-                    except (ValueError, AttributeError, TypeError):
-                        continue
-
-        references: dict[str, list[dict[str, Any]]] = {}
-        for t, ids in ref_ids.items():
-            if not ids:
-                continue
-            stmt = select(ReferenceValue).where(ReferenceValue.id.in_(list(ids)))
-            rows = list((await self.session.execute(stmt)).scalars().all())
-            references[t] = [self._dump_reference(r) for r in rows]
-
         templates = await self.templates.get_many(req.templates)
 
         # Pull in the collections those templates belong to so restore keeps the
@@ -264,9 +199,7 @@ class ExportImportService:
 
         return ExportPackage(
             version=2,
-            reference_types=[self._dump_reference_type(rt) for rt in ref_type_objs],
             attribute_schema=[self._dump_attr(a) for a in all_defs],
-            references=references,
             clients=[self._dump_client(c) for c in client_objs],
             accounts=[self._dump_account(a) for a in account_objs],
             cards=[self._dump_card(c) for c in card_objs],
@@ -283,9 +216,7 @@ class ExportImportService:
         if policy not in ("skip", "overwrite", "fail"):
             policy = "skip"
         counter_keys = (
-            "reference_types",
             "attribute_schema",
-            "references",
             "clients",
             "accounts",
             "cards",
@@ -314,25 +245,16 @@ class ExportImportService:
         # file with e.g. ``clients: {...}`` would be silently treated as empty
         # and look like a successful zero-change import.
         shape_errors = False
-        for section in ("reference_types", "attribute_schema", "clients", "accounts", "cards", "collections", "templates"):
+        for section in ("attribute_schema", "clients", "accounts", "cards", "collections", "templates"):
             value = package.get(section)
             if value is not None and not isinstance(value, list):
                 errors.append(f"Секция '{section}' должна быть списком")
                 shape_errors = True
-        references_value = package.get("references")
-        if references_value is not None and not isinstance(references_value, dict):
-            errors.append("Секция 'references' должна быть объектом {тип: [...]}")
-            shape_errors = True
         if shape_errors:
             return _zeroed_summary()
 
-        # Reference types are data, not code: snapshot the current set once (after
-        # the cheap shape guards above, which must not touch the DB). The set is
-        # grown in-place by the reference_types import loop below so that the
-        # attribute_schema and references sections can target freshly-imported types.
-        ref_type_repo = ReferenceTypeRepository(self.session)
-        ref_codes = set(await ref_type_repo.codes())
-        all_attr_types = set(DATA_ENTITY_TYPES) | ref_codes
+        # Attributes only ever belong to the core data entities now.
+        all_attr_types = set(DATA_ENTITY_TYPES)
 
         def conflict(kind: str, raw: dict[str, Any]) -> bool:
             """Record a conflict according to ``policy``. Returns True if caller
@@ -362,84 +284,6 @@ class ExportImportService:
                 await self.session.rollback()
                 errors.append(f"flush failed ({stage}): {exc.orig if hasattr(exc, 'orig') else exc}")
                 return False
-
-        # ---- reference_types (registry; must precede attribute_schema & references) ----
-        # Reference tables created from the UI live in the registry, so a backup
-        # taken on one install must re-create them on a clean target before any
-        # attribute_schema / references rows can reference them.
-        seen_type_codes: set[str] = set()
-        for raw in _as_list(package.get("reference_types")):
-            if not isinstance(raw, dict):
-                errors.append("reference_types: запись не является объектом")
-                continue
-            raw = cast(dict[str, Any], raw)
-            code_raw = raw.get("code")
-            if not isinstance(code_raw, str) or not _REF_TYPE_CODE_RE.fullmatch(code_raw):
-                errors.append(f"reference_types: некорректный код '{code_raw}'")
-                continue
-            code = code_raw
-            if len(code) > 64:
-                errors.append(f"reference_types {code}: код длиннее 64 символов")
-                continue
-            if code in RESERVED_ENTITY_TYPES:
-                errors.append(f"reference_types {code}: зарезервированный код")
-                continue
-            if code in seen_type_codes:
-                errors.append(f"reference_types {code}: дубликат в файле")
-                continue
-            seen_type_codes.add(code)
-
-            existing_type = await ref_type_repo.get(code)
-            if existing_type is not None and conflict("reference_types", raw):
-                # Already present (skip/fail) — leave as-is but allow downstream
-                # sections to target it. (It's already in ref_codes/all_attr_types.)
-                continue
-
-            title, title_err = _validate_required_str(raw.get("title"), 255)
-            if title_err or title is None:
-                errors.append(f"reference_types {code}: title {title_err}")
-                continue
-            icon, icon_err = _validate_optional_str(raw.get("icon"))
-            if icon_err:
-                errors.append(f"reference_types {code}: icon {icon_err}")
-                continue
-            if icon is not None and len(icon) > 16:
-                errors.append(f"reference_types {code}: icon длиннее 16 символов")
-                continue
-            description, desc_err = _validate_optional_str(raw.get("description"))
-            if desc_err:
-                errors.append(f"reference_types {code}: description {desc_err}")
-                continue
-
-            raw_order = raw.get("display_order")
-            display_order = raw_order if isinstance(raw_order, int) and not isinstance(raw_order, bool) else 0
-
-            if existing_type is None:
-                self.session.add(
-                    ReferenceType(
-                        code=code,
-                        title=title,
-                        icon=icon or "",
-                        description=description or "",
-                        display_order=display_order,
-                    )
-                )
-                created["reference_types"] += 1
-            else:
-                existing_type.title = title
-                if icon is not None:
-                    existing_type.icon = icon
-                if description is not None:
-                    existing_type.description = description
-                existing_type.display_order = display_order
-                updated["reference_types"] += 1
-            ref_codes.add(code)
-            all_attr_types.add(code)
-
-        # Flush so attribute_schema / references validation (and FKs) see the
-        # just-added registry rows. autoflush=False means a SELECT won't do it.
-        if not await safe_flush("reference_types"):
-            return _zeroed_summary()
 
         # ---- attribute_schema (validated, never trusts the file blindly) ----
         seen_attr_keys: set[tuple[str, str]] = set()
@@ -479,7 +323,7 @@ class ExportImportService:
                 # succeed do we touch the ORM object. A mid-way parse failure
                 # must not leave a half-updated row dirty for the final commit.
 
-                # data_type is immutable: turning an existing enum/ref attribute
+                # data_type is immutable: turning an existing enum attribute
                 # into e.g. a string would orphan its options and break the
                 # already-stored data. Absent on overwrite → keep existing.
                 raw_data_type = raw.get("data_type")
@@ -501,9 +345,6 @@ class ExportImportService:
                     continue
 
                 options = _as_dict(raw.get("options"))
-                if data_type == "ref" and options.get("ref_entity") not in ref_codes:
-                    errors.append(f"attribute_schema {entity_type}/{name}: ref_entity вне справочников")
-                    continue
                 if data_type == "enum" and not (
                     isinstance(options.get("values"), list) and options.get("values")
                 ):
@@ -588,241 +429,18 @@ class ExportImportService:
         if not await safe_flush("attribute_schema"):
             return _zeroed_summary()
 
-        # Map of attribute_definitions used to detect ref-attributes that may
-        # need remapping after we discover a (ref_type, code) collision.
-        ref_attrs_by_owner: dict[str, list[tuple[str, str]]] = {}
-        for d in await self.attrs.list_all():
-            if d.data_type == "ref" and _as_dict(d.options).get("ref_entity"):
-                ref_attrs_by_owner.setdefault(d.entity_type, []).append(
-                    (d.name, _as_dict(d.options)["ref_entity"])
-                )
-
-        # imported UUID → local UUID for any reference value that already exists
-        # under a different id but the same (entity_type, code). Used to rewrite
-        # ref-typed attributes in the imported clients/accounts/cards.
-        ref_id_remap: dict[str, str] = {}
-
-        async def _validated_ref_attrs(
-            ref_type: str, label: str, raw: dict[str, Any]
-        ) -> tuple[dict[str, Any] | None, str | None]:
-            """Validate reference attributes like the CRUD path. Only called when
-            we're actually about to write (create / overwrite)."""
-
-            attrs_raw, attrs_err = _validate_attributes_field(raw.get("attributes"))
-            if attrs_err:
-                return None, f"reference {ref_type}/{label}: {attrs_err}"
-            assert attrs_raw is not None
-            try:
-                attrs = await schema_svc.validate_attributes(ref_type, attrs_raw)
-                return attrs, None
-            except ValidationFailed as vexc:
-                detail = "; ".join(vexc.details) if isinstance(vexc.details, list) else vexc.message
-                return None, f"reference {ref_type}/{label}: атрибуты не прошли проверку: {detail}"
-
-        # references (by id, then by (ref_type, code))
-        seen_ref_ids: set[str] = set()
-        seen_ref_codes: set[tuple[str, str]] = set()
-        references_section = package.get("references")
-        if references_section and not isinstance(references_section, dict):
-            errors.append("references: ожидался объект вида {тип: [...]}")
-            references_section = {}
-        references_map = cast(dict[str, Any], references_section or {})
-        # Prefetch existing references so the per-row lookups below are dict hits
-        # instead of 2-3 queries each (autoflush is off and nothing is committed
-        # mid-loop, so a snapshot taken now matches what live queries would return).
-        present_ref_types = [t for t in references_map if t in ref_codes]
-        existing_ref_by_id: dict[str, ReferenceValue] = {}
-        existing_ref_by_code: dict[tuple[str, str], ReferenceValue] = {}
-        if present_ref_types:
-            # Codes only ever clash within a type → scan existing rows of the
-            # present types to build the (type, code) index.
-            for row in (
-                (
-                    await self.session.execute(
-                        select(ReferenceValue).where(
-                            ReferenceValue.entity_type.in_(present_ref_types)
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            ):
-                existing_ref_by_code[(row.entity_type, row.code)] = row
-            # The id (PK) guard is cross-type: a UUID may already belong to a row of
-            # ANY type, so the id index must be built by id regardless of type —
-            # otherwise the cross-type collision check below is bypassed and the
-            # duplicate PK only surfaces as a whole-stage rollback on flush.
-            file_ref_ids = {
-                rid for items in references_map.values() for rid in _collect_uuids(items, "id")
-            }
-            if file_ref_ids:
-                for row in (
-                    (
-                        await self.session.execute(
-                            select(ReferenceValue).where(ReferenceValue.id.in_(file_ref_ids))
-                        )
-                    )
-                    .scalars()
-                    .all()
-                ):
-                    existing_ref_by_id[str(row.id)] = row
-        for ref_type, items in references_map.items():
-            if ref_type not in ref_codes:
-                errors.append(f"references: неизвестный тип справочника '{ref_type}'")
-                continue
-            if not isinstance(items, list):
-                # Nested value must itself be a list — otherwise _as_list would
-                # silently drop it and the rows would vanish without an error.
-                errors.append(f"references.{ref_type}: должно быть списком")
-                continue
-            for raw in items:
-                if not isinstance(raw, dict):
-                    errors.append(f"reference {ref_type}: запись не является объектом")
-                    continue
-                raw = cast(dict[str, Any], raw)
-                try:
-                    # Canonicalize: a file may carry the UUID upper-cased; use
-                    # str(parsed) everywhere so dedup / remap / parent lookups
-                    # all key on the same form.
-                    rid = uuid.UUID(str(raw["id"]))
-                    rid_str = str(rid)
-                    # code is used for lookup + dedup, so validate it up front.
-                    code, code_err = _validate_required_str(raw.get("code"), 128)
-                    if code_err or code is None:
-                        errors.append(f"reference {ref_type}: code {code_err}")
-                        continue
-                    if rid_str in seen_ref_ids or (ref_type, code) in seen_ref_codes:
-                        errors.append(f"reference {ref_type}/{code}: дубликат в файле")
-                        continue
-                    seen_ref_ids.add(rid_str)
-                    seen_ref_codes.add((ref_type, code))
-
-                    existing_ref = existing_ref_by_id.get(rid_str)
-                    if existing_ref is not None and existing_ref.entity_type != ref_type:
-                        # The UUID already belongs to a different reference table.
-                        # Overwriting would corrupt that row with this type's
-                        # payload/schema — reject the cross-type collision.
-                        errors.append(
-                            f"reference {ref_type}/{code}: UUID {rid_str} уже занят записью "
-                            f"типа '{existing_ref.entity_type}'"
-                        )
-                        continue
-                    code_clash = (
-                        None if existing_ref is not None else existing_ref_by_code.get((ref_type, code))
-                    )
-
-                    if existing_ref is None and code_clash is None:
-                        # CREATE — validate the payload we're about to write.
-                        ref_attrs, err = await _validated_ref_attrs(ref_type, code, raw)
-                        if err or ref_attrs is None:
-                            errors.append(err or f"reference {ref_type}/{code}: attributes отсутствуют")
-                            continue
-                        ref_name, ref_desc, fld_err = _ref_write_fields(ref_type, code, raw, "")
-                        if fld_err or ref_name is None or ref_desc is None:
-                            errors.append(fld_err or f"reference {ref_type}/{code}: некорректные поля")
-                            continue
-                        self.session.add(ReferenceValue(
-                            id=rid,
-                            entity_type=ref_type,
-                            code=code,
-                            name=ref_name,
-                            description=ref_desc,
-                            attributes=ref_attrs,
-                        ))
-                        created["references"] += 1
-                    elif existing_ref is None and code_clash is not None:
-                        # Same code under a different local id. Remap the imported
-                        # UUID → local UUID UNCONDITIONALLY (even on skip), so the
-                        # dependent clients/accounts/cards still resolve.
-                        ref_id_remap[rid_str] = str(code_clash.id)
-                        if conflict("references", raw):
-                            continue  # skip/fail: don't touch the local row, don't validate
-                        ref_attrs, err = await _validated_ref_attrs(ref_type, code, raw)
-                        if err or ref_attrs is None:
-                            errors.append(err or f"reference {ref_type}/{code}: attributes отсутствуют")
-                            continue
-                        # Parse every new value before touching the ORM object,
-                        # so a missing field can't leave the row half-updated.
-                        ref_name, ref_desc, fld_err = _ref_write_fields(
-                            ref_type, code, raw, code_clash.description
-                        )
-                        if fld_err or ref_name is None or ref_desc is None:
-                            errors.append(fld_err or f"reference {ref_type}/{code}: некорректные поля")
-                            continue
-                        code_clash.name = ref_name
-                        code_clash.description = ref_desc
-                        code_clash.attributes = ref_attrs
-                        updated["references"] += 1
-                    else:
-                        # Existing by id.
-                        if conflict("references", raw):
-                            continue  # skip/fail: leave it, no validation needed
-                        assert existing_ref is not None
-                        # If the new code would collide with *another* row, surface
-                        # it rather than letting UNIQUE blow up on commit.
-                        if existing_ref.code != code:
-                            other = existing_ref_by_code.get((ref_type, code))
-                            if other is not None and other.id != existing_ref.id:
-                                errors.append(
-                                    f"reference {ref_type}/{code}: код уже занят другой записью"
-                                )
-                                continue
-                        ref_attrs, err = await _validated_ref_attrs(ref_type, code, raw)
-                        if err or ref_attrs is None:
-                            errors.append(err or f"reference {ref_type}/{code}: attributes отсутствуют")
-                            continue
-                        # Parse every new value before touching the ORM object.
-                        ref_name, ref_desc, fld_err = _ref_write_fields(
-                            ref_type, code, raw, existing_ref.description
-                        )
-                        if fld_err or ref_name is None or ref_desc is None:
-                            errors.append(fld_err or f"reference {ref_type}/{code}: некорректные поля")
-                            continue
-                        existing_ref.code = code
-                        existing_ref.name = ref_name
-                        existing_ref.description = ref_desc
-                        existing_ref.attributes = ref_attrs
-                        updated["references"] += 1
-                except Exception as exc:
-                    errors.append(f"reference {ref_type}/{_safe_label(raw, 'code', 'id')}: {exc}")
-
-        # Flush references so validate_attributes() below can verify ref-typed
-        # attributes against rows imported in this same transaction.
-        if not await safe_flush("references"):
-            return _zeroed_summary()
-
-        def _remap_ref_attrs(entity_type: str, attrs: dict[str, Any]) -> dict[str, Any]:
-            if not ref_id_remap or not attrs:
-                return attrs
-            out = dict(attrs)
-            for attr_name, _ref_type in ref_attrs_by_owner.get(entity_type, []):
-                val = out.get(attr_name)
-                if not isinstance(val, str):
-                    continue
-                # ref_id_remap keys are canonical UUID strings — canonicalize the
-                # imported attribute value before lookup so a differently-cased
-                # UUID still matches.
-                try:
-                    canonical = str(uuid.UUID(val))
-                except ValueError:
-                    continue
-                if canonical in ref_id_remap:
-                    out[attr_name] = ref_id_remap[canonical]
-            return out
-
         async def _validated_entity_attrs(
             et: str, kind: str, label: str, raw: dict[str, Any]
         ) -> tuple[dict[str, Any] | None, str | None]:
-            """Remap ref-ids then validate like the CRUD path. Only called when
+            """Validate entity attributes like the CRUD path. Only called when
             we're actually about to write (create / overwrite)."""
 
             attrs_raw, attrs_err = _validate_attributes_field(raw.get("attributes"))
             if attrs_err:
                 return None, f"{kind} {label}: {attrs_err}"
             assert attrs_raw is not None
-            remapped = _remap_ref_attrs(et, attrs_raw)
             try:
-                attrs = await schema_svc.validate_attributes(et, remapped)
+                attrs = await schema_svc.validate_attributes(et, attrs_raw)
                 return attrs, None
             except ValidationFailed as vexc:
                 detail = "; ".join(vexc.details) if isinstance(vexc.details, list) else vexc.message
@@ -861,7 +479,8 @@ class ExportImportService:
                     continue
                 raw = cast(dict[str, Any], raw)
                 try:
-                    # Canonical UUID string (see references loop note above).
+                    # Canonical UUID string so dedup / parent lookups all key on
+                    # the same form even if the file upper-cased the UUID.
                     eid = uuid.UUID(str(raw["id"]))
                     eid_str = str(eid)
                     if eid_str in seen_entity_ids[kind]:
@@ -1224,16 +843,6 @@ class ExportImportService:
         return ImportSummary(created=created, updated=updated, skipped=skipped, errors=errors)
 
     @staticmethod
-    def _dump_reference_type(rt: ReferenceType) -> dict[str, Any]:
-        return {
-            "code": rt.code,
-            "title": rt.title,
-            "icon": rt.icon,
-            "description": rt.description,
-            "display_order": rt.display_order,
-        }
-
-    @staticmethod
     def _dump_attr(a: AttributeDefinition) -> dict[str, Any]:
         return {
             "id": str(a.id),
@@ -1245,16 +854,6 @@ class ExportImportService:
             "display_order": a.display_order,
             "description": a.description,
             "options": a.options,
-        }
-
-    @staticmethod
-    def _dump_reference(r: ReferenceValue) -> dict[str, Any]:
-        return {
-            "id": str(r.id),
-            "code": r.code,
-            "name": r.name,
-            "description": r.description,
-            "attributes": r.attributes,
         }
 
     @staticmethod

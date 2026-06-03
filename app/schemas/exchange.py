@@ -15,11 +15,7 @@ class ExportRequest(BaseModel):
 
 class ExportPackage(BaseModel):
     version: int = 2
-    # Reference-type registry (справочники). Absent in pre-registry packages —
-    # import tolerates its absence.
-    reference_types: list[dict[str, Any]] = Field(default_factory=list)
     attribute_schema: list[dict[str, Any]]
-    references: dict[str, list[dict[str, Any]]]
     clients: list[dict[str, Any]]
     accounts: list[dict[str, Any]]
     cards: list[dict[str, Any]]

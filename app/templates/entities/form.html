@@ -89,14 +89,6 @@
                             <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
                         {% endfor %}
                     </select>
-                {% elif field.data_type == "ref" %}
-                    {% set ref_entity = (field.options or {}).get("ref_entity") %}
-                    <select id="{{ field_id }}" name="{{ field_name }}">
-                        <option value="">—</option>
-                        {% for ref_id, ref_label in ref_options.get(ref_entity, {}).items() %}
-                            <option value="{{ ref_id }}" {% if value|string == ref_id %}selected{% endif %}>{{ ref_label }}</option>
-                        {% endfor %}
-                    </select>
                 {% else %}
                     <input type="text" id="{{ field_id }}" name="{{ field_name }}" value="{{ value or '' }}">
                 {% endif %}

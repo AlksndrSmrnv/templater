@@ -35,9 +35,6 @@
                 <td>
                     {% if field.data_type == "bool" %}
                         {% if raw %}✓{% else %}✗{% endif %}
-                    {% elif field.data_type == "ref" %}
-                        {% set ref_entity = (field.options or {}).get("ref_entity") %}
-                        {{ ref_options.get(ref_entity, {}).get(raw|string, raw or "") }}
                     {% else %}
                         {{ raw or "" }}
                     {% endif %}

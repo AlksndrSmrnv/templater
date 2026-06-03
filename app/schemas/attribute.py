@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-ALLOWED_TYPES = {"string", "int", "number", "bool", "date", "datetime", "text", "enum", "ref"}
+ALLOWED_TYPES = {"string", "int", "number", "bool", "date", "datetime", "text", "enum"}
 
 
 class AttributeDefinitionBase(BaseModel):

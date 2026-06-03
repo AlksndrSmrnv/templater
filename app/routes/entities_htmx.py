@@ -33,7 +33,6 @@ from app.schemas.exchange import ExportRequest
 from app.services.attribute_schema import AttributeSchemaService
 from app.services.entities import AccountService, CardService, ClientService
 from app.services.export_import import ExportImportService
-from app.services.references import ReferenceService
 from app.utils.errors import DomainError, NotFoundError
 
 router = APIRouter()
@@ -101,30 +100,6 @@ async def _schema(session: AsyncSession, entity_type: str) -> list[AttributeDefi
 
 async def _get_item(session: AsyncSession, entity_type: str, item_id: uuid.UUID) -> Any:
     return await _service(session, entity_type).get(item_id)
-
-
-def _collect_ref_entities(schema: list[AttributeDefinition]) -> tuple[str, ...]:
-    ref_entities: set[str] = set()
-    for field in schema:
-        if field.data_type != "ref":
-            continue
-        ref_entity = (field.options or {}).get("ref_entity")
-        if isinstance(ref_entity, str) and ref_entity:
-            ref_entities.add(ref_entity)
-    return tuple(sorted(ref_entities))
-
-
-async def _reference_options(
-    session: AsyncSession,
-    schema: list[AttributeDefinition],
-) -> dict[str, dict[str, str]]:
-    out: dict[str, dict[str, str]] = {}
-    for ref_entity in _collect_ref_entities(schema):
-        values = await ReferenceService(session).list_by_type(ref_entity)
-        out[ref_entity] = {
-            str(item.id): item.name + (f" ({item.code})" if item.code else "") for item in values
-        }
-    return out
 
 
 async def _relations(
@@ -226,7 +201,6 @@ async def build_entity_list_context(
         "pages": pages,
         "has_prev": page > 1,
         "has_next": page < pages,
-        "ref_options": await _reference_options(session, schema),
         **await _relations(session, entity_type, items=items),
     }
 
@@ -256,7 +230,6 @@ async def build_entity_form_context(
         "entity": entity,
         "schema": schema,
         "parent_options": parent_options,
-        "ref_options": await _reference_options(session, schema),
         "labels": labels,
     }
 
@@ -348,7 +321,6 @@ async def htmx_detail(
             "entity_type": entity_type,
             "item": item,
             "schema": schema,
-            "ref_options": await _reference_options(session, schema),
             **await _relations(session, entity_type, items=[item]),
         },
     )

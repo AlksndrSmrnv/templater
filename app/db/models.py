@@ -47,16 +47,12 @@ ENTITY_ACCOUNT = "account"
 ENTITY_CARD = "card"
 ENTITY_TEMPLATE = "template"
 
-REF_CURRENCY = "currency"
-
-# The set of reference types is no longer hardcoded: it lives in the
-# ``reference_types`` registry table (see :class:`ReferenceType`) and is managed
-# from the UI. Use ``ReferenceTypeRepository`` / ``ReferenceTypeService`` to read
-# the current set of reference types and ``all_attr_entity_types``.
+# The entity types that own user-defined attribute definitions. Each maps to a
+# concrete data table (clients/accounts/cards); ``template`` is reserved but not
+# an attribute owner.
 DATA_ENTITY_TYPES: tuple[str, ...] = (ENTITY_CLIENT, ENTITY_ACCOUNT, ENTITY_CARD)
 
-# Entity-type codes that must never be used as a reference type code (they name
-# core data entities / templates), independent of what's in the registry.
+# Entity-type codes that name core data entities / templates and are reserved.
 RESERVED_ENTITY_TYPES: frozenset[str] = frozenset(
     {ENTITY_CLIENT, ENTITY_ACCOUNT, ENTITY_CARD, ENTITY_TEMPLATE}
 )
@@ -140,49 +136,6 @@ class Card(Base):
     updated_at: Mapped[datetime] = _updated_at()
 
     account: Mapped[Account] = relationship(back_populates="cards")
-
-
-class ReferenceType(Base):
-    """Registry of reference tables (справочники).
-
-    Each row defines one reference type that the app exposes — its ``code`` is
-    reused as the ``entity_type`` of the matching :class:`ReferenceValue` rows
-    and of the :class:`AttributeDefinition` rows describing its columns. Users
-    create new reference types from the UI; the set is therefore data, not code.
-    """
-
-    __tablename__ = "reference_types"
-
-    code: Mapped[str] = mapped_column(String(64), primary_key=True)
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    icon: Mapped[str] = mapped_column(String(16), nullable=False, default="")
-    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[datetime] = _created_at()
-    updated_at: Mapped[datetime] = _updated_at()
-
-
-class ReferenceValue(Base):
-    """Generic table for all reference data types (currency, account_type, ...).
-
-    Using a single table keeps schema simple and lets us add new reference types
-    via attribute_definitions only — no migration needed.
-    """
-
-    __tablename__ = "reference_values"
-    __table_args__ = (
-        UniqueConstraint("entity_type", "code", name="uq_ref_value_type_code"),
-        Index("ix_ref_value_entity_type", "entity_type"),
-    )
-
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    entity_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    code: Mapped[str] = mapped_column(String(128), nullable=False)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    attributes: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    created_at: Mapped[datetime] = _created_at()
-    updated_at: Mapped[datetime] = _updated_at()
 
 
 class Collection(Base):
