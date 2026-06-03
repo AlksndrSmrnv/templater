@@ -213,8 +213,13 @@ async def _delete_folder(
     templates: Jinja2Templates,
     session: AsyncSession,
 ) -> Response:
-    form = await request.form()
-    path = _parse_path(form_str(form, "path"))
+    # htmx 2.x encodes DELETE params (hx-vals) in the URL query string (config
+    # ``methodsThatUseUrlParams`` defaults to ['get','delete']); fall back to the
+    # form body for safety.
+    raw = request.query_params.get("path", "")
+    if not raw:
+        raw = form_str(await request.form(), "path")
+    path = _parse_path(raw)
     try:
         await CollectionService(session).delete_folder(collection_id, path)
         await commit_or_409(session)
