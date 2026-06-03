@@ -348,11 +348,17 @@ def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
             "has_account_owner": True,
             "clients": [],
             "labels": {"client": {}, "account": {}, "card": {}},
+            "preset": {
+                role: {"clientId": "", "accountId": "", "cardId": ""}
+                for role in ("sender", "receiver", "accountOwner")
+            },
         },
     )
 
     assert 'id="role-panels"' in html
-    assert "accountOwner: { clientId: '', accountId: '', cardId: '' }" in html
+    # Preset strings are tojson'd then HTML-escaped (&#34;) so they stay inside
+    # the double-quoted x-data attribute instead of terminating it early.
+    assert "accountOwner: { clientId: &#34;&#34;, accountId: &#34;&#34;, cardId: &#34;&#34; }" in html
     assert 'hx-post="/templater/templates-htmx/3db678b1-1111-2222-3333-444444444444/fill/render"' in html
     assert 'id="sender-client"' not in html
     assert "pickFromList(event, role, kind)" in html
@@ -376,6 +382,30 @@ def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:
         assert card_list.get("role") == "listbox"
         assert account_list.get("hx-params") == "client_id"
         assert card_list.get("hx-params") == "client_id"
+
+
+def test_template_fill_page_preset_cannot_break_out_of_x_data_attribute() -> None:
+    # A query-controlled preset value containing a double quote must not
+    # terminate the double-quoted x-data attribute or inject a new attribute.
+    html = render_template(
+        "templates_reg/fill.html",
+        {
+            "active": "templates",
+            "template": SimpleNamespace(id="x", name="Fill", format="json"),
+            "has_account_owner": False,
+            "clients": [],
+            "labels": {"client": {}, "account": {}, "card": {}},
+            "preset": {
+                "sender": {"clientId": 'x" onmouseover="alert(1)', "accountId": "", "cardId": ""},
+                "receiver": {"clientId": "", "accountId": "", "cardId": ""},
+                "accountOwner": {"clientId": "", "accountId": "", "cardId": ""},
+            },
+        },
+    )
+    # No raw breakout sequence; the payload's quotes are JSON-escaped (\") and
+    # then HTML-escaped (&#34;), so a backslash precedes each escaped quote.
+    assert 'x" onmouseover="alert(1)' not in html
+    assert "onmouseover=\\&#34;alert(1)" in html
 
 
 def test_template_fill_partials_use_data_attributes_for_delegated_selection() -> None:
@@ -866,3 +896,77 @@ def test_template_panel_lists_filled_links() -> None:
     html = render_template("partials/template_panel.html", _panel_context(template, parsable=True, filled_links=[filled]))
     assert "A2A — Иванов — 29.05.2026" in html
     assert f"/templater/filled-templates/{filled.id}" in html
+
+
+def test_home_shows_assistant_form_when_llm_active() -> None:
+    html = render_template("home.html", {"active": "home", "llm_active": True})
+    assert 'name="prompt"' in html
+    assert 'hx-post="/templater/assistant/compose"' in html
+    assert 'id="assistant-result"' in html
+    assert 'id="assistant-errors"' in html
+
+
+def test_home_hides_assistant_form_when_llm_inactive() -> None:
+    html = render_template("home.html", {"active": "home", "llm_active": False})
+    assert 'name="prompt"' not in html
+    assert "не настроена" in html
+
+
+def test_assistant_result_partial_renders_picks_and_link() -> None:
+    html = render_template(
+        "partials/assistant_result.html",
+        {
+            "template": SimpleNamespace(
+                id="3db678b1-1111-2222-3333-444444444444", name="Перевод A2A"
+            ),
+            "roles": [
+                {
+                    "role": "sender",
+                    "title": "Отправитель",
+                    "client_label": "Иванов",
+                    "traits": "резидент",
+                    "account_label": "40817...111",
+                    "account_currency": "USD",
+                    "card_label": "5536...000",
+                },
+                {
+                    "role": "receiver",
+                    "title": "Получатель",
+                    "client_label": "Петров",
+                    "traits": "недееспособный",
+                    "account_label": "40817...222",
+                    "account_currency": "RUB",
+                    "card_label": None,
+                },
+            ],
+            "rendered": "{}",
+            "rendered_html": "{&quot;amount&quot;: 100}",
+            "unresolved": [],
+            "fill_qs": "sender_client_id=abc&receiver_client_id=def",
+        },
+    )
+    assert "Перевод A2A" in html
+    # The & in the query string is HTML-escaped to &amp; inside the href.
+    assert (
+        '/templater/templates/3db678b1-1111-2222-3333-444444444444/fill'
+        '?sender_client_id=abc&amp;receiver_client_id=def' in html
+    )
+    assert "Отправитель" in html and "Иванов" in html
+    assert "недееспособный" in html
+    assert "USD" in html
+
+
+def test_assistant_result_partial_warns_on_unresolved() -> None:
+    html = render_template(
+        "partials/assistant_result.html",
+        {
+            "template": SimpleNamespace(id="x", name="T"),
+            "roles": [],
+            "rendered": "{}",
+            "rendered_html": "{}",
+            "unresolved": ["sender.account.number"],
+            "fill_qs": "",
+        },
+    )
+    assert "Не заполнены поля" in html
+    assert "sender.account.number" in html

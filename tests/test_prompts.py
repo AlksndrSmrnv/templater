@@ -135,3 +135,42 @@ def test_build_template_meta_compacts_json_and_removes_null_object_keys() -> Non
     assert '{"fullName":"X","nested":{"keepMe":"Y"}}' in user_p
     assert "dropMe" not in user_p
     assert "\t" not in user_p
+
+
+# --- Transfer assistant prompts ---
+
+
+def test_build_transfer_template_pick_lists_ids_and_asks_for_json() -> None:
+    sys_p, user_p = PromptBuilder.build_transfer_template_pick(
+        request="перевод с карты в долларах на счёт в рублях",
+        templates=[
+            {"id": "T1", "category": "перевод", "summary": "Перевод со счёта на счёт"},
+            {"id": "T2", "category": "перевод", "summary": "Перевод в другой банк"},
+        ],
+    )
+    assert '{"template"' in sys_p
+    assert "перевод с карты" in user_p
+    assert "T1 — перевод: Перевод со счёта на счёт" in user_p
+    assert "T2" in user_p
+
+
+def test_build_transfer_participants_includes_owner_only_when_needed() -> None:
+    clients = [{"id": "C1", "traits": "резидент", "description": "Иванов"}]
+    accounts = [{"id": "A1", "client": "C1", "currency": "USD", "description": "счёт"}]
+    cards = [{"id": "K1", "account": "A1", "description": "карта"}]
+
+    sys_no, user_no = PromptBuilder.build_transfer_participants(
+        request="перевод", clients=clients, accounts=accounts, cards=cards,
+        need_account_owner=False,
+    )
+    assert "accountOwner" not in sys_no
+    # All three catalogs are present with short ids.
+    assert "C1 | резидент | Иванов" in user_no
+    assert "A1 | C1 | USD | счёт" in user_no
+    assert "K1 | A1 | карта" in user_no
+
+    sys_yes, _ = PromptBuilder.build_transfer_participants(
+        request="перевод", clients=clients, accounts=accounts, cards=cards,
+        need_account_owner=True,
+    )
+    assert "accountOwner" in sys_yes

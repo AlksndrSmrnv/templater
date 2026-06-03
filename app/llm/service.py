@@ -87,6 +87,91 @@ class LLMService:
         meta, _ = await self._describe_template(content=content, fmt=fmt)
         return meta
 
+    async def pick_transfer_template(
+        self,
+        *,
+        request: str,
+        templates: list[dict[str, str]],
+    ) -> str | None:
+        """Ask the LLM to pick ONE template short-id for the transfer request.
+
+        Returns the chosen id (e.g. ``"T2"``) or ``None`` when the model declines
+        / returns garbage. Reuses the robust :meth:`_parse_json` recovery so a
+        fenced / prose-wrapped answer still resolves.
+        """
+
+        system_prompt, user_prompt = self.prompts.build_transfer_template_pick(
+            request=request, templates=templates
+        )
+        response: ChatResponse = await self.client.chat(system_prompt, user_prompt)
+        parsed = self._parse_json(response.text)
+        if not isinstance(parsed, dict):
+            log.warning(
+                "LLM pick_transfer_template returned non-dict. response_text[:200]=%r",
+                response.text[:200],
+            )
+            return None
+        chosen = parsed.get("template")
+        return chosen if isinstance(chosen, str) and chosen else None
+
+    async def pick_transfer_participants(
+        self,
+        *,
+        request: str,
+        clients: list[dict[str, str]],
+        accounts: list[dict[str, str]],
+        cards: list[dict[str, str]],
+        need_account_owner: bool,
+    ) -> dict[str, dict[str, str | None]]:
+        """Ask the LLM to pick participants (client/account/card per role).
+
+        Returns ``{role: {"client": "C1", "account": "A2"|None, "card": None}}``
+        for each role the model filled with a usable client. Roles without a
+        client are dropped.
+        """
+
+        system_prompt, user_prompt = self.prompts.build_transfer_participants(
+            request=request,
+            clients=clients,
+            accounts=accounts,
+            cards=cards,
+            need_account_owner=need_account_owner,
+        )
+        response: ChatResponse = await self.client.chat(system_prompt, user_prompt)
+        parsed = self._parse_json(response.text)
+        if not isinstance(parsed, dict):
+            log.warning(
+                "LLM pick_transfer_participants returned non-dict. response_text[:200]=%r",
+                response.text[:200],
+            )
+        return self._normalize_participants(parsed)
+
+    @staticmethod
+    def _normalize_participants(parsed: Any) -> dict[str, dict[str, str | None]]:
+        """Coerce the raw participant JSON into clean per-role short-id picks.
+
+        A role is kept only if it carries a non-empty ``client`` short-id;
+        ``account``/``card`` are optional and default to ``None``.
+        """
+
+        out: dict[str, dict[str, str | None]] = {}
+        if not isinstance(parsed, dict):
+            return out
+        for role in ("sender", "receiver", "accountOwner"):
+            raw = parsed.get(role)
+            if not isinstance(raw, dict):
+                continue
+            client = raw.get("client")
+            if not isinstance(client, str) or not client:
+                continue
+            entry: dict[str, str | None] = {"client": client, "account": None, "card": None}
+            for key in ("account", "card"):
+                value = raw.get(key)
+                if isinstance(value, str) and value:
+                    entry[key] = value
+            out[role] = entry
+        return out
+
     async def _describe_template(
         self, *, content: str, fmt: str
     ) -> tuple[dict[str, Any], dict[str, str]]:

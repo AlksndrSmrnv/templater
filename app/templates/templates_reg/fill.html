@@ -9,11 +9,27 @@
     </div>
 </div>
 
+{# Normalize optional preselection so a render without ``preset`` can't crash. #}
+{% set _preset = preset | default({}, true) %}
+{% set _sender = _preset.get("sender", {}) %}
+{% set _receiver = _preset.get("receiver", {}) %}
+{% set _owner = _preset.get("accountOwner", {}) %}
 <div x-data="{
     state: {
-        sender: { clientId: '', accountId: '', cardId: '' },
-        receiver: { clientId: '', accountId: '', cardId: '' }{% if has_account_owner %},
-        accountOwner: { clientId: '', accountId: '', cardId: '' }{% endif %}
+        sender: { clientId: {{ _sender.get('clientId', '') | tojson | forceescape }}, accountId: {{ _sender.get('accountId', '') | tojson | forceescape }}, cardId: {{ _sender.get('cardId', '') | tojson | forceescape }} },
+        receiver: { clientId: {{ _receiver.get('clientId', '') | tojson | forceescape }}, accountId: {{ _receiver.get('accountId', '') | tojson | forceescape }}, cardId: {{ _receiver.get('cardId', '') | tojson | forceescape }} }{% if has_account_owner %},
+        accountOwner: { clientId: {{ _owner.get('clientId', '') | tojson | forceescape }}, accountId: {{ _owner.get('accountId', '') | tojson | forceescape }}, cardId: {{ _owner.get('cardId', '') | tojson | forceescape }} }{% endif %}
+    },
+    init() {
+        /* Preselected roles: load their accounts/cards lists by firing the same
+           event a client click would, so highlights and choices appear. */
+        this.$nextTick(() => {
+            Object.keys(this.state).forEach(role => {
+                if (!this.state[role].clientId) return;
+                const panel = this.$root.querySelector(`[data-role-panel='${role}']`);
+                if (panel) panel.dispatchEvent(new CustomEvent('client-changed', { bubbles: true }));
+            });
+        });
     },
     selectClient(role, id) {
         if (this.state[role].clientId === id) return;
@@ -66,7 +82,7 @@
         this.state[role].cardId = this.state[role].cardId === id ? '' : id;
         if (this.state[role].cardId) this.state[role].accountId = '';
     }
-}">
+}" x-init="init()">
     <div id="role-panels" class="role-panels">
         {% for role, title, prefix in [("sender", "Отправитель", "sender"), ("receiver", "Получатель", "receiver")] %}
             <section class="role-panel" data-role-panel="{{ role }}">

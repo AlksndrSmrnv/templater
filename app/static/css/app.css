@@ -741,3 +741,44 @@ li.tree-item.sortable-chosen { background: var(--primary-soft); }
     .workspace { grid-template-columns: 1fr; }
     .workspace-left { position: static; max-height: none; }
 }
+
+/* Home: LLM transfer assistant */
+.assistant-box {
+    margin-top: 18px;
+    padding: 18px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+}
+.assistant-box h3 { margin: 0 0 6px; }
+.assistant-box h4 { margin: 16px 0 8px; font-size: 14px; }
+.assistant-prompt {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font: inherit;
+    font-size: 14px;
+}
+.assistant-box .form-errors:empty { display: none; }
+.assistant-box .form-errors { margin-top: 10px; color: var(--danger); }
+.assistant-result { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 14px; }
+.assistant-result__head {
+    display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+}
+.assistant-result__head h4 { margin: 0; font-size: 15px; }
+.assistant-roles { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.assistant-role {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+    padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm);
+}
+.assistant-role__title { font-weight: 600; min-width: 120px; }
+.assistant-role__client { font-weight: 500; }
+.assistant-role__sub { color: var(--muted); font-size: 13px; }
+.assistant-warn {
+    margin: 10px 0; padding: 8px 10px; border-radius: var(--radius-sm);
+    background: rgba(255, 200, 0, 0.12); color: #8a6d00; font-size: 13px;
+}
