@@ -2,7 +2,7 @@
 {% block title %}Загрузить шаблон — Template Maker{% endblock %}
 {% block content %}
 <div class="page-header">
-    <h1>⬆️ Загрузка шаблона</h1>
+    <h1><iconify-icon icon="lucide:upload"></iconify-icon> Загрузка шаблона</h1>
     <div class="actions">
         <a class="btn" href="/templater/templates">Назад</a>
     </div>
@@ -36,7 +36,7 @@
         <input type="hidden" name="folder_path" value="{{ (preset_folder_path | default([])) | tojson | forceescape }}">
         {% if preset_folder_label | default('') %}
         <div class="form-section">
-            <p class="muted" style="margin:0;">📁 Новый запрос будет создан в папке: <strong>{{ preset_folder_label }}</strong></p>
+            <p class="muted" style="margin:0;"><iconify-icon icon="lucide:folder"></iconify-icon> Новый запрос будет создан в папке: <strong>{{ preset_folder_label }}</strong></p>
         </div>
         {% endif %}
         <div class="form-section">

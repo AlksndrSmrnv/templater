@@ -2,13 +2,13 @@
 {% block title %}{{ ft.name }} — Template Maker{% endblock %}
 {% block content %}
 <div class="page-header">
-    <h1>📦 {{ ft.name }}</h1>
+    <h1><iconify-icon icon="lucide:package"></iconify-icon> {{ ft.name }}</h1>
     <div class="actions">
-        <a class="btn" href="/templater/filled-templates">← К списку</a>
+        <a class="btn" href="/templater/filled-templates"><iconify-icon icon="lucide:arrow-left"></iconify-icon> К списку</a>
         {% if ft.message_template_id %}
             <a class="btn" href="/templater/templates/{{ ft.message_template_id }}">К исходному шаблону</a>
         {% endif %}
-        <a class="btn" href="/templater/filled-templates/{{ ft.id }}/raw?download=1">⬇️ Скачать</a>
+        <a class="btn" href="/templater/filled-templates/{{ ft.id }}/raw?download=1"><iconify-icon icon="lucide:download"></iconify-icon> Скачать</a>
         <button class="btn danger"
                 type="button"
                 hx-delete="/templater/filled-templates-htmx/{{ ft.id }}?redirect=1"
@@ -78,7 +78,7 @@
     {% endif %}
 
     <div class="form-actions" style="margin-top:18px;">
-        <button class="btn primary" type="button" @click="copy()">📋 Копировать</button>
+        <button class="btn primary" type="button" @click="copy()"><iconify-icon icon="lucide:clipboard-copy"></iconify-icon> Копировать</button>
     </div>
 
     <h3 style="margin-top:18px;">Результат</h3>

@@ -4,7 +4,7 @@
     <li class="tree-folder" x-data="{ open: true, editing: false, creating: false }">
         <div class="tree-folder-label">
             <span class="tree-caret" @click="open = !open" x-text="open ? '▾' : '▸'"></span>
-            <span class="tree-folder-icon">📁</span>
+            <span class="tree-folder-icon"><iconify-icon icon="lucide:folder"></iconify-icon></span>
             <span class="tree-folder-name" x-show="!editing" @click="open = !open">{{ folder_name }}</span>
             {% if editable %}
             <form class="tree-inline-form" x-show="editing" x-cloak
@@ -17,16 +17,16 @@
             </form>
             <span class="tree-folder-actions">
                 <button type="button" class="tree-act" title="Переименовать"
-                        @click.stop="editing = true; $nextTick(() => $refs.renameInput.focus())">✎</button>
+                        @click.stop="editing = true; $nextTick(() => $refs.renameInput.focus())"><iconify-icon icon="lucide:pencil"></iconify-icon></button>
                 <button type="button" class="tree-act" title="Новая подпапка"
-                        @click.stop="creating = !creating">📁+</button>
+                        @click.stop="creating = !creating"><iconify-icon icon="lucide:folder-plus"></iconify-icon></button>
                 <a class="tree-act" title="Новый запрос в этой папке"
                    href="/templater/templates/new?collection_id={{ collection_id }}&folder={{ fpath | tojson | urlencode }}">+</a>
                 <button type="button" class="tree-act danger" title="Удалить папку (только пустую)"
                         hx-delete="/templater/collections/{{ folder_ns }}/folders"
                         hx-vals="{{ {'path': (fpath | tojson)} | tojson | forceescape }}"
                         hx-confirm="Удалить папку «{{ folder_name }}»?"
-                        hx-target="#collections-tree" hx-swap="innerHTML">🗑</button>
+                        hx-target="#collections-tree" hx-swap="innerHTML"><iconify-icon icon="lucide:trash-2"></iconify-icon></button>
             </span>
             {% endif %}
         </div>
@@ -53,10 +53,10 @@
         hx-get="/templater/templates-htmx/{{ t.id }}/panel"
         hx-target="#template-panel"
         hx-swap="innerHTML">
-        <span class="tree-drag-handle" title="Перетащите запрос" @click.stop>⠿</span>
+        <span class="tree-drag-handle" title="Перетащите запрос" @click.stop><iconify-icon icon="lucide:grip-vertical"></iconify-icon></span>
         <span class="tree-method method-{{ (t.http_method or '')|lower }}">{{ t.http_method or '·' }}</span>
         <span class="tree-name">{{ t.name }}</span>
-        {% if (t.llm_meta or {}).get('import_status') == 'unparsed' %}<span class="tree-flag" title="Тело не разбирается как JSON/XML">⚠</span>{% endif %}
+        {% if (t.llm_meta or {}).get('import_status') == 'unparsed' %}<span class="tree-flag" title="Тело не разбирается как JSON/XML"><iconify-icon icon="lucide:triangle-alert"></iconify-icon></span>{% endif %}
     </li>
     {% endfor %}
 {% endmacro %}
@@ -67,12 +67,12 @@
     <div class="tree-collection-head">
         <div class="tree-collection-title" @click="open = !open">
             <span class="tree-caret" x-text="open ? '▾' : '▸'"></span>
-            <span class="tree-collection-icon">📁</span>
+            <span class="tree-collection-icon"><iconify-icon icon="lucide:folder"></iconify-icon></span>
             <span class="tree-collection-name">Папки</span>
         </div>
         <div class="tree-collection-actions">
             <button class="btn small" title="Новая папка в корне"
-                    @click.stop="creating = !creating">📁+</button>
+                    @click.stop="creating = !creating"><iconify-icon icon="lucide:folder-plus"></iconify-icon></button>
         </div>
     </div>
     <form class="tree-inline-form" x-show="creating" x-cloak
@@ -93,13 +93,13 @@
     <div class="tree-collection-head">
         <div class="tree-collection-title" @click="open = !open">
             <span class="tree-caret" x-text="open ? '▾' : '▸'"></span>
-            <span class="tree-collection-icon">📦</span>
+            <span class="tree-collection-icon"><iconify-icon icon="lucide:package"></iconify-icon></span>
             <span class="tree-collection-name">{{ cn.collection.name }}</span>
             <span class="tree-count">{{ cn.count }}</span>
         </div>
         <div class="tree-collection-actions">
             <button class="btn small" title="Новая папка"
-                    @click.stop="creating = !creating">📁+</button>
+                    @click.stop="creating = !creating"><iconify-icon icon="lucide:folder-plus"></iconify-icon></button>
             <a class="btn small" title="Новый запрос в коллекции"
                href="/templater/templates/new?collection_id={{ cn.collection.id }}">+</a>
             <button class="btn small"
@@ -108,13 +108,13 @@
                     hx-target="#collections-tree"
                     hx-swap="innerHTML"
                     hx-indicator="#tree-indicator"
-                    hx-disabled-elt="this">✨</button>
+                    hx-disabled-elt="this"><iconify-icon icon="lucide:sparkles"></iconify-icon></button>
             <button class="btn small danger"
                     title="Удалить коллекцию"
                     hx-delete="/templater/collections/{{ cn.collection.id }}"
                     hx-confirm="Удалить коллекцию «{{ cn.collection.name }}» и все её шаблоны?"
                     hx-target="#collections-tree"
-                    hx-swap="innerHTML">🗑</button>
+                    hx-swap="innerHTML"><iconify-icon icon="lucide:trash-2"></iconify-icon></button>
         </div>
     </div>
     <form class="tree-inline-form" x-show="creating" x-cloak
@@ -135,7 +135,7 @@
     <div class="tree-collection-head">
         <div class="tree-collection-title" @click="open = !open">
             <span class="tree-caret" x-text="open ? '▾' : '▸'"></span>
-            <span class="tree-collection-icon">🗂️</span>
+            <span class="tree-collection-icon"><iconify-icon icon="lucide:database"></iconify-icon></span>
             <span class="tree-collection-name">Без коллекции</span>
             <span class="tree-count">{{ ungrouped_count }}</span>
         </div>

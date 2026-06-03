@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Настройки — Template Maker{% endblock %}
 {% block content %}
-<h1>⚙️ Настройки</h1>
+<h1><iconify-icon icon="lucide:settings"></iconify-icon> Настройки</h1>
 {% include "partials/saved_banner.html" %}
 
 <div class="settings-section">
-    <h2>🤖 LLM (GigaChat)</h2>
+    <h2><iconify-icon icon="lucide:bot"></iconify-icon> LLM (GigaChat)</h2>
     <p>
         Статус:
         {% if llm_active %}
@@ -23,7 +23,7 @@
 </div>
 
 <div class="settings-section">
-    <h2>📥 Политика импорта</h2>
+    <h2><iconify-icon icon="lucide:download"></iconify-icon> Политика импорта</h2>
     <form class="filters-inline"
           hx-put="/templater/settings-htmx/import_policy"
           hx-swap="none">
@@ -42,7 +42,7 @@
      x-data="{ open: false }"
      @htmx:after-swap.window="if ($event.detail.target && $event.detail.target.id === 'attr-modal-content') open = true"
      @close-modal.window="open = false">
-    <h2>🧩 Атрибуты сущностей</h2>
+    <h2><iconify-icon icon="lucide:puzzle"></iconify-icon> Атрибуты сущностей</h2>
     <p class="muted">Добавляйте и удаляйте атрибуты по мере необходимости. При удалении атрибута убирается только его определение — уже сохранённые значения в записях остаются нетронутыми. В колонке «Используется» показано, в скольких записях есть значения атрибута и сколько шаблонов его упоминают (ориентировочно).</p>
     <div class="filters">
         <label>Тип сущности:

@@ -15,7 +15,7 @@
                     hx-disabled-elt="this"
                     {% if not parsable %}disabled{% endif %}
                     title="{% if not parsable %}Тело не разбирается как JSON/XML — обработка недоступна{% else %}Анализ шаблона LLM{% endif %}">
-                ✨ Обработать LLM
+                <iconify-icon icon="lucide:sparkles"></iconify-icon> Обработать LLM
             </button>
             {% if parsable %}
             <a class="btn" href="/templater/templates/{{ template.id }}/fill">Заполнить</a>
