@@ -1,0 +1,35 @@
+<div class="assistant-result">
+    <div class="assistant-result__head">
+        <h4>Подобран шаблон:
+            <a href="/templater/templates/{{ template.id }}">{{ template.name }}</a>
+        </h4>
+        <a class="btn small primary"
+           href="/templater/templates/{{ template.id }}/fill{% if fill_qs %}?{{ fill_qs }}{% endif %}">
+            Открыть в редакторе заполнения
+        </a>
+    </div>
+
+    <div class="assistant-roles">
+        {% for role in roles %}
+        <div class="assistant-role">
+            <span class="assistant-role__title">{{ role.title }}</span>
+            <span class="assistant-role__client">{{ role.client_label }}</span>
+            {% if role.traits %}<span class="muted">({{ role.traits }})</span>{% endif %}
+            {% if role.account_label %}
+                <span class="assistant-role__sub">счёт: {{ role.account_label }}{% if role.account_currency %} · {{ role.account_currency }}{% endif %}</span>
+            {% endif %}
+            {% if role.card_label %}
+                <span class="assistant-role__sub">карта: {{ role.card_label }}</span>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if unresolved %}
+    <p class="assistant-warn">⚠️ Не заполнены поля: {{ unresolved | join(", ") }}. Проверьте
+        выбор счёта/карты в редакторе заполнения.</p>
+    {% endif %}
+
+    <h4>Готовое сообщение</h4>
+    <pre class="template-code">{{ rendered_html | safe }}</pre>
+</div>

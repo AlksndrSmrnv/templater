@@ -415,8 +415,38 @@ async def page_fill(
             "clients": clients,
             "labels": await _fill_labels(session),
             "has_account_owner": template_has_account_owner(template),
+            # Optional preselection carried in the query string (e.g. from the
+            # home-page LLM assistant link) — seeds the role pickers.
+            "preset": _fill_preset_from_query(request),
         },
     )
+
+
+def _fill_preset_from_query(request: Request) -> dict[str, dict[str, str]]:
+    """Build the role→{clientId, accountId, cardId} preselection from query params.
+
+    Keys mirror ``FILL_KEYS`` (``sender_client_id`` …); values are passed through
+    verbatim and consumed by ``fill.html`` to seed the Alpine state.
+    """
+
+    qp = getattr(request, "query_params", {})
+    return {
+        "sender": {
+            "clientId": qp.get("sender_client_id", ""),
+            "accountId": qp.get("sender_account_id", ""),
+            "cardId": qp.get("sender_card_id", ""),
+        },
+        "receiver": {
+            "clientId": qp.get("receiver_client_id", ""),
+            "accountId": qp.get("receiver_account_id", ""),
+            "cardId": qp.get("receiver_card_id", ""),
+        },
+        "accountOwner": {
+            "clientId": qp.get("account_owner_client_id", ""),
+            "accountId": qp.get("account_owner_account_id", ""),
+            "cardId": qp.get("account_owner_card_id", ""),
+        },
+    }
 
 
 # ---------- HTMX ----------

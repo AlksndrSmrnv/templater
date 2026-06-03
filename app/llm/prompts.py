@@ -47,6 +47,16 @@ def _format_leaf_value(value: str) -> str:
     return flat
 
 
+def _one_line(value: str, limit: int) -> str:
+    """Collapse whitespace and cap length — keeps catalog rows to one short line
+    so the prompt stays small for a weak model on a tight token budget."""
+
+    flat = " ".join(str(value or "").split())
+    if len(flat) > limit:
+        return flat[:limit] + "…"
+    return flat
+
+
 class PromptBuilder:
     """Builds system + user prompts for tasks we ask the LLM to perform."""
 
@@ -116,6 +126,104 @@ class PromptBuilder:
             + "\n".join(catalog_lines)
         )
         return system_prompt, user_prompt, id_to_location
+
+    @staticmethod
+    def build_transfer_template_pick(
+        *,
+        request: str,
+        templates: list[dict[str, str]],
+    ) -> tuple[str, str]:
+        """Pick ONE template id matching the user's free-form transfer request.
+
+        ``templates`` are pre-condensed rows: ``{"id": "T1", "category": str,
+        "summary": str}``. Only LLM-processed templates are passed in by the
+        caller. The short ids keep the model from echoing long UUIDs.
+        """
+
+        system_prompt = (
+            "Ты подбираешь шаблон банковского перевода по запросу пользователя.\n"
+            "Дан список шаблонов: id — категория: краткое описание.\n"
+            "Выбери ОДИН id наиболее подходящего шаблона.\n"
+            "Ответь СТРОГО валидным JSON без пояснений: {\"template\": \"T1\"}.\n"
+            "Если ничего не подходит — {\"template\": null}.\n"
+        )
+        rows = [
+            f"{row['id']} — {_one_line(row.get('category', ''), 40)}: "
+            f"{_one_line(row.get('summary', ''), 200)}"
+            for row in templates
+        ]
+        user_prompt = (
+            f"Запрос: {_one_line(request, 400)}\n\nШаблоны:\n" + "\n".join(rows)
+        )
+        return system_prompt, user_prompt
+
+    @staticmethod
+    def build_transfer_participants(
+        *,
+        request: str,
+        clients: list[dict[str, str]],
+        accounts: list[dict[str, str]],
+        cards: list[dict[str, str]],
+        need_account_owner: bool,
+    ) -> tuple[str, str]:
+        """Pick participants (client/account/card per role) for the transfer.
+
+        Rows are pre-condensed short-id catalogs:
+          clients  — ``{"id": "C1", "traits": str, "description": str}``
+          accounts — ``{"id": "A1", "client": "C1", "currency": str, "description": str}``
+          cards    — ``{"id": "K1", "account": "A1", "description": str}``
+        The model answers with short ids only; the caller expands them to UUIDs.
+        """
+
+        roles = "sender (отправитель/плательщик), receiver (получатель)"
+        owner_rule = ""
+        owner_answer = ""
+        if need_account_owner:
+            roles += (
+                ", accountOwner (владелец счёта/карты — третья сторона, не отправитель и "
+                "не получатель)"
+            )
+            owner_rule = "Заполни accountOwner, если он подразумевается запросом.\n"
+            owner_answer = ',"accountOwner":{"client":"C3","account":null,"card":null}'
+
+        system_prompt = (
+            "Ты подбираешь участников банковского перевода из тестовых данных по запросу.\n"
+            f"Роли: {roles}.\n"
+            "Для каждой нужной роли выбери клиента (C..). Если в запросе указан счёт или "
+            "карта в конкретной валюте — выбери и конкретный счёт (A..) и/или карту (K..) "
+            "этого клиента; иначе оставь null.\n"
+            "Ориентируйся на описания и признаки сущностей.\n"
+            f"{owner_rule}"
+            "Ответь СТРОГО валидным JSON без пояснений:\n"
+            '{"sender":{"client":"C1","account":null,"card":null},'
+            '"receiver":{"client":"C2","account":null,"card":null}'
+            f"{owner_answer}}}\n"
+            "Если роль не нужна — поставь её значение null.\n"
+        )
+
+        client_rows = [
+            f"{row['id']} | {_one_line(row.get('traits', ''), 60) or '—'} | "
+            f"{_one_line(row.get('description', ''), 160) or '—'}"
+            for row in clients
+        ]
+        account_rows = [
+            f"{row['id']} | {row.get('client', '')} | "
+            f"{_one_line(row.get('currency', ''), 24) or '—'} | "
+            f"{_one_line(row.get('description', ''), 160) or '—'}"
+            for row in accounts
+        ]
+        card_rows = [
+            f"{row['id']} | {row.get('account', '')} | "
+            f"{_one_line(row.get('description', ''), 160) or '—'}"
+            for row in cards
+        ]
+        user_prompt = (
+            f"Запрос: {_one_line(request, 400)}\n\n"
+            "Клиенты (id | признаки | описание):\n" + "\n".join(client_rows) + "\n\n"
+            "Счета (id | клиент | валюта | описание):\n" + "\n".join(account_rows) + "\n\n"
+            "Карты (id | счёт | описание):\n" + "\n".join(card_rows)
+        )
+        return system_prompt, user_prompt
 
     @staticmethod
     def build_template_meta(*, content: str, fmt: str) -> tuple[str, str]:

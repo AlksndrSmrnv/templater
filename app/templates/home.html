@@ -4,6 +4,33 @@
 <h1>📝 Template Maker</h1>
 <p class="muted">Подготовка тестовых данных и шаблонов сообщений для тестирования системы по REST.</p>
 
+<section class="assistant-box">
+    <h3>🤖 Подбор перевода по описанию</h3>
+    <p class="muted">Опишите перевод в свободной форме — языковая модель подберёт подходящий
+        шаблон, клиентов и их счета/карты и покажет готовое заполненное сообщение.</p>
+    {% if llm_active %}
+    <form hx-post="/templater/assistant/compose"
+          hx-target="#assistant-result"
+          hx-swap="innerHTML"
+          hx-disabled-elt="find button">
+        <textarea name="prompt"
+                  class="assistant-prompt"
+                  rows="3"
+                  required
+                  placeholder="Например: сформируй перевод с карты в долларах на счёт в рублях, отправитель — резидент, получатель — недееспособный"></textarea>
+        <div id="assistant-errors" class="form-errors"></div>
+        <div class="form-actions" style="margin-top:10px; display:flex; gap:10px; align-items:center;">
+            <button class="btn primary" type="submit">Подобрать перевод</button>
+            <span class="htmx-indicator muted">Подбираю…</span>
+        </div>
+    </form>
+    <div id="assistant-result"></div>
+    {% else %}
+    <p class="muted">Функция недоступна: языковая модель не настроена. Задайте переменные
+        <code>GIGACHAT_*</code> в <code>.env</code> (см. раздел «Настройки»).</p>
+    {% endif %}
+</section>
+
 <div class="cards">
     <a class="card" href="/templater/clients">
         <h3>🗂️ Тестовые данные</h3>
