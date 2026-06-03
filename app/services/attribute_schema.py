@@ -46,9 +46,7 @@ class AttributeSchemaService:
         if data.data_type not in ALLOWED_TYPES:
             raise ValidationFailed(f"Неизвестный тип атрибута: {data.data_type}")
         if data.data_type == "enum":
-            values = (data.options or {}).get("values")
-            if not isinstance(values, list) or not values:
-                raise ValidationFailed("Для атрибута типа 'enum' нужно указать options.values")
+            self._check_enum_options(data.options)
 
         existing = await self.attrs.get_by_name(data.entity_type, data.name)
         if existing is not None:
@@ -87,9 +85,20 @@ class AttributeSchemaService:
         if data.description is not None:
             attr.description = data.description
         if data.options is not None:
+            # data_type is immutable on update, so an enum attribute must keep a
+            # non-empty options.values — otherwise clearing the field would leave
+            # an empty dropdown and break validate_attributes() for stored values.
+            if attr.data_type == "enum":
+                self._check_enum_options(data.options)
             attr.options = data.options
         await self.session.flush()
         return attr
+
+    @staticmethod
+    def _check_enum_options(options: dict[str, Any] | None) -> None:
+        values = (options or {}).get("values")
+        if not isinstance(values, list) or not values:
+            raise ValidationFailed("Для атрибута типа 'enum' нужно указать options.values")
 
     async def reorder(self, entity_type: str, order: list[uuid.UUID]) -> None:
         self._check_entity_type(entity_type)
