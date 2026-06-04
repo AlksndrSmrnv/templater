@@ -14,6 +14,7 @@
                 <input class="tree-rename-input" type="text" name="name" value="{{ folder_name }}"
                        required x-ref="renameInput"
                        @click.stop @keydown.escape.stop="editing = false">
+                <button type="submit" class="btn small" title="Сохранить">✓</button>
             </form>
             <span class="tree-folder-actions">
                 <button type="button" class="tree-act" title="Переименовать"
@@ -36,6 +37,7 @@
               hx-target="#collections-tree" hx-swap="innerHTML">
             <input type="hidden" name="parent" value="{{ fpath | tojson | forceescape }}">
             <input type="text" name="name" placeholder="Имя подпапки" required @click.stop>
+            <button type="submit" class="btn small" title="Создать">✓</button>
         </form>
         {% endif %}
         <ul class="tree-list" x-show="open"
@@ -80,6 +82,7 @@
           hx-target="#collections-tree" hx-swap="innerHTML">
         <input type="hidden" name="parent" value="[]">
         <input type="text" name="name" placeholder="Имя папки" required>
+        <button type="submit" class="btn small" title="Создать">✓</button>
     </form>
     <ul class="tree-list tree-root" x-show="open"
         data-collection-id="" data-folder-path="[]">
@@ -122,6 +125,7 @@
           hx-target="#collections-tree" hx-swap="innerHTML">
         <input type="hidden" name="parent" value="[]">
         <input type="text" name="name" placeholder="Имя папки" required>
+        <button type="submit" class="btn small" title="Создать">✓</button>
     </form>
     <ul class="tree-list tree-root" x-show="open"
         data-collection-id="{{ cn.collection.id }}" data-folder-path="[]">
