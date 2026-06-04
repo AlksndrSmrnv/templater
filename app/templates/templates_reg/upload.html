@@ -70,7 +70,8 @@
             <textarea name="content"
                       x-ref="content"
                       rows="14"
-                      style="font-family: ui-monospace, Menlo, monospace; font-size: 13px; margin-top:8px;"
+                      class="code-input"
+                      style="margin-top:8px;"
                       @paste="setTimeout(() => { $refs.format.value = detectFormat($refs.content.value); }, 10)"></textarea>
         </div>
         <div class="form-section">

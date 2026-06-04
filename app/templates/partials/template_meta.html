@@ -1,4 +1,4 @@
-<div class="muted" style="font-size:12px;">
+<div class="muted text-sm">
     {% set meta = (template.llm_meta if template is defined else llm_meta | default({})) or {} %}
     {% if meta.get("summary") %}
         <strong>Резюме:</strong> {{ meta.get("summary") }}<br>

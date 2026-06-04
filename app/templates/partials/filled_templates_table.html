@@ -1,7 +1,7 @@
 {% set rows = filled_templates | default([]) %}
 {% if truncated | default(false) %}
     <tr>
-        <td colspan="7" class="muted" style="text-align:center; padding:8px; background: rgba(255,200,0,0.10); font-size:12px;">
+        <td colspan="7" class="muted text-xs" style="text-align:center; padding:8px; background: rgba(255,200,0,0.10);">
             Показаны последние {{ list_limit }} записей. Уточните поиск, чтобы увидеть остальные.
         </td>
     </tr>
@@ -13,7 +13,8 @@
                 <a href="/templater/filled-templates/{{ ft.id }}">{{ ft.name }}</a>
                 {% if ft.unresolved %}
                     <span title="Остались неподставленные токены: {{ ft.unresolved | join(', ') }}"
-                          style="display:inline-block; margin-left:6px; padding:1px 6px; font-size:11px; border-radius:8px; background: rgba(255,200,0,0.18); color:#a8741a;">не дозаполнено</span>
+                          class="text-xs"
+                          style="display:inline-block; margin-left:6px; padding:1px 6px; border-radius:8px; background: rgba(255,200,0,0.18); color:#a8741a;">не дозаполнено</span>
                 {% endif %}
             </td>
             <td>

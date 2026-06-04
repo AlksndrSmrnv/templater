@@ -53,7 +53,7 @@
                    value="{{ ((options or {}).get('values', []) | join(', ')) if is_edit else '' }}"
                    placeholder="USD, EUR, RUB">
         </label>
-        <div class="muted" style="font-size:12px; margin-top:4px;">Перечислите допустимые значения через запятую — при создании записи поле станет выпадающим списком из этих значений.</div>
+        <div class="muted text-sm" style="margin-top:4px;">Перечислите допустимые значения через запятую — при создании записи поле станет выпадающим списком из этих значений.</div>
     </div>
     <div class="form-section">
         <label><input type="checkbox" name="is_required" value="true" {% if is_edit and attribute.is_required %}checked{% endif %}> Обязательное</label>
