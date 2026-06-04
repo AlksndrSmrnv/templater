@@ -385,6 +385,7 @@ h3 { font-size: var(--fs-lg); line-height: 1.3; font-weight: 600; letter-spacing
     box-shadow: 0 0 0 1px var(--text);
 }
 .form textarea { font-family: inherit; resize: vertical; }
+.form textarea.code-input { font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Mono", monospace; font-size: var(--fs-sm); }
 .form .form-actions { display: flex; gap: 8px; margin-top: 20px; }
 .form .required-mark { color: var(--danger); margin-left: 4px; }
 .form .field-error { color: var(--danger); font-size: var(--fs-sm); margin-top: 4px; }
