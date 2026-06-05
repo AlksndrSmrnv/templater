@@ -1,8 +1,4 @@
-{% if unresolved %}
-    <div class="errors">
-        <strong>Не подставлено:</strong> {{ unresolved | join(", ") }}
-    </div>
-{% endif %}
+{% include "partials/unresolved_notice.html" %}
 <div class="form-actions" style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
     <form action="/templater/templates-htmx/{{ template.id }}/fill/download" method="post" style="margin:0;">
         {% for key, value in fill_values.items() %}

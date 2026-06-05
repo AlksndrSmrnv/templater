@@ -250,6 +250,45 @@ def test_filled_template_view_copy_fetch_uses_templater_prefix() -> None:
     assert "fetch('/filled-templates/" not in html
 
 
+def test_unresolved_notice_groups_by_role_with_hints() -> None:
+    html = render_template(
+        "partials/unresolved_notice.html",
+        {
+            "unresolved": [
+                "sender.account.number",
+                "receiver.card.number",
+                "accountOwner.firstName",
+            ]
+        },
+    )
+
+    # Callout header + actionable section appear.
+    assert "Не удалось подставить часть параметров" in html
+    assert "Что делать" in html
+
+    # Paths are grouped under human-readable role labels.
+    assert "Отправитель" in html
+    assert "Получатель" in html
+    assert "Владелец счёта" in html
+
+    # Each path gets a hint matched to its second segment.
+    assert "не выбран счёт для этой роли" in html
+    assert "не выбрана карта для этой роли" in html
+    assert "нет данных у клиента" in html
+
+    # Raw dot-paths are still shown for advanced users.
+    assert "sender.account.number" in html
+    assert "receiver.card.number" in html
+    assert "accountOwner.firstName" in html
+
+
+def test_unresolved_notice_empty_renders_nothing() -> None:
+    html = render_template("partials/unresolved_notice.html", {"unresolved": []})
+
+    assert "fill-warning" not in html
+    assert html.strip() == ""
+
+
 def test_filled_templates_table_copy_fetch_uses_templater_prefix() -> None:
     html = render_template(
         "partials/filled_templates_table.html",

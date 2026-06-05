@@ -1,0 +1,53 @@
+{# Понятное предупреждение о неподставленных динамических параметрах.
+   Принимает ``unresolved`` — плоский список dot-путей вида ``<роль>.<...>``
+   (например ``sender.account.number``). Группируем по роли и переводим в
+   человекочитаемые подсказки. Логика держится здесь, рядом с русскими строками;
+   формат ``unresolved`` в Python не меняется. #}
+{% if unresolved %}
+    {% set role_labels = {"sender": "Отправитель", "receiver": "Получатель", "accountOwner": "Владелец счёта"} %}
+    {# Сгруппировать пути по первому сегменту (роли), сохраняя порядок появления. #}
+    {% set groups = namespace(order=[], by_role={}) %}
+    {% for path in unresolved %}
+        {% set role = path.split(".")[0] %}
+        {% if role not in groups.by_role %}
+            {% set _ = groups.order.append(role) %}
+            {% set _ = groups.by_role.update({role: []}) %}
+        {% endif %}
+        {% set _ = groups.by_role[role].append(path) %}
+    {% endfor %}
+    <div class="fill-warning" role="alert">
+        <div class="fill-warning__head">
+            <iconify-icon icon="lucide:triangle-alert"></iconify-icon>
+            <strong>Не удалось подставить часть параметров</strong>
+        </div>
+        <p class="fill-warning__lead">
+            Эти поля остались в виде <code>{{ '{{ … }}' }}</code>, потому что для выбранных
+            клиента, счёта или карты не нашлось значения.
+        </p>
+        <ul class="fill-warning__roles">
+            {% for role in groups.order %}
+                <li>
+                    <span class="fill-warning__role">{{ role_labels.get(role, role) }}</span>
+                    <ul class="fill-warning__items">
+                        {% for path in groups.by_role[role] %}
+                            {% set parts = path.split(".") %}
+                            {% if "account" in parts %}
+                                {% set hint = "не выбран счёт для этой роли" %}
+                            {% elif "card" in parts %}
+                                {% set hint = "не выбрана карта для этой роли" %}
+                            {% else %}
+                                {% set hint = "нет данных у клиента (проверьте атрибуты записи)" %}
+                            {% endif %}
+                            <li>{{ hint }} <code class="fill-warning__path">{{ path }}</code></li>
+                        {% endfor %}
+                    </ul>
+                </li>
+            {% endfor %}
+        </ul>
+        <p class="fill-warning__todo">
+            <strong>Что делать:</strong> выберите нужный счёт или карту в панели соответствующей
+            роли и нажмите «Заполнить» ещё раз. Если данных нет — заполните недостающие атрибуты
+            у клиента, счёта или карты.
+        </p>
+    </div>
+{% endif %}

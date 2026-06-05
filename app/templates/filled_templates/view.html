@@ -71,11 +71,9 @@
         </table>
     </section>
 
-    {% if ft.unresolved %}
-        <div class="errors" style="margin-top:14px;">
-            <strong>Не подставлено:</strong> {{ ft.unresolved | join(", ") }}
-        </div>
-    {% endif %}
+    {% with unresolved = ft.unresolved %}
+        {% include "partials/unresolved_notice.html" %}
+    {% endwith %}
 
     <div class="form-actions" style="margin-top:18px;">
         <button class="btn primary" type="button" @click="copy()"><iconify-icon icon="lucide:clipboard-copy"></iconify-icon> Копировать</button>
