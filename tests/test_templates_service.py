@@ -1088,3 +1088,79 @@ async def test_update_placeholders_recalculates_account_owner_meta() -> None:
     assert json.loads(updated.content)["ownerName"] == "{{accountOwner.ownerName}}"
     assert updated.llm_meta == {"summary": "manual", "has_account_owner": True}
     assert session.flushed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method_name",
+    ["regenerate_meta_and_persist", "regenerate_fields_and_persist"],
+)
+async def test_granular_reprocess_refuses_unprocessed_template(method_name: str) -> None:
+    # The granular reprocess actions must not be able to flip an un-analysed
+    # template to import_status="processed" with partial data (stale/direct POST).
+    svc = TemplateService(cast(Any, SimpleNamespace()))
+
+    class ExplodingLlm:
+        def __getattr__(self, name: str) -> Any:
+            raise AssertionError(f"LLM must not be called: {name}")
+
+    template = cast(
+        Any,
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            format="json",
+            content='{"a": 1}',
+            original_content='{"a": 1}',
+            placeholders=[],
+            llm_meta={"import_status": "imported"},
+        ),
+    )
+
+    method = getattr(svc, method_name)
+    with pytest.raises(ValidationFailed):
+        await method(template, llm_service=ExplodingLlm())
+    # Guard runs before any state mutation — nothing was flipped to "processed".
+    assert template.llm_meta == {"import_status": "imported"}
+
+
+@pytest.mark.asyncio
+async def test_regenerate_meta_only_updates_meta_and_keeps_placeholders() -> None:
+    class FakeSession:
+        async def flush(self) -> None:
+            return None
+
+    svc = TemplateService(cast(Any, FakeSession()))
+
+    class FakeLlm:
+        async def regenerate_meta(self, *, content: str, fmt: str) -> dict[str, Any]:
+            return {
+                "meta": {"summary": "new"},
+                "debug": {"system_prompt": "s", "user_prompt": "u", "response_text": "r"},
+            }
+
+    placeholders = [
+        {"location": "/ownerName", "suggestion": "accountOwner.ownerName", "value": ""}
+    ]
+    template = cast(
+        Any,
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            format="json",
+            content='{"x": "{{sender.fullName}}"}',
+            original_content='{"x": "Иванов"}',
+            placeholders=placeholders,
+            llm_meta={"summary": "old", "import_status": "processed"},
+            llm_debug=None,
+        ),
+    )
+
+    out = await svc.regenerate_meta_and_persist(template, llm_service=FakeLlm())
+
+    assert out.llm_meta["summary"] == "new"
+    assert out.llm_meta["import_status"] == "processed"
+    # account-owner flag recomputed from the existing placeholders
+    assert out.llm_meta["has_account_owner"] is True
+    # content + placeholders are left untouched by a meta-only reprocess
+    assert out.content == '{"x": "{{sender.fullName}}"}'
+    assert out.placeholders is placeholders
+    assert out.llm_debug["response_text"] == "r"

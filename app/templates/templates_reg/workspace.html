@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Шаблоны сообщений — Template Maker{% endblock %}
 {% block content %}
-<div class="workspace" x-data="{ selected: {% if open_template_id | default('') %}'{{ open_template_id }}'{% else %}null{% endif %} }">
+<div class="workspace" x-data="{ selected: {{ (open_template_id | default('') or none) | tojson | forceescape }} }">
     <aside class="workspace-left">
         <div class="workspace-left-header">
             <div class="workspace-left-title">
@@ -56,7 +56,7 @@
         {% if open_template_id | default('') %}
         {# Deep link (e.g. from the assistant, a filled template, or the create
            flow) — load that request's panel on page load. #}
-        <div hx-get="/templater/templates-htmx/{{ open_template_id }}/panel"
+        <div hx-get="/templater/templates-htmx/{{ open_template_id | urlencode }}/panel"
              hx-trigger="load"
              hx-target="#template-panel"
              hx-swap="innerHTML"></div>

@@ -877,6 +877,42 @@ def test_template_panel_has_delete_button_and_no_editor_link() -> None:
     assert ">Редактор</a>" not in html
 
 
+def _workspace_context(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "active": "templates",
+        "root_tree": {"folders": {}, "templates": []},
+        "collection_nodes": [],
+        "ungrouped_tree": {"folders": {}, "templates": []},
+        "ungrouped_count": 0,
+        "search": "",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_workspace_opens_panel_for_deep_link() -> None:
+    tid = "3db678b1-1111-2222-3333-444444444444"
+    html = render_template(
+        "templates_reg/workspace.html", _workspace_context(open_template_id=tid)
+    )
+    assert f"/templater/templates-htmx/{tid}/panel" in html
+    assert 'hx-trigger="load"' in html
+    # selected is seeded as a JS string (HTML-escaped by forceescape).
+    assert "&#34;" in html
+
+
+def test_workspace_escapes_malicious_open_template_id() -> None:
+    # Defence-in-depth: even if a non-UUID value reached the template, it must be
+    # neutralised, not reflected into the Alpine x-data / hx-get attributes.
+    html = render_template(
+        "templates_reg/workspace.html",
+        _workspace_context(open_template_id='"});alert(1)//'),
+    )
+    assert '"});alert' not in html  # no raw double-quote breakout
+    assert "&#34;" in html  # x-data value HTML-escaped
+    assert "%22" in html  # panel URL urlencoded
+
+
 def test_template_panel_lists_filled_links() -> None:
     template = _panel_template()
     filled = SimpleNamespace(id=uuid.uuid4(), name="A2A — Иванов — 29.05.2026", created_at=__import__("datetime").datetime(2026, 5, 29, 12, 0))

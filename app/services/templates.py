@@ -342,6 +342,22 @@ class TemplateService:
                 "обработка LLM недоступна"
             ) from exc
 
+    @staticmethod
+    def _require_processed(template: MessageTemplate) -> None:
+        """Guard the granular reprocess actions to already-processed templates.
+
+        The "reprocess only meta / only fields" buttons are hidden in the UI
+        until a template is processed, but a direct or stale POST must not be
+        able to flip an un-analysed template to ``import_status="processed"``
+        with partial data — refuse it and point the user at the full process.
+        """
+
+        if (template.llm_meta or {}).get("import_status") != "processed":
+            raise ValidationFailed(
+                "Шаблон ещё не обработан LLM — сначала выполните полную обработку "
+                "(«Обработать LLM»)."
+            )
+
     async def regenerate_meta_and_persist(
         self,
         template: MessageTemplate,
@@ -355,6 +371,7 @@ class TemplateService:
         and the processed status) and the stored prompt/response debug.
         """
 
+        self._require_processed(template)
         source = template.original_content or template.content
         self._require_parsable(template.format, source)
         result = await llm_service.regenerate_meta(content=source, fmt=template.format)
@@ -379,6 +396,7 @@ class TemplateService:
         refreshing only the account-owner flag from the new placeholders.
         """
 
+        self._require_processed(template)
         source = template.original_content or template.content
         self._require_parsable(template.format, source)
         leaves = self._extract_leaves(template.format, source)

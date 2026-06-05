@@ -346,13 +346,21 @@ async def page_list(
     session: AsyncSession = SessionDep,
 ) -> Response:
     tree = await CollectionService(session).build_workspace_tree()
+    # ``template`` (a template id) opens that request's panel on load — used by
+    # deep links from the assistant, filled templates and the create flow, now
+    # that the standalone editor page is retired. Validate it as a UUID so an
+    # attacker-controlled query string can't be reflected into the page.
+    open_template_id = ""
+    raw_open = template.strip()
+    if raw_open:
+        try:
+            open_template_id = str(uuid.UUID(raw_open))
+        except ValueError:
+            open_template_id = ""
     return templates.TemplateResponse(
         request,
         "templates_reg/workspace.html",
-        # ``template`` (a template id) opens that request's panel on load — used
-        # by deep links from the assistant, filled templates and the create flow,
-        # now that the standalone editor page is retired.
-        {"active": "templates", "open_template_id": template.strip(), **tree},
+        {"active": "templates", "open_template_id": open_template_id, **tree},
     )
 
 
