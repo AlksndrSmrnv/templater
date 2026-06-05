@@ -60,7 +60,7 @@
     }
 }" @refresh-entities.window="dispatchFilters()" @close-drawer.window="closeDrawer(true)">
     <div class="page-header">
-        <h1>{{ title }}</h1>
+        <h1><iconify-icon icon="{{ icon | default('') }}"></iconify-icon> {{ title }}</h1>
         <div class="actions">
             <a class="btn primary" href="/templater/{{ entity_type }}s/new">Создать</a>
             <form id="entity-export-form" action="/templater/entities-htmx/{{ entity_type }}/export" method="post">

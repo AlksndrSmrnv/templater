@@ -38,9 +38,14 @@ from app.utils.errors import DomainError, NotFoundError
 router = APIRouter()
 
 ENTITY_TITLES = {
-    "client": "👥 Клиенты",
-    "account": "🏦 Счета",
-    "card": "💳 Карты",
+    "client": "Клиенты",
+    "account": "Счета",
+    "card": "Карты",
+}
+ENTITY_ICONS = {
+    "client": "lucide:users",
+    "account": "lucide:landmark",
+    "card": "lucide:credit-card",
 }
 RELATION_COLUMNS = {
     "client": ("accounts", "cards"),
@@ -188,6 +193,7 @@ async def build_entity_list_context(
         "active": "data",
         "entity_type": entity_type,
         "title": ENTITY_TITLES[entity_type],
+        "icon": ENTITY_ICONS[entity_type],
         "schema": schema,
         "items": items,
         "items_total": items_total,
@@ -226,6 +232,7 @@ async def build_entity_form_context(
         "active": "data",
         "entity_type": entity_type,
         "title": ENTITY_TITLES[entity_type] if entity_id else f"{ENTITY_TITLES[entity_type]}: новая запись",
+        "icon": ENTITY_ICONS[entity_type],
         "entity_id": str(entity_id) if entity_id else None,
         "entity": entity,
         "schema": schema,
