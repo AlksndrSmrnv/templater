@@ -6,7 +6,31 @@
             <span class="tree-method method-{{ (template.http_method or '')|lower }}">{{ template.http_method or '·' }}</span>
             <h2>{{ template.name }}</h2>
         </div>
+        {% set processed = (template.llm_meta or {}).get('import_status') == 'processed' %}
         <div class="panel-actions">
+            {% if processed %}
+            {# Already processed → split reprocess: metadata only / template body only. #}
+            <button class="btn primary"
+                    hx-post="/templater/templates-htmx/{{ template.id }}/regenerate-meta"
+                    hx-target="#template-panel"
+                    hx-swap="innerHTML"
+                    hx-indicator="#panel-llm-indicator"
+                    hx-disabled-elt="this"
+                    {% if not parsable %}disabled{% endif %}
+                    title="{% if not parsable %}Тело не разбирается как JSON/XML — обработка недоступна{% else %}Переобработать только метаинформацию{% endif %}">
+                <iconify-icon icon="lucide:file-text"></iconify-icon> Метаинформация заново
+            </button>
+            <button class="btn primary"
+                    hx-post="/templater/templates-htmx/{{ template.id }}/regenerate-fields"
+                    hx-target="#template-panel"
+                    hx-swap="innerHTML"
+                    hx-indicator="#panel-llm-indicator"
+                    hx-disabled-elt="this"
+                    {% if not parsable %}disabled{% endif %}
+                    title="{% if not parsable %}Тело не разбирается как JSON/XML — обработка недоступна{% else %}Переобработать только разметку шаблона{% endif %}">
+                <iconify-icon icon="lucide:replace"></iconify-icon> Шаблон заново
+            </button>
+            {% else %}
             <button class="btn primary"
                     hx-post="/templater/templates-htmx/{{ template.id }}/process-llm"
                     hx-target="#template-panel"
@@ -17,10 +41,15 @@
                     title="{% if not parsable %}Тело не разбирается как JSON/XML — обработка недоступна{% else %}Анализ шаблона LLM{% endif %}">
                 <iconify-icon icon="lucide:sparkles"></iconify-icon> Обработать LLM
             </button>
+            {% endif %}
             {% if parsable %}
             <a class="btn" href="/templater/templates/{{ template.id }}/fill">Заполнить</a>
             {% endif %}
-            <a class="btn" href="/templater/templates/{{ template.id }}">Редактор</a>
+            <button class="btn danger"
+                    type="button"
+                    hx-delete="/templater/templates-htmx/{{ template.id }}?redirect=true"
+                    hx-confirm="Удалить шаблон?"
+                    hx-swap="none">Удалить</button>
             <span id="panel-llm-indicator" class="htmx-indicator muted"><span class="spinner"></span> Обработка LLM…</span>
         </div>
     </div>

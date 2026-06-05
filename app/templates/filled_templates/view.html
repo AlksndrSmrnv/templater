@@ -6,7 +6,7 @@
     <div class="actions">
         <a class="btn" href="/templater/filled-templates"><iconify-icon icon="lucide:arrow-left"></iconify-icon> К списку</a>
         {% if ft.message_template_id %}
-            <a class="btn" href="/templater/templates/{{ ft.message_template_id }}">К исходному шаблону</a>
+            <a class="btn" href="/templater/templates?template={{ ft.message_template_id }}">К исходному шаблону</a>
         {% endif %}
         <a class="btn" href="/templater/filled-templates/{{ ft.id }}/raw?download=1"><iconify-icon icon="lucide:download"></iconify-icon> Скачать</a>
         <button class="btn danger"
@@ -42,7 +42,7 @@
                     <td>Шаблон</td>
                     <td>
                         {% if ft.message_template_id %}
-                            <a href="/templater/templates/{{ ft.message_template_id }}">{{ ft.template_name_snapshot or '—' }}</a>
+                            <a href="/templater/templates?template={{ ft.message_template_id }}">{{ ft.template_name_snapshot or '—' }}</a>
                         {% else %}
                             <span class="muted">{{ ft.template_name_snapshot or '—' }} (удалён)</span>
                         {% endif %}

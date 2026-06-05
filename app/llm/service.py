@@ -44,26 +44,43 @@ class LLMService:
             # reflects reality and the prompt/response stay diagnosable.
             return {"placeholders": [], "meta": meta, "debug": meta_debug}
 
+        mapping = await self.map_template_fields(leaves=leaves, catalog=catalog)
+        debug = self._merge_debug(meta=meta_debug, mapping=mapping["debug"])
+        return {"placeholders": mapping["placeholders"], "meta": meta, "debug": debug}
+
+    async def map_template_fields(
+        self,
+        *,
+        leaves: list[dict[str, str]],
+        catalog: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        """Run only the field-mapping LLM call (no meta description).
+
+        Returns ``{"placeholders": [...], "debug": {...}}``. Split out of
+        :meth:`analyze_template` so the "reprocess only the template" action can
+        re-run the mapping without touching the stored meta/summary.
+        """
+
+        if not leaves:
+            return {"placeholders": [], "debug": {}}
+
         system_prompt, user_prompt, id_to_location = (
             self.prompts.build_template_field_mapping(leaves=leaves, catalog=catalog)
         )
         response: ChatResponse = await self.client.chat(system_prompt, user_prompt)
-        debug = self._merge_debug(
-            meta=meta_debug,
-            mapping={
-                "system_prompt": system_prompt,
-                "user_prompt": user_prompt,
-                "response_text": response.text,
-            },
-        )
+        debug = {
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "response_text": response.text,
+        }
         parsed = self._parse_json(response.text)
         if not isinstance(parsed, dict):
             log.warning(
-                "LLM analyze_template returned non-dict; using empty result. "
+                "LLM map_template_fields returned non-dict; using empty result. "
                 "response_text[:200]=%r",
                 response.text[:200],
             )
-            return {"placeholders": [], "meta": meta, "debug": debug}
+            return {"placeholders": [], "debug": debug}
         placeholders = parsed.get("placeholders") or []
         # Build a value→location index so a model that echoes the raw path (or a
         # different leaf id) instead of the assigned id still resolves.
@@ -81,11 +98,18 @@ class LLMService:
                 location = ref  # model returned the path itself — accept it
             if location:
                 normalized.append({"location": location, "suggestion": field})
-        return {"placeholders": normalized, "meta": meta, "debug": debug}
+        return {"placeholders": normalized, "debug": debug}
 
     async def regenerate_meta(self, *, content: str, fmt: str) -> dict[str, Any]:
-        meta, _ = await self._describe_template(content=content, fmt=fmt)
-        return meta
+        """Re-run only the meta (summary) LLM call.
+
+        Returns ``{"meta": ..., "debug": ...}`` so the "reprocess only the
+        metadata" action can both persist the new summary and keep the
+        prompt/response viewable in the debug panel.
+        """
+
+        meta, debug = await self._describe_template(content=content, fmt=fmt)
+        return {"meta": meta, "debug": debug}
 
     async def pick_transfer_template(
         self,

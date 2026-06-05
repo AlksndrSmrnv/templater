@@ -320,16 +320,116 @@ class TemplateService:
         """
 
         source = template.original_content or template.content
-        try:
-            self._extract_leaves(template.format, source)
-        except Exception as exc:
-            raise ValidationFailed(
-                f"Тело сообщения не разбирается как {template.format.upper()} — "
-                "обработка LLM недоступна"
-            ) from exc
+        self._require_parsable(template.format, source)
         await self.analyze(template, llm_service=llm_service)
         template.headers = apply_dynamic_headers(template.headers or [])
         template.llm_meta = {**(template.llm_meta or {}), "import_status": "processed"}
+        await self.session.flush()
+        return template
+
+    def _require_parsable(self, fmt: str, source: str) -> None:
+        """Raise :class:`ValidationFailed` when the body does not parse as ``fmt``.
+
+        Shared guard for the LLM-processing actions — imported GET/urlencoded/
+        GraphQL bodies can't be mapped, so callers must report/skip them.
+        """
+
+        try:
+            self._extract_leaves(fmt, source)
+        except Exception as exc:
+            raise ValidationFailed(
+                f"Тело сообщения не разбирается как {fmt.upper()} — "
+                "обработка LLM недоступна"
+            ) from exc
+
+    @staticmethod
+    def _require_processed(template: MessageTemplate) -> None:
+        """Guard the granular reprocess actions to already-processed templates.
+
+        The "reprocess only meta / only fields" buttons are hidden in the UI
+        until a template is processed, but a direct or stale POST must not be
+        able to flip an un-analysed template to ``import_status="processed"``
+        with partial data — refuse it and point the user at the full process.
+        """
+
+        if (template.llm_meta or {}).get("import_status") != "processed":
+            raise ValidationFailed(
+                "Шаблон ещё не обработан LLM — сначала выполните полную обработку "
+                "(«Обработать LLM»)."
+            )
+
+    async def regenerate_meta_and_persist(
+        self,
+        template: MessageTemplate,
+        *,
+        llm_service: Any,
+    ) -> MessageTemplate:
+        """Re-run ONLY the LLM meta (summary) for an already-processed template.
+
+        Leaves content and placeholders untouched — just refreshes ``llm_meta``
+        (preserving the account-owner flag derived from the existing placeholders
+        and the processed status) and the stored prompt/response debug.
+        """
+
+        self._require_processed(template)
+        source = template.original_content or template.content
+        self._require_parsable(template.format, source)
+        result = await llm_service.regenerate_meta(content=source, fmt=template.format)
+        meta = result.get("meta") or {}
+        template.llm_meta = {
+            **meta,
+            "has_account_owner": placeholders_have_account_owner(template.placeholders or []),
+            "import_status": "processed",
+        }
+        template.llm_debug = result.get("debug")
+        await self.session.flush()
+        return template
+
+    async def regenerate_fields_and_persist(
+        self,
+        template: MessageTemplate,
+        *,
+        llm_service: Any,
+    ) -> MessageTemplate:
+        """Re-run ONLY the field mapping (placeholders + rewritten content) for an
+        already-processed template. Keeps the existing ``llm_meta`` summary,
+        refreshing only the account-owner flag from the new placeholders.
+        """
+
+        self._require_processed(template)
+        source = template.original_content or template.content
+        self._require_parsable(template.format, source)
+        leaves = self._extract_leaves(template.format, source)
+        catalog = await self.build_field_catalog()
+        heuristic_mappings = self._heuristic_mappings(leaves, catalog)
+        catalog_by_lower = {entry["path"].lower(): entry["path"] for entry in catalog}
+
+        mappable = [
+            {"location": leaf.location, "value": leaf.value}
+            for leaf in leaves
+            if resolve_dynamic_token(leaf.location) is None
+        ]
+        mapping = await llm_service.map_template_fields(leaves=mappable, catalog=catalog)
+        llm_mappings = self._llm_mappings_by_leaf(leaves, mapping.get("placeholders", []))
+
+        new_content, placeholders = self._build_placeholders_and_content(
+            leaves=leaves,
+            fmt=template.format,
+            original_content=source,
+            llm_mappings=llm_mappings,
+            heuristic_mappings=heuristic_mappings,
+            catalog=catalog,
+            catalog_by_lower=catalog_by_lower,
+        )
+        template.content = new_content
+        template.placeholders = placeholders
+        template.headers = apply_dynamic_headers(template.headers or [])
+        template.llm_meta = {
+            **(template.llm_meta or {}),
+            "has_account_owner": placeholders_have_account_owner(placeholders),
+            "import_status": "processed",
+        }
+        template.llm_debug = mapping.get("debug")
         await self.session.flush()
         return template
 
@@ -369,6 +469,44 @@ class TemplateService:
             llm_mappings = {}
             llm_meta = {"summary": "Анализ выполнен без LLM (эвристика по именам полей)."}
             llm_debug = None
+
+        new_content, placeholders = self._build_placeholders_and_content(
+            leaves=leaves,
+            fmt=fmt,
+            original_content=original_content,
+            llm_mappings=llm_mappings,
+            heuristic_mappings=heuristic_mappings,
+            catalog=catalog,
+            catalog_by_lower=catalog_by_lower,
+        )
+
+        return {
+            "content": new_content,
+            "placeholders": placeholders,
+            "llm_meta": {
+                **llm_meta,
+                "has_account_owner": placeholders_have_account_owner(placeholders),
+            },
+            "llm_debug": llm_debug,
+        }
+
+    def _build_placeholders_and_content(
+        self,
+        *,
+        leaves: list[walker.Leaf],
+        fmt: str,
+        original_content: str,
+        llm_mappings: dict[str, dict[str, Any]],
+        heuristic_mappings: dict[str, dict[str, Any]],
+        catalog: list[dict[str, Any]],
+        catalog_by_lower: dict[str, str],
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Build placeholders + rewritten content from leaves and resolved mappings.
+
+        Shared by :meth:`analyze_content` (full analysis) and
+        :meth:`regenerate_fields_and_persist` (template-only reprocess) so the
+        dynamic-token / mapped / literal logic lives in one place.
+        """
 
         placeholders: list[dict[str, Any]] = []
         replacements: dict[str, str] = {}
@@ -420,16 +558,7 @@ class TemplateService:
                 if fmt == "json"
                 else walker.replace_xml(original_content, replacements)
             )
-
-        return {
-            "content": new_content,
-            "placeholders": placeholders,
-            "llm_meta": {
-                **llm_meta,
-                "has_account_owner": placeholders_have_account_owner(placeholders),
-            },
-            "llm_debug": llm_debug,
-        }
+        return new_content, placeholders
 
     @staticmethod
     def _resolve_suggestion(

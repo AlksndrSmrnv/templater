@@ -1,7 +1,7 @@
 <div class="assistant-result">
     <div class="assistant-result__head">
         <h4>Подобран шаблон:
-            <a href="/templater/templates/{{ template.id }}">{{ template.name }}</a>
+            <a href="/templater/templates?template={{ template.id }}">{{ template.name }}</a>
         </h4>
         <a class="btn small primary"
            href="/templater/templates/{{ template.id }}/fill{% if fill_qs %}?{{ fill_qs }}{% endif %}">

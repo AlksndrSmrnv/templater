@@ -135,21 +135,20 @@ class PromptBuilder:
     ) -> tuple[str, str]:
         """Pick ONE template id matching the user's free-form transfer request.
 
-        ``templates`` are pre-condensed rows: ``{"id": "T1", "category": str,
-        "summary": str}``. Only LLM-processed templates are passed in by the
-        caller. The short ids keep the model from echoing long UUIDs.
+        ``templates`` are pre-condensed rows: ``{"id": "T1", "summary": str}``.
+        Only LLM-processed templates are passed in by the caller. The short ids
+        keep the model from echoing long UUIDs.
         """
 
         system_prompt = (
             "Ты подбираешь шаблон банковского перевода по запросу пользователя.\n"
-            "Дан список шаблонов: id — категория: краткое описание.\n"
+            "Дан список шаблонов: id — краткое описание.\n"
             "Выбери ОДИН id наиболее подходящего шаблона.\n"
             "Ответь СТРОГО валидным JSON без пояснений: {\"template\": \"T1\"}.\n"
             "Если ничего не подходит — {\"template\": null}.\n"
         )
         rows = [
-            f"{row['id']} — {_one_line(row.get('category', ''), 40)}: "
-            f"{_one_line(row.get('summary', ''), 200)}"
+            f"{row['id']} — {_one_line(row.get('summary', ''), 200)}"
             for row in templates
         ]
         user_prompt = (
@@ -228,16 +227,22 @@ class PromptBuilder:
     @staticmethod
     def build_template_meta(*, content: str, fmt: str) -> tuple[str, str]:
         system_prompt = (
-            "Ты анализируешь шаблон сообщения банковской системы.\n"
-            "В проекте только JSON денежных переводов: прочитай каждый параметр и дай подробное\n"
-            "summary в 2–4 предложения. Обязательно отрази тип перевода по productId\n"
-            "(TDD/A2A — перевод со счёта на счёт; another_int — перевод другому клиенту\n"
-            "этого же банка; another_ext — перевод клиенту в другой банк; если плательщик\n"
-            "и получатель совпадают, укажи перевод самому себе), Подразделение-источник\n"
-            "банка, канал операции, валюту перевода, Комиссию — есть/нет и в какой валюте.\n"
-            "Также верни category (тип операции, например 'перевод') и список scenarios\n"
-            "(короткие фразы, описывающие частные случаи использования).\n"
-            "Ответ — валидный JSON: {\"summary\": str, \"category\": str, \"scenarios\": [str]}.\n"
+            "Ты анализируешь JSON-шаблон банковского денежного перевода.\n"
+            "Дай точное описание сути перевода в 2–4 предложениях (поле summary). "
+            "В описании обязательно отрази:\n"
+            "  • канал, в котором проводится перевод (канал операции);\n"
+            "  • тип перевода по productId и связке счёт/карта: TDD/A2A — со счёта на счёт; "
+            "TDC/A2C — со счёта на карту; TCD/C2A — с карты на счёт; TCC/C2C — с карты на "
+            "карту (и аналогичные);\n"
+            "  • кому адресован перевод: самому себе (плательщик и получатель совпадают), "
+            "другому клиенту этого же банка (another_int), или клиенту в другой банк "
+            "(another_ext);\n"
+            "  • с каких счетов/карт и в какой валюте идёт перевод, есть ли конверсия валют;\n"
+            "  • из какого подразделения-источника банка инициирован перевод;\n"
+            "  • есть ли в шаблоне владелец счёта (accountOwner — третья сторона).\n"
+            "Описывай только СУТЬ перевода. НЕ указывай конкретные динамические значения: "
+            "суммы, имена/идентификаторы клиентов, номера счетов и карт.\n"
+            "Ответ — валидный JSON строго вида: {\"summary\": str}.\n"
         )
         body = _compact_json_for_prompt(content) if fmt == "json" else content
         user_prompt = f"Формат: {fmt}\n\n{body}"

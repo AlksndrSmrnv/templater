@@ -212,16 +212,22 @@ async def test_preview_template_marks_llm_unused_when_no_debug_returned(
 
 
 @pytest.mark.asyncio
-async def test_htmx_regenerate_returns_preview_without_committing(
+@pytest.mark.parametrize(
+    ("handler_name", "method_name", "toast"),
+    [
+        ("htmx_regenerate_meta", "regenerate_meta_and_persist", "Метаинформация обновлена"),
+        ("htmx_regenerate_fields", "regenerate_fields_and_persist", "Шаблон обработан заново"),
+    ],
+)
+async def test_granular_reprocess_persists_and_renders_panel(
     monkeypatch: pytest.MonkeyPatch,
+    handler_name: str,
+    method_name: str,
+    toast: str,
 ) -> None:
     template_id = uuid.uuid4()
-    analyzed = {
-        "content": '{"a":"{{sender.fullName}}"}',
-        "placeholders": [{"location": "/a", "mode": "mapped", "value": "{{sender.fullName}}"}],
-        "llm_meta": {"summary": "LLM summary"},
-        "llm_debug": {"system_prompt": "sys", "user_prompt": "usr", "response_text": "resp"},
-    }
+    template = SimpleNamespace(id=template_id, name="T")
+    calls: list[str] = []
 
     class FakeTemplateService:
         def __init__(self, session: object) -> None:
@@ -229,30 +235,14 @@ async def test_htmx_regenerate_returns_preview_without_committing(
 
         async def get(self, requested_id: uuid.UUID) -> Any:
             assert requested_id == template_id
-            return SimpleNamespace(
-                id=template_id,
-                name="T",
-                description="",
-                format="json",
-                content='{"a":"x"}',
-                original_content='{"a":"x"}',
-                placeholders=[],
-                llm_meta={},
-            )
+            return template
 
-        async def analyze_content(
-            self,
-            *,
-            fmt: str,
-            original_content: str,
-            llm_service: Any | None = None,
-        ) -> dict[str, Any]:
-            assert fmt == "json"
-            assert original_content == '{"a":"x"}'
-            return analyzed
+    async def record(self: Any, tpl: Any, *, llm_service: Any | None = None) -> Any:
+        calls.append(method_name)
+        return tpl
 
-        async def build_field_catalog(self) -> list[dict[str, str]]:
-            return []
+    # Each granular route must dispatch to its own service method.
+    setattr(FakeTemplateService, method_name, record)
 
     class FakeLlmContext:
         async def __aenter__(self) -> object:
@@ -261,22 +251,29 @@ async def test_htmx_regenerate_returns_preview_without_committing(
         async def __aexit__(self, *args: object) -> None:
             return None
 
+    async def fake_commit(session: object, item: Any) -> Any:
+        return item
+
+    async def fake_panel_context(session: object, tpl: Any) -> dict[str, Any]:
+        return {"template": tpl}
+
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
     monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
-    monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
+    monkeypatch.setattr(templates_reg, "_template_panel_context", fake_panel_context)
 
-    response = await templates_reg.htmx_regenerate(
+    handler = getattr(templates_reg, handler_name)
+    response = await handler(
         template_id=template_id,
         request=cast(Any, FakeFormRequest({})),
         templates=cast(Any, FakeTemplateRenderer()),
         session=cast(Any, object()),
     )
 
-    assert response.name == "partials/template_editor_response.html"
-    assert response.context["llm_debug"] == analyzed["llm_debug"]
-    assert response.context["template"].llm_meta == analyzed["llm_meta"]
+    assert calls == [method_name]
+    assert response.name == "partials/template_panel.html"
     trigger = json.loads(response.headers["HX-Trigger"])
-    assert "Предпросмотр LLM обновлён" in trigger["showToast"]["message"]
+    assert toast in trigger["showToast"]["message"]
 
 
 @pytest.mark.asyncio
@@ -467,7 +464,7 @@ async def test_htmx_process_llm_persistence_failure_is_not_masked(
 
 
 @pytest.mark.asyncio
-async def test_htmx_regenerate_reports_plain_llm_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_htmx_regenerate_meta_reports_plain_llm_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     template_id = uuid.uuid4()
 
     class FakeTemplateService:
@@ -475,12 +472,9 @@ async def test_htmx_regenerate_reports_plain_llm_failure(monkeypatch: pytest.Mon
             self.session = session
 
         async def get(self, requested_id: uuid.UUID) -> Any:
-            return SimpleNamespace(
-                id=requested_id, name="T", description="", format="json",
-                content='{"a":"x"}', original_content='{"a":"x"}', placeholders=[], llm_meta={},
-            )
+            return SimpleNamespace(id=requested_id, name="T")
 
-        async def analyze_content(self, *, fmt: str, original_content: str, llm_service: Any | None = None) -> Any:
+        async def regenerate_meta_and_persist(self, template: Any, *, llm_service: Any | None = None) -> Any:
             raise RuntimeError("client failed after retries")
 
     class FakeLlmContext:
@@ -490,20 +484,23 @@ async def test_htmx_regenerate_reports_plain_llm_failure(monkeypatch: pytest.Mon
         async def __aexit__(self, *args: object) -> None:
             return None
 
+    class FakeSession:
+        async def rollback(self) -> None:
+            return None
+
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
     monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
 
-    response = await templates_reg.htmx_regenerate(
+    response = await templates_reg.htmx_regenerate_meta(
         template_id=template_id,
         request=cast(Any, FakeFormRequest({})),
         templates=cast(Any, FakeTemplateRenderer()),
-        session=cast(Any, object()),
+        session=cast(Any, FakeSession()),
     )
 
     assert response.name == "partials/form_errors.html"
     assert response.status_code == 200
     assert "LLM не смогла" in response.context["message"]
-    # Errors must land in a dedicated container, not replace #template-code-wrap
-    # (which would wipe the hidden placeholders input and the user's mappings).
-    assert response.headers["HX-Retarget"] == "#regen-errors"
+    # Granular reprocess errors land in the panel's dedicated container.
+    assert response.headers["HX-Retarget"] == "#panel-errors"
     assert response.headers["HX-Reswap"] == "innerHTML"

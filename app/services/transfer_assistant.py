@@ -119,7 +119,6 @@ class TransferAssistant:
         catalog = [
             {
                 "id": short_id,
-                "category": (tpl.llm_meta or {}).get("category", ""),
                 "summary": (tpl.llm_meta or {}).get("summary", "") or tpl.description,
             }
             for short_id, tpl in template_ids.items()

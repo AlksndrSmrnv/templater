@@ -19,7 +19,7 @@
             </td>
             <td>
                 {% if ft.message_template_id %}
-                    <a href="/templater/templates/{{ ft.message_template_id }}">{{ ft.template_name_snapshot or '—' }}</a>
+                    <a href="/templater/templates?template={{ ft.message_template_id }}">{{ ft.template_name_snapshot or '—' }}</a>
                 {% else %}
                     <span class="muted">{{ ft.template_name_snapshot or '—' }} (удалён)</span>
                 {% endif %}
