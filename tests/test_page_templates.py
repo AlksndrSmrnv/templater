@@ -504,59 +504,18 @@ def test_template_review_llm_debug_panel_keeps_headings_outside_code_blocks() ->
     assert 'id="template-code-wrap"' not in html
 
 
-def _view_context(*, parsable: bool) -> dict[str, Any]:
-    return {
-        "active": "templates",
-        "template": SimpleNamespace(
-            id="3db678b1-1111-2222-3333-444444444444",
-            name="Template",
-            description="",
-            llm_meta={},
-        ),
-        "rendered_html": "{}",
-        "placeholders": [],
-        "catalog": [],
-        "dynamic_tokens": [],
-        "parsable": parsable,
-        "llm_debug": None,
-    }
-
-
-def test_template_view_shows_actions_when_parsable() -> None:
-    html = render_template("templates_reg/view.html", _view_context(parsable=True))
-    # Regenerate is no longer gated by llm_active — it's available for parsable bodies.
-    assert "Перегенерировать с LLM" in html
-    assert 'disabled title="LLM не настроена"' not in html
-    assert ">Заполнить</a>" in html
-    assert 'type="submit" form="template-editor-form">Сохранить изменения</button>' in html
-    assert "Метаинформация LLM" in html
-    assert "Наведите на подсвеченное значение" in html
-
-
-def test_template_view_hides_fill_and_regenerate_when_unparsable() -> None:
-    html = render_template("templates_reg/view.html", _view_context(parsable=False))
-    assert "Перегенерировать с LLM" not in html
-    assert "Заполнить" not in html
-    # The editor itself stays available.
-    assert "Сохранить изменения" in html
-
-
-def test_template_view_shows_llm_debug_toggle_when_present() -> None:
+def test_template_edit_llm_panel_shows_llm_debug_toggle_when_present() -> None:
+    # The standalone editor page is retired; the LLM meta panel + debug toggle now
+    # live inside the collections workspace panel (template_edit_llm_panel.html).
     html = render_template(
-        "templates_reg/view.html",
+        "partials/template_edit_llm_panel.html",
         {
-            "active": "templates",
             "template": SimpleNamespace(
                 id="3db678b1-1111-2222-3333-444444444444",
                 name="Template",
                 description="",
                 llm_meta={"summary": "ok"},
             ),
-            "rendered_html": "{}",
-            "placeholders": [],
-            "catalog": [],
-            "dynamic_tokens": [],
-            "llm_active": True,
             "llm_debug": {
                 "system_prompt": "sys",
                 "user_prompt": "usr",
@@ -888,6 +847,34 @@ def test_template_panel_process_button_enabled_when_parsable() -> None:
     html = render_template("partials/template_panel.html", _panel_context(_panel_template(), parsable=True))
     process = [tag for tag in start_tags(html, "button") if "/process-llm" in (tag.get("hx-post") or "")]
     assert process and "disabled" not in process[0]
+
+
+def test_template_panel_unprocessed_shows_single_process_button() -> None:
+    # Default fixture has no import_status → the single combined "process" button.
+    html = render_template("partials/template_panel.html", _panel_context(_panel_template(), parsable=True))
+    posts = [tag.get("hx-post") or "" for tag in start_tags(html, "button")]
+    assert any("/process-llm" in p for p in posts)
+    assert not any("/regenerate-meta" in p for p in posts)
+    assert not any("/regenerate-fields" in p for p in posts)
+
+
+def test_template_panel_processed_shows_split_reprocess_buttons() -> None:
+    template = _panel_template(llm_meta={"summary": "S", "import_status": "processed"})
+    html = render_template("partials/template_panel.html", _panel_context(template, parsable=True))
+    posts = [tag.get("hx-post") or "" for tag in start_tags(html, "button")]
+    # Once processed: two granular buttons replace the combined one.
+    assert any("/regenerate-meta" in p for p in posts)
+    assert any("/regenerate-fields" in p for p in posts)
+    assert not any("/process-llm" in p for p in posts)
+
+
+def test_template_panel_has_delete_button_and_no_editor_link() -> None:
+    # Delete moved into the panel; the standalone editor page link is gone.
+    html = render_template("partials/template_panel.html", _panel_context(_panel_template(), parsable=True))
+    deletes = [tag.get("hx-delete") or "" for tag in start_tags(html, "button")]
+    assert any("/templates-htmx/" in d for d in deletes)
+    assert "Удалить" in html
+    assert ">Редактор</a>" not in html
 
 
 def test_template_panel_lists_filled_links() -> None:

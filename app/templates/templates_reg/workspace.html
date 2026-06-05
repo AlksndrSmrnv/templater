@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Шаблоны сообщений — Template Maker{% endblock %}
 {% block content %}
-<div class="workspace" x-data="{ selected: null }">
+<div class="workspace" x-data="{ selected: {% if open_template_id | default('') %}'{{ open_template_id }}'{% else %}null{% endif %} }">
     <aside class="workspace-left">
         <div class="workspace-left-header">
             <div class="workspace-left-title">
@@ -53,9 +53,18 @@
     </aside>
 
     <section class="workspace-center" id="template-panel">
+        {% if open_template_id | default('') %}
+        {# Deep link (e.g. from the assistant, a filled template, or the create
+           flow) — load that request's panel on page load. #}
+        <div hx-get="/templater/templates-htmx/{{ open_template_id }}/panel"
+             hx-trigger="load"
+             hx-target="#template-panel"
+             hx-swap="innerHTML"></div>
+        {% else %}
         <div class="workspace-empty muted">
             <iconify-icon icon="lucide:arrow-left"></iconify-icon> Выберите запрос в дереве слева, чтобы посмотреть его содержимое и заголовки.
         </div>
+        {% endif %}
     </section>
 </div>
 {% endblock %}

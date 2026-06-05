@@ -4,12 +4,12 @@ import json
 import logging
 import ssl
 import uuid
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -341,6 +341,7 @@ async def _render_fill(
 @router.get("/templates")
 async def page_list(
     request: Request,
+    template: str = "",
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
 ) -> Response:
@@ -348,7 +349,10 @@ async def page_list(
     return templates.TemplateResponse(
         request,
         "templates_reg/workspace.html",
-        {"active": "templates", **tree},
+        # ``template`` (a template id) opens that request's panel on load — used
+        # by deep links from the assistant, filled templates and the create flow,
+        # now that the standalone editor page is retired.
+        {"active": "templates", "open_template_id": template.strip(), **tree},
     )
 
 
@@ -383,17 +387,13 @@ async def page_new(
 
 
 @router.get("/templates/{template_id}")
-async def page_view(
-    template_id: uuid.UUID,
-    request: Request,
-    templates: Jinja2Templates = TemplatesDep,
-    session: AsyncSession = SessionDep,
-) -> Response:
-    template = await TemplateService(session).get(template_id)
-    return templates.TemplateResponse(
-        request,
-        "templates_reg/view.html",
-        {"active": "templates", **await _template_editor_context(session, template)},
+async def page_view(template_id: uuid.UUID) -> RedirectResponse:
+    # The standalone editor page is retired — all editing happens in the
+    # collections workspace panel. Keep this URL working (bookmarks, old links)
+    # by redirecting to the workspace with that template's panel auto-opened.
+    return RedirectResponse(
+        url=f"/templater/templates?template={template_id}",
+        status_code=307,
     )
 
 
@@ -477,13 +477,22 @@ async def htmx_panel(
     )
 
 
-@router.post("/templates-htmx/{template_id}/process-llm")
-async def htmx_process_llm(
+async def _reprocess_panel(
     template_id: uuid.UUID,
     request: Request,
-    templates: Jinja2Templates = TemplatesDep,
-    session: AsyncSession = SessionDep,
+    templates: Jinja2Templates,
+    session: AsyncSession,
+    *,
+    action: Callable[[TemplateService, Any, Any], Awaitable[Any]],
+    toast: str,
 ) -> Response:
+    """Run an LLM (re)processing ``action`` on a template and re-render its panel.
+
+    Shared by the combined "process" and the granular meta-only / fields-only
+    reprocess routes so they all report LLM failures into ``#panel-errors`` and
+    persist via ``commit_and_refresh`` identically.
+    """
+
     svc = TemplateService(session)
     template = await svc.get(template_id)
     panel_error_headers = {"HX-Retarget": "#panel-errors", "HX-Reswap": "innerHTML"}
@@ -491,7 +500,7 @@ async def htmx_process_llm(
     # commit_and_refresh must surface as a real error, not be masked as an LLM failure.
     try:
         async with llm_service() as llm_svc:
-            await svc.analyze_and_persist(template, llm_service=llm_svc)
+            await action(svc, template, llm_svc)
     except DomainError as exc:
         return form_errors_response(
             request,
@@ -518,7 +527,68 @@ async def htmx_process_llm(
         request,
         "partials/template_panel.html",
         await _template_panel_context(session, template),
-        headers={"HX-Trigger": toast_header("Шаблон обработан LLM")},
+        headers={"HX-Trigger": toast_header(toast)},
+    )
+
+
+@router.post("/templates-htmx/{template_id}/process-llm")
+async def htmx_process_llm(
+    template_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    return await _reprocess_panel(
+        template_id,
+        request,
+        templates,
+        session,
+        action=lambda svc, template, llm_svc: svc.analyze_and_persist(
+            template, llm_service=llm_svc
+        ),
+        toast="Шаблон обработан LLM",
+    )
+
+
+@router.post("/templates-htmx/{template_id}/regenerate-meta")
+async def htmx_regenerate_meta(
+    template_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    """Reprocess ONLY the metadata (summary) of an already-processed template."""
+
+    return await _reprocess_panel(
+        template_id,
+        request,
+        templates,
+        session,
+        action=lambda svc, template, llm_svc: svc.regenerate_meta_and_persist(
+            template, llm_service=llm_svc
+        ),
+        toast="Метаинформация обновлена",
+    )
+
+
+@router.post("/templates-htmx/{template_id}/regenerate-fields")
+async def htmx_regenerate_fields(
+    template_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    """Reprocess ONLY the template body (placeholders/mapping), keeping the meta."""
+
+    return await _reprocess_panel(
+        template_id,
+        request,
+        templates,
+        session,
+        action=lambda svc, template, llm_svc: svc.regenerate_fields_and_persist(
+            template, llm_service=llm_svc
+        ),
+        toast="Шаблон обработан заново",
     )
 
 
@@ -593,7 +663,7 @@ async def htmx_create(
     return Response(
         status_code=204,
         headers={
-            "HX-Redirect": f"/templater/templates/{template.id}",
+            "HX-Redirect": f"/templater/templates?template={template.id}",
             "HX-Trigger": toast_header("Шаблон сохранён"),
         },
     )
@@ -628,73 +698,6 @@ async def htmx_update(
         "partials/template_editor_response.html",
         await _template_editor_context(session, template),
         headers={"HX-Trigger": toast_header("Шаблон обновлён")},
-    )
-
-
-@router.post("/templates-htmx/{template_id}/regenerate")
-async def htmx_regenerate(
-    template_id: uuid.UUID,
-    request: Request,
-    templates: Jinja2Templates = TemplatesDep,
-    session: AsyncSession = SessionDep,
-) -> Response:
-    svc = TemplateService(session)
-    template = await svc.get(template_id)
-    if not _is_parsable(template):
-        return form_errors_response(
-            request,
-            templates,
-            f"Тело сообщения не разбирается как {template.format.upper()} — "
-            "обработка LLM недоступна",
-            status_code=200,
-            headers={"HX-Retarget": "#regen-errors", "HX-Reswap": "innerHTML"},
-        )
-    source = template.original_content or template.content
-    regen_error_headers = {"HX-Retarget": "#regen-errors", "HX-Reswap": "innerHTML"}
-    try:
-        async with llm_service() as llm_svc:
-            result = await svc.analyze_content(
-                fmt=template.format,
-                original_content=source,
-                llm_service=llm_svc,
-            )
-    except DomainError as exc:
-        return form_errors_response(
-            request,
-            templates,
-            exc.message,
-            details=exc.details,
-            status_code=200,
-            headers=regen_error_headers,
-        )
-    except Exception as exc:
-        # The GigaChat client raises a plain Exception after exhausting retries;
-        # surface it as a form error rather than a global 500.
-        log.warning("LLM regeneration failed for template %s", template_id, exc_info=True)
-        return form_errors_response(
-            request,
-            templates,
-            _llm_failure_text(exc),
-            status_code=200,
-            headers=regen_error_headers,
-        )
-
-    llm_debug = result.get("llm_debug")
-    preview_template = SimpleNamespace(
-        id=template.id,
-        name=template.name,
-        description=template.description,
-        format=template.format,
-        content=result["content"],
-        original_content=template.original_content,
-        placeholders=result["placeholders"],
-        llm_meta=result["llm_meta"],
-    )
-    return templates.TemplateResponse(
-        request,
-        "partials/template_editor_response.html",
-        await _template_editor_context(session, preview_template, llm_debug=llm_debug),
-        headers={"HX-Trigger": toast_header("Предпросмотр LLM обновлён. Нажмите «Сохранить изменения»")},
     )
 
 

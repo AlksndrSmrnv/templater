@@ -112,8 +112,17 @@ def test_build_template_meta_returns_strings_without_json_wrapper() -> None:
     sys_p, user_p = PromptBuilder.build_template_meta(content="<a/>", fmt="xml")
 
     assert isinstance(sys_p, str) and sys_p
-    assert "productId" in sys_p
+    # Transfer-type codes and the cross-/intra-bank cases are still described.
+    assert "A2A" in sys_p
     assert "another_ext" in sys_p
+    # New required aspects of the summary.
+    assert "канал" in sys_p
+    assert "подразделени" in sys_p
+    assert "владел" in sys_p  # account owner mention
+    # Summary-only schema; category/scenarios are gone.
+    assert '{"summary": str}' in sys_p
+    assert "category" not in sys_p
+    assert "scenarios" not in sys_p
     assert user_p.startswith("Формат: xml")
     assert "<a/>" in user_p
     # Plain text, not a json.dumps payload wrapper.
@@ -144,13 +153,13 @@ def test_build_transfer_template_pick_lists_ids_and_asks_for_json() -> None:
     sys_p, user_p = PromptBuilder.build_transfer_template_pick(
         request="перевод с карты в долларах на счёт в рублях",
         templates=[
-            {"id": "T1", "category": "перевод", "summary": "Перевод со счёта на счёт"},
-            {"id": "T2", "category": "перевод", "summary": "Перевод в другой банк"},
+            {"id": "T1", "summary": "Перевод со счёта на счёт"},
+            {"id": "T2", "summary": "Перевод в другой банк"},
         ],
     )
     assert '{"template"' in sys_p
     assert "перевод с карты" in user_p
-    assert "T1 — перевод: Перевод со счёта на счёт" in user_p
+    assert "T1 — Перевод со счёта на счёт" in user_p
     assert "T2" in user_p
 
 
