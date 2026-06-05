@@ -48,7 +48,8 @@ iconify-icon {
     color: currentColor;
     flex-shrink: 0;
 }
-.nav-icon iconify-icon, .card h3 iconify-icon, h1 iconify-icon { font-size: 18px; }
+.nav-icon iconify-icon { font-size: 18px; }
+h1 iconify-icon, h2 iconify-icon, h3 iconify-icon { font-size: 0.9em; }
 .tree-folder-icon iconify-icon, .tree-collection-icon iconify-icon { color: var(--muted); }
 
 html, body {
