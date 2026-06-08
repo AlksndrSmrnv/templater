@@ -815,7 +815,7 @@ def test_collections_tree_process_button_enabled_when_llm_inactive() -> None:
         "ungrouped_tree": {"folders": {}, "templates": []},
         "ungrouped_count": 0,
         "search": "",
-        "llm_active": False,  # heuristic fallback — button stays enabled
+        "llm_active": False,  # button stays enabled; a failed LLM call surfaces as a form error
     }
     html = render_template("partials/collections_tree.html", context)
     process = [tag for tag in start_tags(html, "button") if "/process-llm" in (tag.get("hx-post") or "")]

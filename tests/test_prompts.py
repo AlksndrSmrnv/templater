@@ -42,6 +42,19 @@ def test_build_template_field_mapping_defines_roles_and_account_owner_rule() -> 
     assert "Не сворачивай его в sender или receiver" in sys_p
 
 
+def test_build_template_field_mapping_tells_model_to_skip_operator() -> None:
+    sys_p, _, _ = _mapping(
+        leaves=[{"location": "/operator/firstName", "value": "Иван"}],
+        catalog=[{"path": "sender.firstName", "label": "Sender — Имя", "data_type": "string"}],
+    )
+
+    # The operator is bank staff, not a transfer participant — its fields must
+    # stay untouched and never be folded into sender/receiver/accountOwner.
+    assert "operator" in sys_p.lower()
+    assert "сотрудник банка" in sys_p
+    assert "НЕ размечай" in sys_p
+
+
 def test_build_template_field_mapping_has_few_shot_example() -> None:
     sys_p, _, _ = _mapping(
         leaves=[{"location": "/Payer/INN", "value": "7701234567"}],

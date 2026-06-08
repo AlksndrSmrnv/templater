@@ -285,8 +285,8 @@ class TemplateService:
         """Analyse the (original) template content and produce placeholders + llm_meta.
 
         Production always passes a live ``llm_service`` (the tool requires LLM).
-        ``None`` is a test-only path that derives mappings from the heuristic /
-        path-role rules without contacting an LLM.
+        ``None`` is a test-only path that skips field mapping entirely: only
+        dynamic envelope tokens are substituted, everything else stays literal.
         """
 
         source = template.original_content or template.content
@@ -401,7 +401,6 @@ class TemplateService:
         self._require_parsable(template.format, source)
         leaves = self._extract_leaves(template.format, source)
         catalog = await self.build_field_catalog()
-        heuristic_mappings = self._heuristic_mappings(leaves, catalog)
         catalog_by_lower = {entry["path"].lower(): entry["path"] for entry in catalog}
 
         mappable = [
@@ -417,7 +416,6 @@ class TemplateService:
             fmt=template.format,
             original_content=source,
             llm_mappings=llm_mappings,
-            heuristic_mappings=heuristic_mappings,
             catalog=catalog,
             catalog_by_lower=catalog_by_lower,
         )
@@ -444,7 +442,6 @@ class TemplateService:
 
         leaves = self._extract_leaves(fmt, original_content)
         catalog = await self.build_field_catalog()
-        heuristic_mappings = self._heuristic_mappings(leaves, catalog)
         catalog_by_lower = {entry["path"].lower(): entry["path"] for entry in catalog}
 
         if llm_service is not None:
@@ -467,7 +464,7 @@ class TemplateService:
             llm_debug = result.get("debug")
         else:
             llm_mappings = {}
-            llm_meta = {"summary": "Анализ выполнен без LLM (эвристика по именам полей)."}
+            llm_meta = {"summary": "Анализ выполнен без LLM: поля не размечаются."}
             llm_debug = None
 
         new_content, placeholders = self._build_placeholders_and_content(
@@ -475,7 +472,6 @@ class TemplateService:
             fmt=fmt,
             original_content=original_content,
             llm_mappings=llm_mappings,
-            heuristic_mappings=heuristic_mappings,
             catalog=catalog,
             catalog_by_lower=catalog_by_lower,
         )
@@ -497,7 +493,6 @@ class TemplateService:
         fmt: str,
         original_content: str,
         llm_mappings: dict[str, dict[str, Any]],
-        heuristic_mappings: dict[str, dict[str, Any]],
         catalog: list[dict[str, Any]],
         catalog_by_lower: dict[str, str],
     ) -> tuple[str, list[dict[str, Any]]]:
@@ -527,13 +522,9 @@ class TemplateService:
                 continue
 
             llm_suggestion = llm_mappings.get(leaf.location, {}).get("suggestion")
-            heuristic_suggestion = heuristic_mappings.get(leaf.location, {}).get("suggestion")
             suggestion = self._resolve_suggestion(
                 leaf=leaf,
                 llm_suggestion=llm_suggestion if isinstance(llm_suggestion, str) else None,
-                heuristic_suggestion=heuristic_suggestion
-                if isinstance(heuristic_suggestion, str)
-                else None,
                 catalog=catalog,
                 catalog_by_lower=catalog_by_lower,
             )
@@ -565,12 +556,11 @@ class TemplateService:
         *,
         leaf: walker.Leaf,
         llm_suggestion: str | None,
-        heuristic_suggestion: str | None,
         catalog: list[dict[str, str]],
         catalog_by_lower: dict[str, str],
     ) -> str | None:
         path_role = resolve_role_from_path(leaf.location)
-        sources = (llm_suggestion, heuristic_suggestion)
+        sources = (llm_suggestion,)
         if path_role is not None:
             leaf_scope = TemplateService._entity_scope_from_segments(
                 TemplateService._path_segments(leaf.location),
@@ -760,54 +750,6 @@ class TemplateService:
             if resolve_role_from_path(segments[idx]) == role:
                 return idx
         return None
-
-    @staticmethod
-    def _heuristic_mappings(
-        leaves: list[walker.Leaf],
-        catalog: list[dict[str, str]],
-    ) -> dict[str, dict[str, str]]:
-        """Match leaf paths to catalog entries by trailing-name similarity."""
-
-        out: dict[str, dict[str, str]] = {}
-        catalog_by_tail: dict[str, list[dict[str, str]]] = {}
-        for entry in catalog:
-            catalog_by_tail.setdefault(entry["path"].split(".")[-1].lower(), []).append(entry)
-        for leaf in leaves:
-            # tail token of the JSON pointer / XML path
-            tail = leaf.location.rstrip("/").split("/")[-1]
-            tail = tail.replace("#text", "").lstrip("@")
-            if "[" in tail:
-                tail = tail.split("[", 1)[0]
-            key = tail.lower()
-            matches = catalog_by_tail.get(key, [])
-            match = TemplateService._choose_catalog_match(leaf, matches)
-            if match:
-                out[leaf.location] = {"suggestion": match["path"]}
-        return out
-
-    @staticmethod
-    def _choose_catalog_match(
-        leaf: walker.Leaf,
-        matches: list[dict[str, str]],
-    ) -> dict[str, str] | None:
-        if not matches:
-            return None
-        haystack = f"{leaf.location} {leaf.value}".lower()
-        owner_markers = (
-            "owner",
-            "accountowner",
-            "account_owner",
-            "accountholder",
-            "account_holder",
-            "владелец",
-            "держатель",
-        )
-        if any(marker in haystack for marker in owner_markers):
-            for match in matches:
-                if match["path"].startswith("accountOwner."):
-                    return match
-        non_owner = [match for match in matches if not match["path"].startswith("accountOwner.")]
-        return non_owner[-1] if non_owner else matches[-1]
 
     @staticmethod
     def regenerate_content(template: MessageTemplate) -> str:
