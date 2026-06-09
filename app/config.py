@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import logging
 import re
+import secrets
 import shlex
 from functools import cached_property, lru_cache
 from pathlib import Path
@@ -45,6 +48,11 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     app_debug: bool = False
+    # Secret for server-side HMAC proofs (e.g. "this content was LLM-analysed
+    # during preview"). Optional: when empty, a stable key is derived from the
+    # DB DSN so the feature needs no extra configuration. Set it explicitly to
+    # rotate or share a key across heterogeneous deployments.
+    secret_key: str = ""
     log_level: str = "INFO"
     log_json: bool = True
 
@@ -103,6 +111,31 @@ class Settings(BaseSettings):
     @property
     def static_dir(self) -> Path:
         return self.base_dir / "static"
+
+    @cached_property
+    def signing_key(self) -> bytes:
+        """Key for HMAC proofs the server issues and later verifies (no client
+        ever sees it).
+
+        Uses ``SECRET_KEY`` when set. When unset, falls back to a *random
+        per-process* key — never to anything derived from public config (the
+        default DSN ships in ``docker-compose.yml``, so a DSN-derived key would
+        be trivially guessable). The random fallback keeps single-process/dev
+        deployments working with zero config; multi-worker deployments must set
+        ``SECRET_KEY`` so all workers share one key. Without it, a preview signed
+        on one worker simply won't verify on another and the panel falls back to
+        the full «Обработать LLM» action — it never accepts a forgeable proof."""
+
+        if self.secret_key:
+            material = self.secret_key.encode("utf-8")
+        else:
+            logging.getLogger(__name__).warning(
+                "SECRET_KEY is not set: using a random per-process signing key. "
+                "Set SECRET_KEY so 'processed' proofs stay valid across restarts "
+                "and across multiple workers."
+            )
+            material = secrets.token_bytes(32)
+        return hashlib.sha256(b"template-maker:signing:v1:" + material).digest()
 
     @cached_property
     def _database_dsn_parts(self) -> dict[str, str]:

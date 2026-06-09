@@ -13,6 +13,7 @@ from app.routes import templates_reg
 from app.routes.templates_reg import router
 from app.schemas.template import TemplateCreate
 from app.utils.errors import ValidationFailed
+from app.utils.signing import sign_processed
 from app.utils.walker import Leaf
 
 
@@ -59,6 +60,23 @@ def first_full_match_path(path: str, method: str = "GET") -> str:
             return route.path
 
     raise AssertionError(f"No full route match for {method} {path}")
+
+
+def test_sign_processed_proof_binds_content_and_meta_and_is_not_forgeable() -> None:
+    from app.utils.signing import verify_processed
+
+    content = '{"a": "x"}'
+    meta = {"summary": "ok"}
+    proof = sign_processed(content, meta)
+
+    assert verify_processed(content, meta, proof) is True
+    # A proof must not validate a different body, different analysis, or junk.
+    assert verify_processed('{"a": "y"}', meta, proof) is False
+    assert verify_processed(content, {"summary": "forged"}, proof) is False
+    assert verify_processed(content, {}, proof) is False
+    assert verify_processed(content, meta, "deadbeef") is False
+    assert verify_processed(content, meta, "") is False
+    assert verify_processed(content, meta, None) is False
 
 
 def test_template_htmx_tree_route_is_matched_before_template_id_route() -> None:
@@ -109,6 +127,154 @@ async def test_htmx_create_validation_errors_retarget_review_errors() -> None:
     assert response.status_code == 200
     assert response.headers["HX-Retarget"] == "#review-errors"
     assert response.headers["HX-Reswap"] == "innerHTML"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "proof_content", "proof_meta", "expected_status"),
+    [
+        # Real upload flow: parsable body + proof matching submitted content+meta.
+        ('{"a": "x"}', '{"a": "x"}', {"summary": "ok"}, "processed"),
+        # No proof at all → not processed (can't sneak past _require_processed).
+        ('{"a": "x"}', None, None, None),
+        # Proof minted for different content doesn't validate.
+        ('{"a": "x"}', '{"a": "y"}', {"summary": "ok"}, None),
+        # Proof minted for different analysis: client swapped llm_meta after
+        # obtaining a valid proof → must NOT stay processed (the P2.2 attack).
+        ('{"a": "x"}', '{"a": "x"}', {"summary": "different"}, None),
+        # Even a valid proof can't mark a non-parsable body processed.
+        ("not json at all", "not json at all", {"summary": "ok"}, None),
+    ],
+)
+async def test_htmx_create_marks_processed_only_with_valid_proof(
+    monkeypatch: pytest.MonkeyPatch,
+    content: str,
+    proof_content: str | None,
+    proof_meta: dict[str, Any] | None,
+    expected_status: str | None,
+) -> None:
+    """Only a parsable body whose submitted content AND llm_meta match the
+    server's preview proof is marked processed — a client-crafted POST cannot
+    forge the flag, nor swap in fake analysis under a stolen proof. The form
+    always submits llm_meta={"summary": "ok"}; the proof is minted separately
+    so each case can mismatch one input."""
+
+    submitted_meta = {"summary": "ok"}
+    saved: dict[str, Any] = {}
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def create(self, data: Any) -> Any:
+            return SimpleNamespace(
+                id=uuid.uuid4(),
+                format="json",
+                content=data.content,
+                original_content=data.content,
+                placeholders=[],
+                llm_meta={},
+            )
+
+        @staticmethod
+        def regenerate_content(template: Any) -> str:
+            return template.content
+
+    async def fake_commit(session: object, item: Any) -> Any:
+        saved["llm_meta"] = item.llm_meta
+        return item
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
+    monkeypatch.setattr(templates_reg, "normalize_placeholders", lambda p: p)
+    monkeypatch.setattr(templates_reg, "placeholders_have_account_owner", lambda p: False)
+
+    llm_proof = "" if proof_content is None else sign_processed(proof_content, proof_meta)
+
+    response = await templates_reg.htmx_create(
+        request=cast(
+            Any,
+            FakeFormRequest(
+                {
+                    "name": "T",
+                    "description": "",
+                    "format": "json",
+                    "content": content,
+                    "placeholders": "[]",
+                    "llm_meta": json.dumps(submitted_meta),
+                    "llm_proof": llm_proof,
+                }
+            ),
+        ),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert response.status_code == 204
+    assert saved["llm_meta"].get("import_status") == expected_status
+    # Client-supplied analysis is preserved alongside the (verified) flag.
+    assert saved["llm_meta"]["summary"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_htmx_create_strips_client_supplied_import_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A POST can't smuggle import_status=processed through llm_meta: the
+    reserved key is stripped, and without a valid proof it stays unset."""
+
+    saved: dict[str, Any] = {}
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def create(self, data: Any) -> Any:
+            return SimpleNamespace(
+                id=uuid.uuid4(),
+                format="json",
+                content=data.content,
+                original_content=data.content,
+                placeholders=[],
+                llm_meta={},
+            )
+
+        @staticmethod
+        def regenerate_content(template: Any) -> str:
+            return template.content
+
+    async def fake_commit(session: object, item: Any) -> Any:
+        saved["llm_meta"] = item.llm_meta
+        return item
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
+    monkeypatch.setattr(templates_reg, "normalize_placeholders", lambda p: p)
+    monkeypatch.setattr(templates_reg, "placeholders_have_account_owner", lambda p: False)
+
+    response = await templates_reg.htmx_create(
+        request=cast(
+            Any,
+            FakeFormRequest(
+                {
+                    "name": "T",
+                    "description": "",
+                    "format": "json",
+                    "content": '{"a": "x"}',
+                    "placeholders": "[]",
+                    # Forged: status smuggled in, no proof supplied.
+                    "llm_meta": '{"summary": "ok", "import_status": "processed"}',
+                    "llm_proof": "",
+                }
+            ),
+        ),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert response.status_code == 204
+    assert "import_status" not in saved["llm_meta"]
+    assert saved["llm_meta"]["summary"] == "ok"
 
 
 @pytest.mark.asyncio

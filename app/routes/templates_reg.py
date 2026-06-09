@@ -34,6 +34,7 @@ from app.services.templates import (
 )
 from app.utils import walker
 from app.utils.errors import DomainError, LLMResponseError, LLMUnavailable, ValidationFailed
+from app.utils.signing import sign_processed, verify_processed
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -120,6 +121,10 @@ async def preview_template(data: TemplateCreate, session: AsyncSession) -> dict[
         "content": result["content"],
         "placeholders": result["placeholders"],
         "llm_meta": result["llm_meta"],
+        # Server-side proof that the LLM analysed this exact content into this
+        # exact llm_meta; the review form echoes it back so `htmx_create` can
+        # mark the template processed without trusting a client-supplied flag.
+        "llm_proof": sign_processed(data.content, result["llm_meta"]),
         "rendered_html": rendered_html,
         "llm_used": result.get("llm_debug") is not None,
         "llm_debug": result.get("llm_debug"),
@@ -642,14 +647,29 @@ async def htmx_create(
 ) -> Response:
     try:
         data = await _template_create_from_form(request)
+        # `request.form()` is cached by Starlette, so re-reading it here is free.
+        llm_proof = form_str(await request.form(), "llm_proof")
         svc = TemplateService(session)
         template = await svc.create(data)
         template.placeholders = normalize_placeholders(data.placeholders)
+        template.content = svc.regenerate_content(template)
+        # `import_status` is a server-managed flag, never client input — strip any
+        # value the POST tried to smuggle in so it can only ever be set below,
+        # after the proof verifies. (Preview never emits it, so legitimate
+        # payloads are unaffected.)
+        client_meta = {k: v for k, v in (data.llm_meta or {}).items() if k != "import_status"}
         template.llm_meta = {
-            **(data.llm_meta or {}),
+            **client_meta,
             "has_account_owner": placeholders_have_account_owner(template.placeholders),
         }
-        template.content = svc.regenerate_content(template)
+        # Mark the template processed only when the server itself vouches — via
+        # the HMAC proof issued during preview — that it LLM-analysed this exact
+        # content into this exact metadata. A client-crafted POST can't forge a
+        # valid proof (nor swap in fake analysis under a stolen one), so it can't
+        # flip `import_status` and bypass `_require_processed`. Without a valid
+        # proof the panel simply offers full «Обработать LLM», as before.
+        if _is_parsable(template) and verify_processed(data.content, client_meta, llm_proof):
+            template.llm_meta["import_status"] = "processed"
         template = await commit_and_refresh(session, template)
     except ValidationError as exc:
         return validation_errors_response(
