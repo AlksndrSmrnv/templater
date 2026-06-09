@@ -112,6 +112,75 @@ async def test_htmx_create_validation_errors_retarget_review_errors() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "expected_status"),
+    [
+        ('{"a": "x"}', "processed"),
+        ("not json at all", "unparsed"),
+    ],
+)
+async def test_htmx_create_sets_import_status_from_parsability(
+    monkeypatch: pytest.MonkeyPatch,
+    content: str,
+    expected_status: str,
+) -> None:
+    """A freshly-saved template is marked processed (parsable) so the panel shows
+    the granular reprocess buttons immediately, or unparsed otherwise."""
+
+    saved: dict[str, Any] = {}
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def create(self, data: Any) -> Any:
+            return SimpleNamespace(
+                id=uuid.uuid4(),
+                format="json",
+                content=data.content,
+                original_content=data.content,
+                placeholders=[],
+                llm_meta={},
+            )
+
+        @staticmethod
+        def regenerate_content(template: Any) -> str:
+            return template.content
+
+    async def fake_commit(session: object, item: Any) -> Any:
+        saved["llm_meta"] = item.llm_meta
+        return item
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
+    monkeypatch.setattr(templates_reg, "normalize_placeholders", lambda p: p)
+    monkeypatch.setattr(templates_reg, "placeholders_have_account_owner", lambda p: False)
+
+    response = await templates_reg.htmx_create(
+        request=cast(
+            Any,
+            FakeFormRequest(
+                {
+                    "name": "T",
+                    "description": "",
+                    "format": "json",
+                    "content": content,
+                    "placeholders": "[]",
+                    "llm_meta": '{"summary": "ok"}',
+                }
+            ),
+        ),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert response.status_code == 204
+    assert saved["llm_meta"]["import_status"] == expected_status
+    # Existing fields are preserved alongside the new flag.
+    assert saved["llm_meta"]["summary"] == "ok"
+
+
+@pytest.mark.asyncio
 async def test_preview_template_includes_llm_debug_key(monkeypatch: pytest.MonkeyPatch) -> None:
     debug = {"system_prompt": "system", "user_prompt": "user", "response_text": "raw"}
 
