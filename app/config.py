@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     llm_request_delay: float = 2.0
     llm_max_retries: int = 5
     llm_retry_base_delay: float = 3.0
+    # Max LLM calls for one field-mapping run: first call + retries for leaves a
+    # weak model failed to map (truncated answer, empty field, confused id/path).
+    llm_field_mapping_max_attempts: int = 2
 
     base_dir: Path = Field(default_factory=lambda: Path(__file__).resolve().parent)
 
