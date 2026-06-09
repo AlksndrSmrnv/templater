@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from html.parser import HTMLParser
 from pathlib import Path
@@ -370,8 +371,17 @@ def test_entity_detail_preserves_whitespace_only_for_text_values() -> None:
     )
 
     assert html.count('class="detail-value detail-value--text"') == 2
-    assert '<div class="detail-label">Теги</div>\n        <div class="detail-value">' in html
-    assert '<div class="detail-label">Code</div>\n            <div class="detail-value">' in html
+    # Tags and string-typed fields render as a plain detail-value (no whitespace
+    # preservation). Match independently of HTML indentation/formatting.
+    assert re.search(
+        r'<div class="detail-label">Теги</div>\s*<div class="detail-value">', html
+    )
+    assert re.search(
+        r'<div class="detail-label">Code</div>\s*<div class="detail-value">', html
+    )
+    # Card-grid layout: fields live in a .detail-grid and long fields span full width.
+    assert 'class="detail-grid"' in html
+    assert "detail-cell--wide" in html
 
 
 def test_template_fill_page_uses_role_panels_and_account_owner_flag() -> None:

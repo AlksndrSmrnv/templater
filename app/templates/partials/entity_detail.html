@@ -4,91 +4,93 @@
     <button class="drawer-close" type="button" aria-label="Закрыть" @click="closeDrawer()">&times;</button>
 </div>
 <div class="drawer-body">
-    <div class="detail-field">
-        <div class="detail-label">Описание</div>
-        <div class="detail-value detail-value--text">{{ item.description or "—" }}</div>
-    </div>
-    {% if entity_type == "client" %}
-        <div class="detail-field">
-            <div class="detail-label">Счета</div>
-            <div class="detail-value relation-links">
-                {% for account in accounts_by_client.get(row_id, []) %}
-                    <a class="entity-link" href="/templater/accounts?open={{ account.id }}">{{ labels.account.get(account.id|string, account.id|string) }}</a>
-                {% else %}—{% endfor %}
-            </div>
+    <div class="detail-grid">
+        <div class="detail-cell detail-cell--wide">
+            <div class="detail-label">Описание</div>
+            <div class="detail-value detail-value--text">{{ item.description or "—" }}</div>
         </div>
-        <div class="detail-field">
-            <div class="detail-label">Карты</div>
-            <div class="detail-value relation-links">
-                {% for card in cards_by_client.get(row_id, []) %}
-                    <a class="entity-link" href="/templater/cards?open={{ card.id }}">{{ labels.card.get(card.id|string, card.id|string) }}</a>
-                {% else %}—{% endfor %}
+        {% if entity_type == "client" %}
+            <div class="detail-cell detail-cell--wide">
+                <div class="detail-label">Счета</div>
+                <div class="detail-value relation-links">
+                    {% for account in accounts_by_client.get(row_id, []) %}
+                        <a class="entity-link" href="/templater/accounts?open={{ account.id }}">{{ labels.account.get(account.id|string, account.id|string) }}</a>
+                    {% else %}—{% endfor %}
+                </div>
             </div>
-        </div>
-    {% elif entity_type == "account" %}
-        <div class="detail-field">
-            <div class="detail-label">Клиент</div>
+            <div class="detail-cell detail-cell--wide">
+                <div class="detail-label">Карты</div>
+                <div class="detail-value relation-links">
+                    {% for card in cards_by_client.get(row_id, []) %}
+                        <a class="entity-link" href="/templater/cards?open={{ card.id }}">{{ labels.card.get(card.id|string, card.id|string) }}</a>
+                    {% else %}—{% endfor %}
+                </div>
+            </div>
+        {% elif entity_type == "account" %}
+            <div class="detail-cell detail-cell--wide">
+                <div class="detail-label">Клиент</div>
+                <div class="detail-value">
+                    {% set client_id = item.client_id | string %}
+                    <a class="entity-link" href="/templater/clients?open={{ item.client_id }}">{{ labels.client.get(client_id, client_id) }}</a>
+                </div>
+            </div>
+            <div class="detail-cell detail-cell--wide">
+                <div class="detail-label">Карты</div>
+                <div class="detail-value relation-links">
+                    {% for card in cards_by_account.get(row_id, []) %}
+                        <a class="entity-link" href="/templater/cards?open={{ card.id }}">{{ labels.card.get(card.id|string, card.id|string) }}</a>
+                    {% else %}—{% endfor %}
+                </div>
+            </div>
+        {% else %}
+            {% set account = accounts_by_id.get(item.account_id|string) %}
+            <div class="detail-cell detail-cell--wide">
+                <div class="detail-label">Клиент</div>
+                <div class="detail-value">
+                    {% if account %}
+                        {% set client_id = account.client_id | string %}
+                        <a class="entity-link" href="/templater/clients?open={{ account.client_id }}">{{ labels.client.get(client_id, client_id) }}</a>
+                    {% else %}—{% endif %}
+                </div>
+            </div>
+            <div class="detail-cell detail-cell--wide">
+                <div class="detail-label">Счёт</div>
+                <div class="detail-value">
+                    <a class="entity-link" href="/templater/accounts?open={{ item.account_id }}">{{ labels.account.get(item.account_id|string, item.account_id|string) }}</a>
+                </div>
+            </div>
+        {% endif %}
+        {% for field in schema %}
+            {% set raw = (item.attributes or {}).get(field.name) %}
+            <div class="detail-cell{% if field.data_type == 'text' %} detail-cell--wide{% endif %}">
+                <div class="detail-label">{{ field.label }}</div>
+                <div class="detail-value{% if field.data_type == 'text' %} detail-value--text{% endif %}">
+                    {% if field.data_type == "bool" %}
+                        {% if raw %}✓{% else %}<span class="muted">✗</span>{% endif %}
+                    {% else %}
+                        {{ raw or "—" }}
+                    {% endif %}
+                </div>
+            </div>
+        {% endfor %}
+        <div class="detail-cell detail-cell--wide">
+            <div class="detail-label">Теги</div>
             <div class="detail-value">
-                {% set client_id = item.client_id | string %}
-                <a class="entity-link" href="/templater/clients?open={{ item.client_id }}">{{ labels.client.get(client_id, client_id) }}</a>
-            </div>
-        </div>
-        <div class="detail-field">
-            <div class="detail-label">Карты</div>
-            <div class="detail-value relation-links">
-                {% for card in cards_by_account.get(row_id, []) %}
-                    <a class="entity-link" href="/templater/cards?open={{ card.id }}">{{ labels.card.get(card.id|string, card.id|string) }}</a>
-                {% else %}—{% endfor %}
-            </div>
-        </div>
-    {% else %}
-        {% set account = accounts_by_id.get(item.account_id|string) %}
-        <div class="detail-field">
-            <div class="detail-label">Клиент</div>
-            <div class="detail-value">
-                {% if account %}
-                    {% set client_id = account.client_id | string %}
-                    <a class="entity-link" href="/templater/clients?open={{ account.client_id }}">{{ labels.client.get(client_id, client_id) }}</a>
-                {% else %}—{% endif %}
-            </div>
-        </div>
-        <div class="detail-field">
-            <div class="detail-label">Счёт</div>
-            <div class="detail-value">
-                <a class="entity-link" href="/templater/accounts?open={{ item.account_id }}">{{ labels.account.get(item.account_id|string, item.account_id|string) }}</a>
-            </div>
-        </div>
-    {% endif %}
-    {% for field in schema %}
-        {% set raw = (item.attributes or {}).get(field.name) %}
-        <div class="detail-field">
-            <div class="detail-label">{{ field.label }}</div>
-            <div class="detail-value{% if field.data_type == 'text' %} detail-value--text{% endif %}">
-                {% if field.data_type == "bool" %}
-                    {% if raw %}✓{% else %}<span class="muted">✗</span>{% endif %}
+                {% for tag in item.tags or [] %}
+                    <span class="tag">{{ tag }}</span>
                 {% else %}
-                    {{ raw or "—" }}
-                {% endif %}
+                    —
+                {% endfor %}
             </div>
         </div>
-    {% endfor %}
-    <div class="detail-field">
-        <div class="detail-label">Теги</div>
-        <div class="detail-value">
-            {% for tag in item.tags or [] %}
-                <span class="tag">{{ tag }}</span>
-            {% else %}
-                —
-            {% endfor %}
+        <div class="detail-cell">
+            <div class="detail-label">Создано</div>
+            <div class="detail-value">{{ item.created_at }}</div>
         </div>
-    </div>
-    <div class="detail-field">
-        <div class="detail-label">Создано</div>
-        <div class="detail-value">{{ item.created_at }}</div>
-    </div>
-    <div class="detail-field">
-        <div class="detail-label">Обновлено</div>
-        <div class="detail-value">{{ item.updated_at }}</div>
+        <div class="detail-cell">
+            <div class="detail-label">Обновлено</div>
+            <div class="detail-value">{{ item.updated_at }}</div>
+        </div>
     </div>
 </div>
 <div class="drawer-footer">
