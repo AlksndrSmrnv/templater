@@ -149,7 +149,7 @@ async def test_preview_template_includes_llm_debug_key(monkeypatch: pytest.Monke
             return []
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
-    monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
+    monkeypatch.setattr(templates_reg, "llm_service", lambda *a, **k: FakeLlmContext())
     monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
 
     response = await templates_reg.preview_template(
@@ -199,7 +199,7 @@ async def test_preview_template_marks_llm_unused_when_no_debug_returned(
             return []
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
-    monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
+    monkeypatch.setattr(templates_reg, "llm_service", lambda *a, **k: FakeLlmContext())
     monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
 
     response = await templates_reg.preview_template(
@@ -258,7 +258,7 @@ async def test_granular_reprocess_persists_and_renders_panel(
         return {"template": tpl}
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
-    monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
+    monkeypatch.setattr(templates_reg, "llm_service", lambda *a, **k: FakeLlmContext())
     monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
     monkeypatch.setattr(templates_reg, "_template_panel_context", fake_panel_context)
 
@@ -408,7 +408,7 @@ async def test_htmx_process_llm_reports_plain_llm_failure(monkeypatch: pytest.Mo
             return None
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
-    monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
+    monkeypatch.setattr(templates_reg, "llm_service", lambda *a, **k: FakeLlmContext())
 
     response = await templates_reg.htmx_process_llm(
         template_id=template_id,
@@ -451,7 +451,7 @@ async def test_htmx_process_llm_persistence_failure_is_not_masked(
         raise RuntimeError("database is down")
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
-    monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
+    monkeypatch.setattr(templates_reg, "llm_service", lambda *a, **k: FakeLlmContext())
     monkeypatch.setattr(templates_reg, "commit_and_refresh", boom)
 
     with pytest.raises(RuntimeError, match="database is down"):
@@ -489,7 +489,7 @@ async def test_htmx_regenerate_meta_reports_plain_llm_failure(monkeypatch: pytes
             return None
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
-    monkeypatch.setattr(templates_reg, "llm_service", lambda: FakeLlmContext())
+    monkeypatch.setattr(templates_reg, "llm_service", lambda *a, **k: FakeLlmContext())
 
     response = await templates_reg.htmx_regenerate_meta(
         template_id=template_id,

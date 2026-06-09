@@ -91,7 +91,7 @@ async def preview_template(data: TemplateCreate, session: AsyncSession) -> dict[
     # as a DomainError that ``htmx_preview`` renders as a form error — the tool
     # has no heuristic-only mode.
     try:
-        async with llm_service() as llm_svc:
+        async with llm_service(session=session) as llm_svc:
             result = await svc.analyze_content(
                 fmt=data.format,
                 original_content=data.content,
@@ -507,7 +507,7 @@ async def _reprocess_panel(
     # Scope the broad catch to the LLM analysis only — a persistence failure in
     # commit_and_refresh must surface as a real error, not be masked as an LLM failure.
     try:
-        async with llm_service() as llm_svc:
+        async with llm_service(session=session) as llm_svc:
             await action(svc, template, llm_svc)
     except DomainError as exc:
         return form_errors_response(

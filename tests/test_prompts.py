@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from app.llm.prompts import PromptBuilder
+from app.llm.prompts import PROMPT_DEFS, PromptBuilder
 
 
 def _mapping(
     leaves: list[dict[str, str]], catalog: list[dict[str, str]]
 ) -> tuple[str, str, dict[str, str]]:
-    return PromptBuilder.build_template_field_mapping(leaves=leaves, catalog=catalog)
+    return PromptBuilder().build_template_field_mapping(leaves=leaves, catalog=catalog)
 
 
 def test_build_template_field_mapping_numbers_leaves_and_drops_json_blob() -> None:
@@ -158,7 +158,7 @@ def test_build_template_field_mapping_preserves_xml_leaf_path_syntax() -> None:
 
 
 def test_build_template_meta_returns_strings_without_json_wrapper() -> None:
-    sys_p, user_p = PromptBuilder.build_template_meta(content="<a/>", fmt="xml")
+    sys_p, user_p = PromptBuilder().build_template_meta(content="<a/>", fmt="xml")
 
     assert isinstance(sys_p, str) and sys_p
     # Transfer-type codes and the cross-/intra-bank cases are still described.
@@ -179,7 +179,7 @@ def test_build_template_meta_returns_strings_without_json_wrapper() -> None:
 
 
 def test_build_template_meta_compacts_json_and_removes_null_object_keys() -> None:
-    _, user_p = PromptBuilder.build_template_meta(
+    _, user_p = PromptBuilder().build_template_meta(
         content=(
             '{\r\n'
             '\t"fullName": "X",\r\n'
@@ -199,7 +199,7 @@ def test_build_template_meta_compacts_json_and_removes_null_object_keys() -> Non
 
 
 def test_build_transfer_template_pick_lists_ids_and_asks_for_json() -> None:
-    sys_p, user_p = PromptBuilder.build_transfer_template_pick(
+    sys_p, user_p = PromptBuilder().build_transfer_template_pick(
         request="перевод с карты в долларах на счёт в рублях",
         templates=[
             {"id": "T1", "summary": "Перевод со счёта на счёт"},
@@ -217,7 +217,7 @@ def test_build_transfer_participants_includes_owner_only_when_needed() -> None:
     accounts = [{"id": "A1", "client": "C1", "currency": "USD", "description": "счёт"}]
     cards = [{"id": "K1", "account": "A1", "description": "карта"}]
 
-    sys_no, user_no = PromptBuilder.build_transfer_participants(
+    sys_no, user_no = PromptBuilder().build_transfer_participants(
         request="перевод", clients=clients, accounts=accounts, cards=cards,
         need_account_owner=False,
     )
@@ -227,8 +227,52 @@ def test_build_transfer_participants_includes_owner_only_when_needed() -> None:
     assert "A1 | C1 | USD | счёт" in user_no
     assert "K1 | A1 | карта" in user_no
 
-    sys_yes, _ = PromptBuilder.build_transfer_participants(
+    sys_yes, _ = PromptBuilder().build_transfer_participants(
         request="перевод", clients=clients, accounts=accounts, cards=cards,
         need_account_owner=True,
     )
     assert "accountOwner" in sys_yes
+
+
+# --- DB-backed overrides ---
+
+
+def test_override_replaces_system_prompt() -> None:
+    sys_p, _, _ = PromptBuilder(
+        {"field_mapping": "МОЯ ИНСТРУКЦИЯ"}
+    ).build_template_field_mapping(
+        leaves=[{"location": "/x", "value": "1"}], catalog=[]
+    )
+    assert sys_p == "МОЯ ИНСТРУКЦИЯ"
+
+
+def test_blank_or_missing_override_falls_back_to_default() -> None:
+    default = PROMPT_DEFS["template_meta"].default
+    # Missing key -> default.
+    sys_missing, _ = PromptBuilder().build_template_meta(content="<a/>", fmt="xml")
+    assert sys_missing == default
+    # Blank / whitespace override -> default (treated as "no override").
+    sys_blank, _ = PromptBuilder({"template_meta": "   "}).build_template_meta(
+        content="<a/>", fmt="xml"
+    )
+    assert sys_blank == default
+
+
+def test_participants_override_substitutes_placeholders_without_breaking_json() -> None:
+    override = (
+        "Роли: $roles.\n$owner_rule"
+        '{"sender":{"client":"C1"}$owner_answer}\n'
+    )
+    builder = PromptBuilder({"transfer_participants": override})
+    common = dict(request="перевод", clients=[], accounts=[], cards=[])
+
+    sys_no, _ = builder.build_transfer_participants(**common, need_account_owner=False)
+    # $roles substituted, owner placeholders collapse to empty, JSON braces intact.
+    assert "sender (отправитель/плательщик), receiver (получатель)" in sys_no
+    assert "accountOwner" not in sys_no
+    assert '{"sender":{"client":"C1"}}' in sys_no
+    assert "$" not in sys_no  # all known placeholders consumed
+
+    sys_yes, _ = builder.build_transfer_participants(**common, need_account_owner=True)
+    assert "accountOwner" in sys_yes
+    assert '"accountOwner":{"client":"C3"' in sys_yes

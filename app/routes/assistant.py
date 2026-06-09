@@ -39,7 +39,7 @@ async def htmx_compose(
     prompt = form_str(form, "prompt")
     assistant = TransferAssistant(session)
     try:
-        async with llm_service() as llm_svc:
+        async with llm_service(session=session) as llm_svc:
             context = await assistant.compose(prompt, llm_svc)
     except (LLMUnavailable, DomainError) as exc:
         return form_errors_response(

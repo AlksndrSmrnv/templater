@@ -15,10 +15,16 @@ log = logging.getLogger(__name__)
 class LLMService:
     """Higher-level orchestration of LLM tasks for the application."""
 
-    def __init__(self, client: LLMClient, *, coordinator: LLMCoordinator | None = None) -> None:
+    def __init__(
+        self,
+        client: LLMClient,
+        *,
+        coordinator: LLMCoordinator | None = None,
+        prompt_overrides: dict[str, str] | None = None,
+    ) -> None:
         self.client = client
         self.coordinator = coordinator
-        self.prompts = PromptBuilder()
+        self.prompts = PromptBuilder(prompt_overrides)
 
     async def analyze_template(
         self,
