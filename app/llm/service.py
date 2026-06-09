@@ -99,7 +99,21 @@ class LLMService:
             system_prompt, user_prompt, id_to_location = (
                 self.prompts.build_template_field_mapping(leaves=remaining, catalog=catalog)
             )
-            response: ChatResponse = await self.client.chat(system_prompt, user_prompt)
+            try:
+                response: ChatResponse = await self.client.chat(system_prompt, user_prompt)
+            except Exception:
+                # The first call has nothing to fall back on — surface the error
+                # as before. A failing *retry*, though, must not discard the
+                # leaves the earlier attempt already mapped correctly.
+                if not attempts:
+                    raise
+                log.warning(
+                    "LLM field-mapping retry failed — keeping %d leaf(es) "
+                    "already resolved by the previous attempt",
+                    len(resolved),
+                    exc_info=True,
+                )
+                break
             attempts.append(
                 {
                     "system_prompt": system_prompt,
@@ -267,11 +281,14 @@ class LLMService:
         whether a retry is warranted.
 
         ``retry_needed`` is set on explicit failure evidence only:
-          • a truncated / unparseable response (see :meth:`_parse_field_mapping`);
-          • a returned leaf whose ``field`` is empty/missing (the model started
-            the entry but didn't finish it);
+          • a truncated / unparseable / wrong-shape response (see
+            :meth:`_parse_field_mapping`);
+          • a malformed entry — not an object, or missing its ``leaf``/
+            ``location`` ref;
           • a ``leaf``/``location`` ref that resolves to nothing (the model put a
-            path where the short id was expected, and it didn't match).
+            path where the short id was expected, and it didn't match);
+          • a returned leaf whose ``field`` is empty/missing (the model started
+            the entry but didn't finish it).
 
         Leaves the model simply omitted do NOT by themselves request a retry — an
         omission is indistinguishable from a deliberate "no matching field" skip.
@@ -279,15 +296,16 @@ class LLMService:
         leaves, which also recovers a truncated tail.
         """
 
-        items, truncated = LLMService._parse_field_mapping(text)
-        retry_needed = truncated
+        items, retry_needed = LLMService._parse_field_mapping(text)
         known_locations = set(id_to_location.values())
         resolved: dict[str, str] = {}
         for item in items:
             if not isinstance(item, dict):
+                retry_needed = True  # malformed entry: not an object
                 continue
             ref = item.get("leaf") or item.get("location")
             if not isinstance(ref, str) or not ref:
+                retry_needed = True  # malformed entry: no leaf/location ref
                 continue
             location = id_to_location.get(ref)
             if location is None and ref in known_locations:
@@ -306,12 +324,15 @@ class LLMService:
     def _parse_field_mapping(text: str) -> tuple[list[Any], bool]:
         """Return ``(items, truncated)`` for a field-mapping response.
 
-        On a clean parse, ``items`` is the ``placeholders`` list and
-        ``truncated`` is ``False``. When the strict parse can't yield a dict at
-        all — GigaChat cut the answer off mid-array (the "doesn't finish the
-        answer" symptom) — salvage every complete ``{...}`` object from the
-        (possibly unterminated) text so leaves emitted before the cut-off are
-        kept, and flag ``truncated=True`` so the caller retries the rest.
+        On a clean parse — a dict whose ``placeholders`` is a list — ``items`` is
+        that list and ``failed`` is ``False`` (an empty list is a legitimate
+        "nothing matched", not a failure). Anything else is treated as a failure
+        that warrants a retry: the strict parse couldn't yield a dict at all
+        (GigaChat cut the answer off mid-array — the "doesn't finish the answer"
+        symptom), or it returned valid JSON of the wrong shape (``{}``,
+        ``{"placeholders": null}``, …). In every failure case we still salvage
+        any complete ``{...}`` objects so leaves the model did finish are kept,
+        and flag ``failed=True`` so the caller retries the rest.
         """
 
         parsed = LLMService._parse_json(text)
@@ -319,8 +340,8 @@ class LLMService:
             placeholders = parsed.get("placeholders")
             if isinstance(placeholders, list):
                 return placeholders, False
-            # Complete JSON, just no usable placeholders list — not a truncation.
-            return [], False
+        # Unparseable, or valid JSON of the wrong shape — both mean the model
+        # didn't return a usable mapping. Salvage what we can and ask for a retry.
         return LLMService._salvage_placeholder_items(text), True
 
     @staticmethod

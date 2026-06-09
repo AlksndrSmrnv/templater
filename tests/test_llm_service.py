@@ -22,6 +22,23 @@ class FakeClient:
         return ChatResponse(text=text, token_usage=TokenUsage(1, 2, 3))
 
 
+class FlakyClient:
+    """Hands out queued responses but raises on a designated call index — used to
+    check that a failing retry doesn't discard an earlier successful attempt."""
+
+    def __init__(self, *responses: str, raise_on: int) -> None:
+        self.responses = list(responses)
+        self.raise_on = raise_on  # 0-based index of the call that raises
+        self.calls: list[tuple[str, str]] = []
+
+    async def chat(self, system_prompt: str, user_prompt: str) -> ChatResponse:
+        idx = len(self.calls)
+        self.calls.append((system_prompt, user_prompt))
+        if idx == self.raise_on:
+            raise RuntimeError("LLM down")
+        return ChatResponse(text=self.responses[idx], token_usage=TokenUsage(1, 2, 3))
+
+
 _LEAF = [{"location": "/fullName", "value": "X"}]
 _CATALOG = [{"path": "sender.fullName", "label": "Sender", "data_type": "string"}]
 
@@ -226,6 +243,64 @@ async def test_map_template_fields_clean_response_single_call() -> None:
     assert len(client.calls) == 1
     assert "Попытка" not in result["debug"]["response_text"]
     assert result["debug"]["response_text"] == clean
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "{}",
+        '{"placeholders": null}',
+        '{"placeholders":[{"field":"sender.a"}]}',  # item has no leaf/location
+    ],
+)
+async def test_map_template_fields_retries_wrong_shape(bad: str) -> None:
+    # Valid JSON of the wrong shape is a model failure, not a clean "nothing
+    # matched" — it must be retried.
+    leaves = [{"location": "/a", "value": "1"}]
+    good = '{"placeholders":[{"leaf":"L1","field":"sender.a"}]}'
+    client = FakeClient(bad, good)
+    service = LLMService(client)
+    result = await service.map_template_fields(leaves=leaves, catalog=_MAP_CATALOG)
+
+    assert result["placeholders"] == [{"location": "/a", "suggestion": "sender.a"}]
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_map_template_fields_empty_placeholders_is_not_retried() -> None:
+    # An explicit empty list is a legitimate "nothing matched" — no retry.
+    leaves = [{"location": "/a", "value": "1"}]
+    client = FakeClient('{"placeholders": []}')
+    service = LLMService(client)
+    result = await service.map_template_fields(leaves=leaves, catalog=_MAP_CATALOG)
+
+    assert result["placeholders"] == []
+    assert len(client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_map_template_fields_keeps_partial_result_when_retry_errors() -> None:
+    # Attempt 1 maps /a but leaves /b empty (→ retry); the retry call raises.
+    # The leaf already resolved must survive instead of the whole op failing.
+    leaves = [{"location": "/a", "value": "1"}, {"location": "/b", "value": "2"}]
+    attempt1 = '{"placeholders":[{"leaf":"L1","field":"sender.a"},{"leaf":"L2","field":""}]}'
+    client = FlakyClient(attempt1, raise_on=1)
+    service = LLMService(client)
+    result = await service.map_template_fields(leaves=leaves, catalog=_MAP_CATALOG)
+
+    assert result["placeholders"] == [{"location": "/a", "suggestion": "sender.a"}]
+    assert len(client.calls) == 2  # retry was attempted, then failed gracefully
+
+
+@pytest.mark.asyncio
+async def test_map_template_fields_first_call_error_propagates() -> None:
+    # Nothing to preserve on the very first call — the error must surface.
+    leaves = [{"location": "/a", "value": "1"}]
+    client = FlakyClient(raise_on=0)
+    service = LLMService(client)
+    with pytest.raises(RuntimeError):
+        await service.map_template_fields(leaves=leaves, catalog=_MAP_CATALOG)
 
 
 @pytest.mark.asyncio
