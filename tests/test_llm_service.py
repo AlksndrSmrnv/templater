@@ -144,6 +144,103 @@ async def test_analyze_template_without_leaves_skips_mapping_call() -> None:
     assert result["debug"]["system_prompt"]
 
 
+# --- Field-mapping retry for leaves a weak model fails to map ---
+
+_MAP_CATALOG = [
+    {"path": "sender.a", "label": "A"},
+    {"path": "sender.b", "label": "B"},
+    {"path": "sender.c", "label": "C"},
+]
+
+
+@pytest.mark.asyncio
+async def test_map_template_fields_retries_empty_field_and_merges() -> None:
+    # Attempt 1 maps L1 but leaves L2's field empty (model cut off mid-answer);
+    # the retry re-asks only the still-unmapped leaf (renumbered to L1) and the
+    # two results are merged.
+    leaves = [{"location": "/a", "value": "1"}, {"location": "/b", "value": "2"}]
+    attempt1 = '{"placeholders":[{"leaf":"L1","field":"sender.a"},{"leaf":"L2","field":""}]}'
+    attempt2 = '{"placeholders":[{"leaf":"L1","field":"sender.b"}]}'
+    service = LLMService(FakeClient(attempt1, attempt2))
+    result = await service.map_template_fields(leaves=leaves, catalog=_MAP_CATALOG)
+
+    assert {"location": "/a", "suggestion": "sender.a"} in result["placeholders"]
+    assert {"location": "/b", "suggestion": "sender.b"} in result["placeholders"]
+    assert len(result["placeholders"]) == 2
+    # Exactly one retry happened, and both attempts are visible in the debug.
+    debug = result["debug"]
+    assert "### Попытка 1" in debug["response_text"]
+    assert "### Попытка 2" in debug["response_text"]
+    assert attempt1 in debug["response_text"]
+    assert attempt2 in debug["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_map_template_fields_retries_unresolved_ref() -> None:
+    # Symptom 1: model put a path where the short id was expected, and it matches
+    # no known leaf → that leaf is unmapped → retry.
+    leaves = [{"location": "/a", "value": "1"}]
+    bad = '{"placeholders":[{"leaf":"/unknown/path","field":"sender.a"}]}'
+    good = '{"placeholders":[{"leaf":"L1","field":"sender.a"}]}'
+    client = FakeClient(bad, good)
+    service = LLMService(client)
+    result = await service.map_template_fields(leaves=leaves, catalog=_MAP_CATALOG)
+
+    assert result["placeholders"] == [{"location": "/a", "suggestion": "sender.a"}]
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_map_template_fields_salvages_truncated_array() -> None:
+    # Response cut off mid-array: the two complete objects are salvaged from
+    # attempt 1, and only the missing tail leaf is retried.
+    leaves = [
+        {"location": "/a", "value": "1"},
+        {"location": "/b", "value": "2"},
+        {"location": "/c", "value": "3"},
+    ]
+    truncated = (
+        '{"placeholders":[{"leaf":"L1","field":"sender.a"},'
+        '{"leaf":"L2","field":"sender.b"},{"leaf":"L3"'
+    )
+    rest = '{"placeholders":[{"leaf":"L1","field":"sender.c"}]}'
+    client = FakeClient(truncated, rest)
+    service = LLMService(client)
+    result = await service.map_template_fields(leaves=leaves, catalog=_MAP_CATALOG)
+
+    locations = {p["location"]: p["suggestion"] for p in result["placeholders"]}
+    assert locations == {"/a": "sender.a", "/b": "sender.b", "/c": "sender.c"}
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_map_template_fields_clean_response_single_call() -> None:
+    # A clean response makes exactly one call and keeps the plain debug shape.
+    leaves = [{"location": "/a", "value": "1"}]
+    clean = '{"placeholders":[{"leaf":"L1","field":"sender.a"}]}'
+    client = FakeClient(clean)
+    service = LLMService(client)
+    result = await service.map_template_fields(leaves=leaves, catalog=_MAP_CATALOG)
+
+    assert result["placeholders"] == [{"location": "/a", "suggestion": "sender.a"}]
+    assert len(client.calls) == 1
+    assert "Попытка" not in result["debug"]["response_text"]
+    assert result["debug"]["response_text"] == clean
+
+
+@pytest.mark.asyncio
+async def test_map_template_fields_caps_attempts() -> None:
+    # A persistent failure must not loop forever — it stops at max_attempts.
+    leaves = [{"location": "/a", "value": "1"}]
+    bad = '{"placeholders":[{"leaf":"L1","field":""}]}'
+    client = FakeClient(bad)
+    service = LLMService(client, field_mapping_max_attempts=2)
+    result = await service.map_template_fields(leaves=leaves, catalog=_MAP_CATALOG)
+
+    assert result["placeholders"] == []
+    assert len(client.calls) == 2
+
+
 # --- Transfer assistant pick methods ---
 
 _TEMPLATES = [{"id": "T1", "category": "перевод", "summary": "со счёта на счёт"}]

@@ -56,7 +56,12 @@ async def llm_service(
             retry_base_delay=s.llm_retry_base_delay,
             coordinator=coordinator,
         )
-        yield LLMService(client, coordinator=coordinator, prompt_overrides=prompt_overrides)
+        yield LLMService(
+            client,
+            coordinator=coordinator,
+            prompt_overrides=prompt_overrides,
+            field_mapping_max_attempts=s.llm_field_mapping_max_attempts,
+        )
     finally:
         if client is not None:
             await client.close()
