@@ -38,6 +38,32 @@
     </form>
 </div>
 
+<div class="settings-section">
+    <h2><iconify-icon icon="lucide:message-square-text"></iconify-icon> Промпты LLM</h2>
+    <p class="muted">
+        Системные инструкции, которые отправляются модели. Изменения сохраняются в БД и
+        применяются сразу — при следующем запуске анализа шаблонов или работы ассистента,
+        без перезапуска. Если очистить поле и сохранить, вернётся стандартная инструкция.
+    </p>
+    {% for p in prompts %}
+    <form class="prompt-editor"
+          hx-put="/templater/settings-htmx/prompts/{{ p.key }}"
+          hx-swap="none">
+        <h3>{{ p.title }}</h3>
+        <p class="muted">{{ p.description }}</p>
+        {% if p.variables %}
+        <p class="muted">Доступные переменные:
+            {% for v in p.variables %}<code>{{ v }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+        </p>
+        {% endif %}
+        <textarea name="text" rows="10" spellcheck="false">{{ p.text }}</textarea>
+        <div>
+            <button class="btn primary" type="submit">Сохранить</button>
+        </div>
+    </form>
+    {% endfor %}
+</div>
+
 <div class="settings-section"
      x-data="{ open: false }"
      @htmx:after-swap.window="if ($event.detail.target && $event.detail.target.id === 'attr-modal-content') open = true"

@@ -682,6 +682,11 @@ h3 { font-size: var(--fs-lg); line-height: 1.3; font-weight: 600; letter-spacing
 .settings-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 18px; }
 .settings-section h2 { margin-top: 0; }
 
+.prompt-editor { border-top: 1px solid var(--border); padding-top: 16px; margin-top: 16px; }
+.prompt-editor h3 { margin: 0 0 4px; }
+.prompt-editor textarea { width: 100%; box-sizing: border-box; margin: 8px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Mono", monospace; font-size: var(--fs-sm); line-height: 1.5; resize: vertical; }
+.prompt-editor textarea:focus { outline: none; border-color: var(--text); }
+
 .llm-status { padding: 6px 12px; border-radius: var(--radius-sm); display: inline-block; font-size: var(--fs-sm); font-weight: 500; border: 1px solid var(--border); background: var(--surface-2); }
 .llm-status.on { color: var(--success); border-color: var(--border); }
 .llm-status.off { color: var(--danger); border-color: var(--border); }

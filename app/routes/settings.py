@@ -11,6 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.models import DATA_ENTITY_TYPES
+from app.llm.prompts import (
+    PROMPT_DEFS,
+    load_prompt_overrides,
+    prompt_setting_key,
+    validate_prompt_text,
+)
 from app.repositories.settings import SettingsRepository
 from app.routes.deps import SessionDep, TemplatesDep
 from app.routes.htmx_utils import (
@@ -28,7 +34,7 @@ from app.schemas.attribute import (
     AttributeReorder,
 )
 from app.services.attribute_schema import AttributeSchemaService
-from app.utils.errors import DomainError
+from app.utils.errors import DomainError, NotFoundError
 
 router = APIRouter()
 
@@ -46,6 +52,17 @@ async def page_settings(
     attributes = await svc.list_all()
     usage_counts = await svc.usage(attributes)
     entity_types = list(DATA_ENTITY_TYPES)
+    overrides = await load_prompt_overrides(session)
+    prompts = [
+        {
+            "key": definition.key,
+            "title": definition.title,
+            "description": definition.description,
+            "variables": definition.variables,
+            "text": overrides.get(definition.key) or definition.default,
+        }
+        for definition in PROMPT_DEFS.values()
+    ]
     return templates.TemplateResponse(
         request,
         "settings.html",
@@ -58,6 +75,7 @@ async def page_settings(
             "usage_counts": usage_counts,
             "selected_entity_type": "",
             "default_policy": default_policy,
+            "prompts": prompts,
         },
     )
 
@@ -274,3 +292,31 @@ async def htmx_import_policy(request: Request, session: AsyncSession = SessionDe
     await SettingsRepository(session).set("import_policy", policy)
     await commit_or_409(session)
     return Response(status_code=204, headers={"HX-Redirect": "/templater/settings?saved=1"})
+
+
+@router.put("/settings-htmx/prompts/{key}")
+async def htmx_prompt(key: str, request: Request, session: AsyncSession = SessionDep) -> Response:
+    """Persist an edited LLM system instruction.
+
+    A blank value clears the override, so the next run falls back to the coded
+    default. The change is read fresh on the next ``llm_service`` call, so it
+    applies to the very next analysis run without a restart.
+    """
+
+    if key not in PROMPT_DEFS:
+        raise NotFoundError("Неизвестный промпт")
+    form = await request.form()
+    text = form_str(form, "text").strip()
+    try:
+        validate_prompt_text(key, text)
+    except DomainError as exc:
+        return Response(
+            status_code=200,
+            headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
+        )
+    await SettingsRepository(session).set(prompt_setting_key(key), text)
+    await commit_or_409(session)
+    return Response(
+        status_code=204,
+        headers={"HX-Trigger": toast_header("Промпт сохранён")},
+    )

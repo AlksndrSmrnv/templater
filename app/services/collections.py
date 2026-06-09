@@ -416,7 +416,7 @@ class CollectionService:
         templates = await self.templates.list_by_collection(collection_id)
         svc = TemplateService(self.session)
         summary = ProcessCollectionSummary()
-        async with llm_service() as llm_svc:
+        async with llm_service(session=self.session) as llm_svc:
             for template in templates:
                 try:
                     await svc.analyze_and_persist(template, llm_service=llm_svc)
