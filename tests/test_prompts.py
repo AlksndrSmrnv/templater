@@ -67,6 +67,42 @@ def test_build_template_field_mapping_has_few_shot_example() -> None:
     assert "пропущен" in sys_p
 
 
+def test_build_template_field_mapping_explains_pay_tools() -> None:
+    sys_p, _, _ = _mapping(
+        leaves=[{"location": "/srcPayTool/cardAcctId/cardNumber", "value": "5536"}],
+        catalog=[{"path": "sender.card.number", "label": "Sender — Номер", "data_type": "string"}],
+    )
+
+    # src = списание = отправитель; dst = зачисление = получатель.
+    assert "srcPayTool" in sys_p
+    assert "dstPayTool" in sys_p
+    assert "ОТПРАВИТЕЛЯ" in sys_p and "sender.*" in sys_p
+    assert "ПОЛУЧАТЕЛЯ" in sys_p and "receiver.*" in sys_p
+    # Discriminator: depAcctId -> account, cardAcctId -> card.
+    assert "depAcctId" in sys_p and "cardAcctId" in sys_p
+    assert ".account." in sys_p and ".card." in sys_p
+    # Map every informative field, not only the number.
+    assert "ВСЕ содержательные поля" in sys_p
+    assert "не только номер" in sys_p
+
+
+def test_build_template_field_mapping_always_maps_client_id() -> None:
+    sys_p, _, _ = _mapping(
+        leaves=[{"location": "/recipient/clientId", "value": "1002345"}],
+        catalog=[
+            {"path": "receiver.clientId", "label": "Receiver — id", "data_type": "string"}
+        ],
+    )
+
+    # clientId must never be skipped — it has a dedicated always-map rule.
+    assert "clientId" in sys_p
+    assert "sender.clientId" in sys_p and "receiver.clientId" in sys_p
+    assert "ВСЕГДА" in sys_p
+    assert "никогда не" in sys_p and "пропускай" in sys_p
+    # recipient/payee are the receiver role.
+    assert "recipient" in sys_p and "payee" in sys_p
+
+
 def test_build_template_field_mapping_specifies_strict_response_shape() -> None:
     sys_p, _, _ = _mapping(
         leaves=[{"location": "/fullName", "value": "X"}],
