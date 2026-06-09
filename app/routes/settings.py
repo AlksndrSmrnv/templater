@@ -11,7 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.models import DATA_ENTITY_TYPES
-from app.llm.prompts import PROMPT_DEFS, load_prompt_overrides, prompt_setting_key
+from app.llm.prompts import (
+    PROMPT_DEFS,
+    load_prompt_overrides,
+    prompt_setting_key,
+    validate_prompt_text,
+)
 from app.repositories.settings import SettingsRepository
 from app.routes.deps import SessionDep, TemplatesDep
 from app.routes.htmx_utils import (
@@ -302,6 +307,13 @@ async def htmx_prompt(key: str, request: Request, session: AsyncSession = Sessio
         raise NotFoundError("Неизвестный промпт")
     form = await request.form()
     text = form_str(form, "text").strip()
+    try:
+        validate_prompt_text(key, text)
+    except DomainError as exc:
+        return Response(
+            status_code=200,
+            headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
+        )
     await SettingsRepository(session).set(prompt_setting_key(key), text)
     await commit_or_409(session)
     return Response(

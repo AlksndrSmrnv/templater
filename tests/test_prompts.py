@@ -1,6 +1,17 @@
 from __future__ import annotations
 
-from app.llm.prompts import PROMPT_DEFS, PromptBuilder
+from typing import Any
+
+import pytest
+
+import app.repositories.settings as settings_repo_mod
+from app.llm.prompts import (
+    PROMPT_DEFS,
+    PromptBuilder,
+    load_prompt_overrides,
+    validate_prompt_text,
+)
+from app.utils.errors import ValidationFailed
 
 
 def _mapping(
@@ -276,3 +287,62 @@ def test_participants_override_substitutes_placeholders_without_breaking_json() 
     sys_yes, _ = builder.build_transfer_participants(**common, need_account_owner=True)
     assert "accountOwner" in sys_yes
     assert '"accountOwner":{"client":"C3"' in sys_yes
+
+
+async def test_load_prompt_overrides_returns_only_nonblank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = {
+        "llm_prompt:field_mapping": "МОЙ ПРОМПТ",
+        "llm_prompt:template_meta": "   ",  # blank → skipped
+        # transfer_pick / transfer_participants absent → skipped
+    }
+
+    class _FakeRepo:
+        def __init__(self, session: Any) -> None:
+            self._store = store
+
+        async def get(self, key: str, default: Any = None) -> Any:
+            return self._store.get(key, default)
+
+    monkeypatch.setattr(settings_repo_mod, "SettingsRepository", _FakeRepo)
+
+    overrides = await load_prompt_overrides(session=object())
+    assert overrides == {"field_mapping": "МОЙ ПРОМПТ"}
+
+
+# --- Prompt save-time validation ---
+
+
+def test_validate_prompt_text_accepts_known_placeholders() -> None:
+    # Should not raise.
+    validate_prompt_text(
+        "transfer_participants", "Роли: $roles.\n$owner_rule X$owner_answer"
+    )
+
+
+def test_validate_prompt_text_rejects_unknown_placeholder() -> None:
+    with pytest.raises(ValidationFailed):
+        validate_prompt_text("transfer_participants", "Роль: $foo")
+
+
+def test_validate_prompt_text_rejects_stray_dollar() -> None:
+    with pytest.raises(ValidationFailed):
+        validate_prompt_text("transfer_participants", "сумма $100")
+
+
+def test_validate_prompt_text_ignores_non_participants_prompts() -> None:
+    # The other three prompts are not templated — a bare $ is fine there.
+    validate_prompt_text("template_meta", "сумма $100 и $foo")
+    validate_prompt_text("field_mapping", "$bar")
+
+
+def test_validate_prompt_text_allows_blank() -> None:
+    validate_prompt_text("transfer_participants", "   ")
+
+
+def test_default_participants_prompt_passes_validation() -> None:
+    # Re-saving the coded default must be accepted.
+    validate_prompt_text(
+        "transfer_participants", PROMPT_DEFS["transfer_participants"].default
+    )

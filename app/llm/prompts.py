@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from string import Template
 from typing import TYPE_CHECKING
 
+from app.utils.errors import ValidationFailed
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -249,7 +251,38 @@ def prompt_setting_key(prompt_key: str) -> str:
     return f"llm_prompt:{prompt_key}"
 
 
-async def load_prompt_overrides(session: "AsyncSession") -> dict[str, str]:
+# Variables the participants prompt may reference (the only templated prompt).
+_PARTICIPANTS_VARS = {"roles": "", "owner_rule": "", "owner_answer": ""}
+
+
+def validate_prompt_text(prompt_key: str, text: str) -> None:
+    """Reject a saved prompt that would fail at render time.
+
+    Only ``transfer_participants`` is run through :class:`string.Template`, so
+    only it can carry placeholders. ``substitute`` (not ``safe_substitute``)
+    surfaces an unknown ``$placeholder`` (``KeyError``) or a stray/invalid ``$``
+    such as ``$100`` (``ValueError``) — we turn either into a user-facing error
+    at save time instead of letting it blow up a later LLM run. Blank text is
+    allowed: it clears the override.
+    """
+
+    if not text.strip() or prompt_key != "transfer_participants":
+        return
+    try:
+        Template(text).substitute(_PARTICIPANTS_VARS)
+    except KeyError as exc:
+        raise ValidationFailed(
+            f"Неизвестная переменная ${exc.args[0]} в промпте. "
+            "Допустимы только $roles, $owner_rule, $owner_answer."
+        ) from exc
+    except ValueError as exc:
+        raise ValidationFailed(
+            "Некорректный символ $ в промпте: экранируйте как $$ "
+            "или используйте $roles / $owner_rule / $owner_answer."
+        ) from exc
+
+
+async def load_prompt_overrides(session: AsyncSession) -> dict[str, str]:
     """Read non-empty prompt overrides from ``app_settings``.
 
     Returns ``{prompt_key: text}`` for every prompt that has a stored, non-blank
@@ -261,7 +294,7 @@ async def load_prompt_overrides(session: "AsyncSession") -> dict[str, str]:
     repo = SettingsRepository(session)
     overrides: dict[str, str] = {}
     for prompt_key in PROMPT_DEFS:
-        value = await repo.get(_setting_key(prompt_key))
+        value = await repo.get(prompt_setting_key(prompt_key))
         if isinstance(value, str) and value.strip():
             overrides[prompt_key] = value
     return overrides
@@ -300,7 +333,7 @@ class PromptBuilder:
         Returns ``(system_prompt, user_prompt, id_to_location)``.
         """
 
-        system_prompt = Template(self._system("field_mapping")).safe_substitute()
+        system_prompt = self._system("field_mapping")
 
         id_to_location: dict[str, str] = {}
         leaf_lines: list[str] = []
@@ -336,7 +369,7 @@ class PromptBuilder:
         keep the model from echoing long UUIDs.
         """
 
-        system_prompt = Template(self._system("transfer_pick")).safe_substitute()
+        system_prompt = self._system("transfer_pick")
         rows = [
             f"{row['id']} — {_one_line(row.get('summary', ''), 200)}"
             for row in templates
@@ -406,7 +439,7 @@ class PromptBuilder:
         return system_prompt, user_prompt
 
     def build_template_meta(self, *, content: str, fmt: str) -> tuple[str, str]:
-        system_prompt = Template(self._system("template_meta")).safe_substitute()
+        system_prompt = self._system("template_meta")
         body = _compact_json_for_prompt(content) if fmt == "json" else content
         user_prompt = f"Формат: {fmt}\n\n{body}"
         return system_prompt, user_prompt

@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 async def llm_service(
     settings: Settings | None = None,
     *,
-    session: "AsyncSession | None" = None,
+    session: AsyncSession | None = None,
 ) -> AsyncIterator[LLMService]:
     s = settings or get_settings()
     if not s.llm_active:
