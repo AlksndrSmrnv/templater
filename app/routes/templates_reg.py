@@ -653,17 +653,22 @@ async def htmx_create(
         template = await svc.create(data)
         template.placeholders = normalize_placeholders(data.placeholders)
         template.content = svc.regenerate_content(template)
+        # `import_status` is a server-managed flag, never client input — strip any
+        # value the POST tried to smuggle in so it can only ever be set below,
+        # after the proof verifies. (Preview never emits it, so legitimate
+        # payloads are unaffected.)
+        client_meta = {k: v for k, v in (data.llm_meta or {}).items() if k != "import_status"}
         template.llm_meta = {
-            **(data.llm_meta or {}),
+            **client_meta,
             "has_account_owner": placeholders_have_account_owner(template.placeholders),
         }
         # Mark the template processed only when the server itself vouches — via
         # the HMAC proof issued during preview — that it LLM-analysed this exact
-        # content into this exact llm_meta. A client-crafted POST can't forge a
+        # content into this exact metadata. A client-crafted POST can't forge a
         # valid proof (nor swap in fake analysis under a stolen one), so it can't
         # flip `import_status` and bypass `_require_processed`. Without a valid
         # proof the panel simply offers full «Обработать LLM», as before.
-        if _is_parsable(template) and verify_processed(data.content, data.llm_meta, llm_proof):
+        if _is_parsable(template) and verify_processed(data.content, client_meta, llm_proof):
             template.llm_meta["import_status"] = "processed"
         template = await commit_and_refresh(session, template)
     except ValidationError as exc:

@@ -217,6 +217,67 @@ async def test_htmx_create_marks_processed_only_with_valid_proof(
 
 
 @pytest.mark.asyncio
+async def test_htmx_create_strips_client_supplied_import_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A POST can't smuggle import_status=processed through llm_meta: the
+    reserved key is stripped, and without a valid proof it stays unset."""
+
+    saved: dict[str, Any] = {}
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def create(self, data: Any) -> Any:
+            return SimpleNamespace(
+                id=uuid.uuid4(),
+                format="json",
+                content=data.content,
+                original_content=data.content,
+                placeholders=[],
+                llm_meta={},
+            )
+
+        @staticmethod
+        def regenerate_content(template: Any) -> str:
+            return template.content
+
+    async def fake_commit(session: object, item: Any) -> Any:
+        saved["llm_meta"] = item.llm_meta
+        return item
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
+    monkeypatch.setattr(templates_reg, "normalize_placeholders", lambda p: p)
+    monkeypatch.setattr(templates_reg, "placeholders_have_account_owner", lambda p: False)
+
+    response = await templates_reg.htmx_create(
+        request=cast(
+            Any,
+            FakeFormRequest(
+                {
+                    "name": "T",
+                    "description": "",
+                    "format": "json",
+                    "content": '{"a": "x"}',
+                    "placeholders": "[]",
+                    # Forged: status smuggled in, no proof supplied.
+                    "llm_meta": '{"summary": "ok", "import_status": "processed"}',
+                    "llm_proof": "",
+                }
+            ),
+        ),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert response.status_code == 204
+    assert "import_status" not in saved["llm_meta"]
+    assert saved["llm_meta"]["summary"] == "ok"
+
+
+@pytest.mark.asyncio
 async def test_preview_template_includes_llm_debug_key(monkeypatch: pytest.MonkeyPatch) -> None:
     debug = {"system_prompt": "system", "user_prompt": "user", "response_text": "raw"}
 
