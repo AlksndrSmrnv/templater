@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import shlex
 from functools import cached_property, lru_cache
@@ -45,6 +46,11 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     app_debug: bool = False
+    # Secret for server-side HMAC proofs (e.g. "this content was LLM-analysed
+    # during preview"). Optional: when empty, a stable key is derived from the
+    # DB DSN so the feature needs no extra configuration. Set it explicitly to
+    # rotate or share a key across heterogeneous deployments.
+    secret_key: str = ""
     log_level: str = "INFO"
     log_json: bool = True
 
@@ -103,6 +109,16 @@ class Settings(BaseSettings):
     @property
     def static_dir(self) -> Path:
         return self.base_dir / "static"
+
+    @cached_property
+    def signing_key(self) -> bytes:
+        """Key for HMAC proofs the server issues and later verifies (no client
+        ever sees it). Uses ``secret_key`` when set; otherwise derives a stable
+        per-deployment key from the DB DSN — server-only, shared by all workers
+        and constant across restarts — so the feature works with zero config."""
+
+        material = self.secret_key or self.database_dsn
+        return hashlib.sha256(b"template-maker:signing:v1:" + material.encode("utf-8")).digest()
 
     @cached_property
     def _database_dsn_parts(self) -> dict[str, str]:

@@ -13,6 +13,7 @@ from app.routes import templates_reg
 from app.routes.templates_reg import router
 from app.schemas.template import TemplateCreate
 from app.utils.errors import ValidationFailed
+from app.utils.signing import sign_processed
 from app.utils.walker import Leaf
 
 
@@ -59,6 +60,20 @@ def first_full_match_path(path: str, method: str = "GET") -> str:
             return route.path
 
     raise AssertionError(f"No full route match for {method} {path}")
+
+
+def test_sign_processed_proof_is_content_bound_and_not_forgeable() -> None:
+    from app.utils.signing import verify_processed
+
+    content = '{"a": "x"}'
+    proof = sign_processed(content)
+
+    assert verify_processed(content, proof) is True
+    # A proof for one body must not validate another, and junk/empty is rejected.
+    assert verify_processed('{"a": "y"}', proof) is False
+    assert verify_processed(content, "deadbeef") is False
+    assert verify_processed(content, "") is False
+    assert verify_processed(content, None) is False
 
 
 def test_template_htmx_tree_route_is_matched_before_template_id_route() -> None:
@@ -113,26 +128,28 @@ async def test_htmx_create_validation_errors_retarget_review_errors() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("content", "llm_meta_json", "expected_status"),
+    ("content", "proof_for", "expected_status"),
     [
-        # Real upload flow: parsable body + LLM analysis carried from preview.
-        ('{"a": "x"}', '{"summary": "ok"}', "processed"),
-        # Bare POST bypassing preview: parsable but no analysis → NOT processed,
-        # so it can't sneak past `_require_processed` with empty LLM data.
-        ('{"a": "x"}', "{}", None),
-        # Non-parsable body can't be LLM-processed → never marked processed.
-        ("not json at all", '{"summary": "ok"}', None),
+        # Real upload flow: parsable body + valid preview proof for THIS content.
+        ('{"a": "x"}', "self", "processed"),
+        # Forged POST: valid-looking llm_meta but no proof → NOT processed, so it
+        # can't sneak past `_require_processed`.
+        ('{"a": "x"}', None, None),
+        # Forged POST: a proof minted for different content doesn't validate.
+        ('{"a": "x"}', '{"b": "y"}', None),
+        # Even a valid proof can't mark a non-parsable body processed.
+        ("not json at all", "self", None),
     ],
 )
-async def test_htmx_create_marks_processed_only_when_analyzed_and_parsable(
+async def test_htmx_create_marks_processed_only_with_valid_proof(
     monkeypatch: pytest.MonkeyPatch,
     content: str,
-    llm_meta_json: str,
+    proof_for: str | None,
     expected_status: str | None,
 ) -> None:
-    """Only a parsable body that actually carries LLM analysis (from preview) is
-    marked processed, so the panel shows the granular reprocess buttons
-    immediately — without letting a preview-less POST flip the flag."""
+    """Only a parsable body accompanied by the server's HMAC proof (issued in
+    preview for that exact content) is marked processed — a client-crafted POST
+    cannot forge the flag."""
 
     saved: dict[str, Any] = {}
 
@@ -163,6 +180,13 @@ async def test_htmx_create_marks_processed_only_when_analyzed_and_parsable(
     monkeypatch.setattr(templates_reg, "normalize_placeholders", lambda p: p)
     monkeypatch.setattr(templates_reg, "placeholders_have_account_owner", lambda p: False)
 
+    if proof_for == "self":
+        llm_proof = sign_processed(content)
+    elif proof_for is None:
+        llm_proof = ""
+    else:
+        llm_proof = sign_processed(proof_for)
+
     response = await templates_reg.htmx_create(
         request=cast(
             Any,
@@ -173,7 +197,8 @@ async def test_htmx_create_marks_processed_only_when_analyzed_and_parsable(
                     "format": "json",
                     "content": content,
                     "placeholders": "[]",
-                    "llm_meta": llm_meta_json,
+                    "llm_meta": '{"summary": "ok"}',
+                    "llm_proof": llm_proof,
                 }
             ),
         ),
@@ -183,9 +208,8 @@ async def test_htmx_create_marks_processed_only_when_analyzed_and_parsable(
 
     assert response.status_code == 204
     assert saved["llm_meta"].get("import_status") == expected_status
-    # Whatever analysis came in is preserved alongside the derived flag.
-    if llm_meta_json != "{}":
-        assert saved["llm_meta"]["summary"] == "ok"
+    # Client-supplied analysis is preserved alongside the (verified) flag.
+    assert saved["llm_meta"]["summary"] == "ok"
 
 
 @pytest.mark.asyncio

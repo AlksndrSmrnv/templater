@@ -34,6 +34,7 @@ from app.services.templates import (
 )
 from app.utils import walker
 from app.utils.errors import DomainError, LLMResponseError, LLMUnavailable, ValidationFailed
+from app.utils.signing import sign_processed, verify_processed
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -120,6 +121,10 @@ async def preview_template(data: TemplateCreate, session: AsyncSession) -> dict[
         "content": result["content"],
         "placeholders": result["placeholders"],
         "llm_meta": result["llm_meta"],
+        # Server-side proof that the LLM ran on this exact content; the review
+        # form echoes it back so `htmx_create` can mark the template processed
+        # without trusting a client-supplied flag.
+        "llm_proof": sign_processed(data.content),
         "rendered_html": rendered_html,
         "llm_used": result.get("llm_debug") is not None,
         "llm_debug": result.get("llm_debug"),
@@ -642,6 +647,8 @@ async def htmx_create(
 ) -> Response:
     try:
         data = await _template_create_from_form(request)
+        # `request.form()` is cached by Starlette, so re-reading it here is free.
+        llm_proof = form_str(await request.form(), "llm_proof")
         svc = TemplateService(session)
         template = await svc.create(data)
         template.placeholders = normalize_placeholders(data.placeholders)
@@ -650,13 +657,12 @@ async def htmx_create(
             **(data.llm_meta or {}),
             "has_account_owner": placeholders_have_account_owner(template.placeholders),
         }
-        # The upload→preview path runs the LLM before save and carries the
-        # analysis back in `llm_meta`; a parsable body with that analysis is
-        # effectively processed, so surface the granular reprocess buttons right
-        # away. A bare POST without preview (empty `llm_meta`) must NOT be marked
-        # processed — that would bypass `_require_processed` and hide full
-        # processing behind partial/empty LLM data.
-        if data.llm_meta and _is_parsable(template):
+        # Mark the template processed only when the server itself vouches — via
+        # the HMAC proof issued during preview — that it LLM-analysed this exact
+        # content. A client-crafted POST can't forge a valid proof, so it can't
+        # flip `import_status` and bypass `_require_processed`. Without a valid
+        # proof the panel simply offers full «Обработать LLM», as before.
+        if _is_parsable(template) and verify_processed(data.content, llm_proof):
             template.llm_meta["import_status"] = "processed"
         template = await commit_and_refresh(session, template)
     except ValidationError as exc:
