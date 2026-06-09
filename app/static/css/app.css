@@ -326,8 +326,28 @@ h3 { font-size: var(--fs-lg); line-height: 1.3; font-weight: 600; letter-spacing
     border-top: 1px solid var(--border);
     flex-shrink: 0;
 }
-.detail-field { margin-bottom: 16px; }
-.detail-label { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 2px; }
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+    align-content: start;
+}
+.detail-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+}
+.detail-cell--wide { grid-column: 1 / -1; }
+.detail-label {
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
 .detail-value { font-size: var(--fs-base); overflow-wrap: anywhere; }
 .detail-value--text { white-space: pre-wrap; }
 
