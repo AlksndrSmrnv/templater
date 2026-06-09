@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.repositories.settings as settings_repo_mod
 from app.llm.prompts import (
@@ -275,7 +276,7 @@ def test_participants_override_substitutes_placeholders_without_breaking_json() 
         '{"sender":{"client":"C1"}$owner_answer}\n'
     )
     builder = PromptBuilder({"transfer_participants": override})
-    common = dict(request="перевод", clients=[], accounts=[], cards=[])
+    common: dict[str, Any] = dict(request="перевод", clients=[], accounts=[], cards=[])
 
     sys_no, _ = builder.build_transfer_participants(**common, need_account_owner=False)
     # $roles substituted, owner placeholders collapse to empty, JSON braces intact.
@@ -307,7 +308,7 @@ async def test_load_prompt_overrides_returns_only_nonblank(
 
     monkeypatch.setattr(settings_repo_mod, "SettingsRepository", _FakeRepo)
 
-    overrides = await load_prompt_overrides(session=object())
+    overrides = await load_prompt_overrides(session=cast(AsyncSession, object()))
     assert overrides == {"field_mapping": "МОЙ ПРОМПТ"}
 
 
