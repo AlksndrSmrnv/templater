@@ -646,15 +646,18 @@ async def htmx_create(
         template = await svc.create(data)
         template.placeholders = normalize_placeholders(data.placeholders)
         template.content = svc.regenerate_content(template)
-        # The upload→preview path already ran the LLM (parsable bodies only), so a
-        # freshly-saved template is effectively processed — mark it so the panel
-        # shows the granular reprocess buttons immediately, without a second pass.
-        parsable = _is_parsable(template)
         template.llm_meta = {
             **(data.llm_meta or {}),
             "has_account_owner": placeholders_have_account_owner(template.placeholders),
-            "import_status": "processed" if parsable else "unparsed",
         }
+        # The upload→preview path runs the LLM before save and carries the
+        # analysis back in `llm_meta`; a parsable body with that analysis is
+        # effectively processed, so surface the granular reprocess buttons right
+        # away. A bare POST without preview (empty `llm_meta`) must NOT be marked
+        # processed — that would bypass `_require_processed` and hide full
+        # processing behind partial/empty LLM data.
+        if data.llm_meta and _is_parsable(template):
+            template.llm_meta["import_status"] = "processed"
         template = await commit_and_refresh(session, template)
     except ValidationError as exc:
         return validation_errors_response(

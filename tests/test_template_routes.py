@@ -113,19 +113,26 @@ async def test_htmx_create_validation_errors_retarget_review_errors() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("content", "expected_status"),
+    ("content", "llm_meta_json", "expected_status"),
     [
-        ('{"a": "x"}', "processed"),
-        ("not json at all", "unparsed"),
+        # Real upload flow: parsable body + LLM analysis carried from preview.
+        ('{"a": "x"}', '{"summary": "ok"}', "processed"),
+        # Bare POST bypassing preview: parsable but no analysis → NOT processed,
+        # so it can't sneak past `_require_processed` with empty LLM data.
+        ('{"a": "x"}', "{}", None),
+        # Non-parsable body can't be LLM-processed → never marked processed.
+        ("not json at all", '{"summary": "ok"}', None),
     ],
 )
-async def test_htmx_create_sets_import_status_from_parsability(
+async def test_htmx_create_marks_processed_only_when_analyzed_and_parsable(
     monkeypatch: pytest.MonkeyPatch,
     content: str,
-    expected_status: str,
+    llm_meta_json: str,
+    expected_status: str | None,
 ) -> None:
-    """A freshly-saved template is marked processed (parsable) so the panel shows
-    the granular reprocess buttons immediately, or unparsed otherwise."""
+    """Only a parsable body that actually carries LLM analysis (from preview) is
+    marked processed, so the panel shows the granular reprocess buttons
+    immediately — without letting a preview-less POST flip the flag."""
 
     saved: dict[str, Any] = {}
 
@@ -166,7 +173,7 @@ async def test_htmx_create_sets_import_status_from_parsability(
                     "format": "json",
                     "content": content,
                     "placeholders": "[]",
-                    "llm_meta": '{"summary": "ok"}',
+                    "llm_meta": llm_meta_json,
                 }
             ),
         ),
@@ -175,9 +182,10 @@ async def test_htmx_create_sets_import_status_from_parsability(
     )
 
     assert response.status_code == 204
-    assert saved["llm_meta"]["import_status"] == expected_status
-    # Existing fields are preserved alongside the new flag.
-    assert saved["llm_meta"]["summary"] == "ok"
+    assert saved["llm_meta"].get("import_status") == expected_status
+    # Whatever analysis came in is preserved alongside the derived flag.
+    if llm_meta_json != "{}":
+        assert saved["llm_meta"]["summary"] == "ok"
 
 
 @pytest.mark.asyncio
