@@ -62,18 +62,21 @@ def first_full_match_path(path: str, method: str = "GET") -> str:
     raise AssertionError(f"No full route match for {method} {path}")
 
 
-def test_sign_processed_proof_is_content_bound_and_not_forgeable() -> None:
+def test_sign_processed_proof_binds_content_and_meta_and_is_not_forgeable() -> None:
     from app.utils.signing import verify_processed
 
     content = '{"a": "x"}'
-    proof = sign_processed(content)
+    meta = {"summary": "ok"}
+    proof = sign_processed(content, meta)
 
-    assert verify_processed(content, proof) is True
-    # A proof for one body must not validate another, and junk/empty is rejected.
-    assert verify_processed('{"a": "y"}', proof) is False
-    assert verify_processed(content, "deadbeef") is False
-    assert verify_processed(content, "") is False
-    assert verify_processed(content, None) is False
+    assert verify_processed(content, meta, proof) is True
+    # A proof must not validate a different body, different analysis, or junk.
+    assert verify_processed('{"a": "y"}', meta, proof) is False
+    assert verify_processed(content, {"summary": "forged"}, proof) is False
+    assert verify_processed(content, {}, proof) is False
+    assert verify_processed(content, meta, "deadbeef") is False
+    assert verify_processed(content, meta, "") is False
+    assert verify_processed(content, meta, None) is False
 
 
 def test_template_htmx_tree_route_is_matched_before_template_id_route() -> None:
@@ -128,29 +131,35 @@ async def test_htmx_create_validation_errors_retarget_review_errors() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("content", "proof_for", "expected_status"),
+    ("content", "proof_content", "proof_meta", "expected_status"),
     [
-        # Real upload flow: parsable body + valid preview proof for THIS content.
-        ('{"a": "x"}', "self", "processed"),
-        # Forged POST: valid-looking llm_meta but no proof → NOT processed, so it
-        # can't sneak past `_require_processed`.
-        ('{"a": "x"}', None, None),
-        # Forged POST: a proof minted for different content doesn't validate.
-        ('{"a": "x"}', '{"b": "y"}', None),
+        # Real upload flow: parsable body + proof matching submitted content+meta.
+        ('{"a": "x"}', '{"a": "x"}', {"summary": "ok"}, "processed"),
+        # No proof at all → not processed (can't sneak past _require_processed).
+        ('{"a": "x"}', None, None, None),
+        # Proof minted for different content doesn't validate.
+        ('{"a": "x"}', '{"a": "y"}', {"summary": "ok"}, None),
+        # Proof minted for different analysis: client swapped llm_meta after
+        # obtaining a valid proof → must NOT stay processed (the P2.2 attack).
+        ('{"a": "x"}', '{"a": "x"}', {"summary": "different"}, None),
         # Even a valid proof can't mark a non-parsable body processed.
-        ("not json at all", "self", None),
+        ("not json at all", "not json at all", {"summary": "ok"}, None),
     ],
 )
 async def test_htmx_create_marks_processed_only_with_valid_proof(
     monkeypatch: pytest.MonkeyPatch,
     content: str,
-    proof_for: str | None,
+    proof_content: str | None,
+    proof_meta: dict[str, Any] | None,
     expected_status: str | None,
 ) -> None:
-    """Only a parsable body accompanied by the server's HMAC proof (issued in
-    preview for that exact content) is marked processed — a client-crafted POST
-    cannot forge the flag."""
+    """Only a parsable body whose submitted content AND llm_meta match the
+    server's preview proof is marked processed — a client-crafted POST cannot
+    forge the flag, nor swap in fake analysis under a stolen proof. The form
+    always submits llm_meta={"summary": "ok"}; the proof is minted separately
+    so each case can mismatch one input."""
 
+    submitted_meta = {"summary": "ok"}
     saved: dict[str, Any] = {}
 
     class FakeTemplateService:
@@ -180,12 +189,7 @@ async def test_htmx_create_marks_processed_only_with_valid_proof(
     monkeypatch.setattr(templates_reg, "normalize_placeholders", lambda p: p)
     monkeypatch.setattr(templates_reg, "placeholders_have_account_owner", lambda p: False)
 
-    if proof_for == "self":
-        llm_proof = sign_processed(content)
-    elif proof_for is None:
-        llm_proof = ""
-    else:
-        llm_proof = sign_processed(proof_for)
+    llm_proof = "" if proof_content is None else sign_processed(proof_content, proof_meta)
 
     response = await templates_reg.htmx_create(
         request=cast(
@@ -197,7 +201,7 @@ async def test_htmx_create_marks_processed_only_with_valid_proof(
                     "format": "json",
                     "content": content,
                     "placeholders": "[]",
-                    "llm_meta": '{"summary": "ok"}',
+                    "llm_meta": json.dumps(submitted_meta),
                     "llm_proof": llm_proof,
                 }
             ),

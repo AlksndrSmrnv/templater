@@ -121,10 +121,10 @@ async def preview_template(data: TemplateCreate, session: AsyncSession) -> dict[
         "content": result["content"],
         "placeholders": result["placeholders"],
         "llm_meta": result["llm_meta"],
-        # Server-side proof that the LLM ran on this exact content; the review
-        # form echoes it back so `htmx_create` can mark the template processed
-        # without trusting a client-supplied flag.
-        "llm_proof": sign_processed(data.content),
+        # Server-side proof that the LLM analysed this exact content into this
+        # exact llm_meta; the review form echoes it back so `htmx_create` can
+        # mark the template processed without trusting a client-supplied flag.
+        "llm_proof": sign_processed(data.content, result["llm_meta"]),
         "rendered_html": rendered_html,
         "llm_used": result.get("llm_debug") is not None,
         "llm_debug": result.get("llm_debug"),
@@ -659,10 +659,11 @@ async def htmx_create(
         }
         # Mark the template processed only when the server itself vouches — via
         # the HMAC proof issued during preview — that it LLM-analysed this exact
-        # content. A client-crafted POST can't forge a valid proof, so it can't
+        # content into this exact llm_meta. A client-crafted POST can't forge a
+        # valid proof (nor swap in fake analysis under a stolen one), so it can't
         # flip `import_status` and bypass `_require_processed`. Without a valid
         # proof the panel simply offers full «Обработать LLM», as before.
-        if _is_parsable(template) and verify_processed(data.content, llm_proof):
+        if _is_parsable(template) and verify_processed(data.content, data.llm_meta, llm_proof):
             template.llm_meta["import_status"] = "processed"
         template = await commit_and_refresh(session, template)
     except ValidationError as exc:

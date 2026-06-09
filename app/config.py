@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
+import secrets
 import shlex
 from functools import cached_property, lru_cache
 from pathlib import Path
@@ -113,12 +115,27 @@ class Settings(BaseSettings):
     @cached_property
     def signing_key(self) -> bytes:
         """Key for HMAC proofs the server issues and later verifies (no client
-        ever sees it). Uses ``secret_key`` when set; otherwise derives a stable
-        per-deployment key from the DB DSN — server-only, shared by all workers
-        and constant across restarts — so the feature works with zero config."""
+        ever sees it).
 
-        material = self.secret_key or self.database_dsn
-        return hashlib.sha256(b"template-maker:signing:v1:" + material.encode("utf-8")).digest()
+        Uses ``SECRET_KEY`` when set. When unset, falls back to a *random
+        per-process* key — never to anything derived from public config (the
+        default DSN ships in ``docker-compose.yml``, so a DSN-derived key would
+        be trivially guessable). The random fallback keeps single-process/dev
+        deployments working with zero config; multi-worker deployments must set
+        ``SECRET_KEY`` so all workers share one key. Without it, a preview signed
+        on one worker simply won't verify on another and the panel falls back to
+        the full «Обработать LLM» action — it never accepts a forgeable proof."""
+
+        if self.secret_key:
+            material = self.secret_key.encode("utf-8")
+        else:
+            logging.getLogger(__name__).warning(
+                "SECRET_KEY is not set: using a random per-process signing key. "
+                "Set SECRET_KEY so 'processed' proofs stay valid across restarts "
+                "and across multiple workers."
+            )
+            material = secrets.token_bytes(32)
+        return hashlib.sha256(b"template-maker:signing:v1:" + material).digest()
 
     @cached_property
     def _database_dsn_parts(self) -> dict[str, str]:

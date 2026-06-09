@@ -30,6 +30,10 @@ services:
       APP_DEBUG: "false"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_JSON: ${LOG_JSON:-true}
+      # Set a random secret in multi-worker deployments so HMAC proofs stay
+      # valid across workers/restarts (gen: python -c "import secrets;
+      # print(secrets.token_hex(32))"). Empty = random per-process key.
+      SECRET_KEY: ${SECRET_KEY:-}
       GIGACHAT_BASE_URL: ${GIGACHAT_BASE_URL:-}
       GIGACHAT_CERT_B64: ${GIGACHAT_CERT_B64:-}
       GIGACHAT_KEY_B64: ${GIGACHAT_KEY_B64:-}
