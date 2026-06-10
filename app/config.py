@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     # DB DSN so the feature needs no extra configuration. Set it explicitly to
     # rotate or share a key across heterogeneous deployments.
     secret_key: str = ""
+    # Key phrase that unlocks editing on the settings page (prompts, attributes,
+    # import policy). Empty = settings stay read-only for everyone.
+    settings_edit_key: str = ""
     log_level: str = "INFO"
     log_json: bool = True
 

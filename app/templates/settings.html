@@ -4,6 +4,38 @@
 <h1><iconify-icon icon="lucide:settings"></iconify-icon> Настройки</h1>
 {% include "partials/saved_banner.html" %}
 
+<div class="settings-section" x-data="{ open: false }">
+    {% if edit_mode %}
+    <p>
+        <iconify-icon icon="lucide:lock-open"></iconify-icon>
+        Режим редактирования включён.
+        <button class="btn"
+                type="button"
+                hx-post="/templater/settings-htmx/lock"
+                hx-swap="none">Заблокировать</button>
+    </p>
+    {% else %}
+    <p class="muted"
+       {% if not unlock_available %}title="Ключ редактирования не настроен (SETTINGS_EDIT_KEY)"{% endif %}>
+        <iconify-icon icon="lucide:lock"></iconify-icon>
+        Настройки доступны только для просмотра.
+        {% if unlock_available %}
+        <button class="btn" type="button" @click="open = !open">Разблокировать…</button>
+        {% endif %}
+    </p>
+    {% if unlock_available %}
+    <form class="filters-inline"
+          x-show="open"
+          x-cloak
+          hx-post="/templater/settings-htmx/unlock"
+          hx-swap="none">
+        <input type="password" name="key" placeholder="Ключ-фраза" autocomplete="off">
+        <button class="btn primary" type="submit">Войти в режим редактирования</button>
+    </form>
+    {% endif %}
+    {% endif %}
+</div>
+
 <div class="settings-section">
     <h2><iconify-icon icon="lucide:bot"></iconify-icon> LLM (GigaChat)</h2>
     <p>
@@ -28,13 +60,13 @@
           hx-put="/templater/settings-htmx/import_policy"
           hx-swap="none">
         <label>По умолчанию:
-            <select name="import_policy">
+            <select name="import_policy" {% if not edit_mode %}disabled{% endif %}>
                 <option value="skip" {% if default_policy == "skip" %}selected{% endif %}>Пропускать существующие</option>
                 <option value="overwrite" {% if default_policy == "overwrite" %}selected{% endif %}>Перезаписывать</option>
                 <option value="fail" {% if default_policy == "fail" %}selected{% endif %}>Падать при ошибке</option>
             </select>
         </label>
-        <button class="btn primary" type="submit">Сохранить</button>
+        {% if edit_mode %}<button class="btn primary" type="submit">Сохранить</button>{% endif %}
     </form>
 </div>
 
@@ -56,10 +88,12 @@
             {% for v in p.variables %}<code>{{ v }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
         </p>
         {% endif %}
-        <textarea name="text" rows="10" spellcheck="false">{{ p.text }}</textarea>
+        <textarea name="text" rows="10" spellcheck="false" {% if not edit_mode %}readonly{% endif %}>{{ p.text }}</textarea>
+        {% if edit_mode %}
         <div>
             <button class="btn primary" type="submit">Сохранить</button>
         </div>
+        {% endif %}
     </form>
     {% endfor %}
 </div>
@@ -82,12 +116,14 @@
                 {% for t in entity_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
             </select>
         </label>
+        {% if edit_mode %}
         <button class="btn primary"
                 type="button"
                 hx-get="/templater/settings-htmx/attributes/new"
                 hx-include="#entity-filter"
                 hx-target="#attr-modal-content"
                 hx-swap="innerHTML">Добавить атрибут</button>
+        {% endif %}
     </div>
     <div class="table-wrap">
         <table class="data-table" id="attrs-table">
@@ -118,6 +154,7 @@
 {% endblock %}
 
 {% block scripts %}
+{% if edit_mode %}
 <script src="https://unpkg.com/sortablejs@1.15.6/Sortable.min.js"
         integrity="sha384-HZZ/fukV+9G8gwTNjN7zQDG0Sp7MsZy5DDN6VfY3Be7V9dvQpEpR2jF2HlyFUUjU"
         crossorigin="anonymous"></script>
@@ -159,4 +196,5 @@
         });
     })();
 </script>
+{% endif %}
 {% endblock %}
