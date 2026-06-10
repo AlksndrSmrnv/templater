@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from fastapi import Request
@@ -125,6 +125,101 @@ async def test_lock_clears_cookie(fake_settings: SimpleNamespace) -> None:
     assert response.status_code == 204
     assert response.headers["HX-Refresh"] == "true"
     assert response.headers["set-cookie"].startswith(f"{COOKIE_NAME}=")
+
+
+class FakeUploadFile:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._raw = json.dumps(payload).encode("utf-8")
+
+    async def read(self) -> bytes:
+        return self._raw
+
+
+class FakeTemplateRenderer:
+    def TemplateResponse(
+        self,
+        request: object,
+        name: str,
+        context: dict[str, object],
+        status_code: int = 200,
+        headers: dict[str, str] | None = None,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            request=request,
+            name=name,
+            context=context,
+            status_code=status_code,
+            headers=headers or {},
+        )
+
+
+@pytest.fixture()
+def import_service_spy(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    from app.routes import export_import as export_import_routes
+
+    calls: list[dict[str, object]] = []
+
+    class FakeService:
+        def __init__(self, session: object) -> None:
+            pass
+
+        async def import_package(self, package: dict[str, object], *, policy: str) -> SimpleNamespace:
+            calls.append(package)
+            return SimpleNamespace(model_dump=lambda: {})
+
+    class FakeSettingsRepo:
+        def __init__(self, session: object) -> None:
+            pass
+
+        async def get(self, key: str, default: str) -> str:
+            return default
+
+    monkeypatch.setattr(export_import_routes, "ExportImportService", FakeService)
+    monkeypatch.setattr(export_import_routes, "SettingsRepository", FakeSettingsRepo)
+    return calls
+
+
+async def run_import(package: dict[str, object], cookies: dict[str, str]) -> SimpleNamespace:
+    from app.routes.export_import import htmx_import
+
+    return cast(
+        SimpleNamespace,
+        await htmx_import(
+            request_with_cookies(cookies),
+            file=cast(Any, FakeUploadFile(package)),
+            policy="overwrite",
+            templates=cast(Any, FakeTemplateRenderer()),
+            session=cast(Any, None),
+        ),
+    )
+
+
+async def test_import_with_attribute_schema_is_blocked_when_locked(
+    fake_settings: SimpleNamespace, import_service_spy: list[dict[str, object]]
+) -> None:
+    package = {"attribute_schema": [{"entity_type": "client", "name": "x"}], "clients": []}
+    response = await run_import(package, cookies={})
+    assert response.status_code == 403
+    assert "attribute_schema" in str(response.context["message"])
+    assert import_service_spy == []
+
+
+async def test_import_with_attribute_schema_passes_in_edit_mode(
+    fake_settings: SimpleNamespace, import_service_spy: list[dict[str, object]]
+) -> None:
+    package = {"attribute_schema": [{"entity_type": "client", "name": "x"}]}
+    response = await run_import(package, cookies={COOKIE_NAME: issue_edit_token()})
+    assert response.status_code == 200
+    assert len(import_service_spy) == 1
+
+
+async def test_data_only_import_stays_open_when_locked(
+    fake_settings: SimpleNamespace, import_service_spy: list[dict[str, object]]
+) -> None:
+    package = {"clients": [{"name": "test"}], "templates": []}
+    response = await run_import(package, cookies={})
+    assert response.status_code == 200
+    assert len(import_service_spy) == 1
 
 
 def test_every_mutating_settings_route_is_gated() -> None:

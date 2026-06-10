@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.settings import SettingsRepository
 from app.routes.deps import SessionDep, TemplatesDep
 from app.services.export_import import ExportImportService
+from app.utils.edit_mode import is_edit_mode
 from app.utils.errors import DomainError
 
 router = APIRouter()
@@ -50,6 +51,24 @@ async def htmx_import(
             "partials/import_result.html",
             {"ok": False, "message": f"Не удалось прочитать файл: {exc}", "details": []},
             status_code=422,
+        )
+    # attribute_schema entries create/overwrite attribute definitions — the
+    # same mutation the settings page locks behind edit mode, so a data import
+    # must not become a side door (data-only packages stay open to everyone).
+    if isinstance(package, dict) and package.get("attribute_schema") and not is_edit_mode(request):
+        return templates.TemplateResponse(
+            request,
+            "partials/import_result.html",
+            {
+                "ok": False,
+                "message": (
+                    "Файл содержит раздел attribute_schema — изменение атрибутов "
+                    "доступно только в режиме редактирования настроек. Разблокируйте "
+                    "настройки или удалите раздел из файла."
+                ),
+                "details": [],
+            },
+            status_code=403,
         )
     try:
         if policy is None or policy not in VALID_POLICIES:
