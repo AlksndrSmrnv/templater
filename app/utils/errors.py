@@ -32,6 +32,22 @@ class ValidationFailed(DomainError):
     code = "validation_failed"
 
 
+class ContentParseFailed(ValidationFailed):
+    """Body does not parse as the template's declared format.
+
+    Carries the 1-based line/column of the parse error so the editor UI can
+    highlight the offending line.
+    """
+
+    code = "content_parse_failed"
+
+    def __init__(self, message: str, *, line: int | None = None, col: int | None = None) -> None:
+        details = [f"Строка {line}, позиция {col}"] if line is not None else None
+        super().__init__(message, details=details)
+        self.line = line
+        self.col = col
+
+
 class IntegrityViolation(DomainError):
     """Raised when an operation would violate referential integrity rules."""
 

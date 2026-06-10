@@ -1121,3 +1121,184 @@ async def test_regenerate_meta_only_updates_meta_and_keeps_placeholders() -> Non
     assert out.content == '{"x": "{{sender.fullName}}"}'
     assert out.placeholders is placeholders
     assert out.llm_debug["response_text"] == "r"
+
+
+# ---------- edit_content (manual in-place body editing) ----------
+
+
+def _edit_svc(template: Any) -> TemplateService:
+    class FakeSession:
+        async def flush(self) -> None:
+            return None
+
+    svc = TemplateService(cast(Any, FakeSession()))
+
+    async def fake_get(tid: Any) -> Any:
+        return template
+
+    svc.get = fake_get  # type: ignore[method-assign, assignment]
+    return svc
+
+
+def _edit_template(**overrides: Any) -> Any:
+    base: dict[str, Any] = {
+        "id": uuid.uuid4(),
+        "format": "json",
+        "content": '{\n  "name": "{{sender.fullName}}",\n  "amount": "{{amount}}"\n}',
+        "original_content": '{\n  "name": "Иванов",\n  "amount": "100"\n}',
+        "placeholders": [
+            {"location": "/name", "mode": "mapped", "value": "{{sender.fullName}}", "original": "Иванов"},
+            {"location": "/amount", "mode": "dynamic", "value": "{{amount}}", "original": "100"},
+        ],
+        "llm_meta": {"summary": "ok", "import_status": "processed", "has_account_owner": False},
+        "llm_debug": {"system_prompt": "s", "user_prompt": "u", "response_text": "r"},
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+@pytest.mark.asyncio
+async def test_edit_content_keeps_matching_and_drops_stale_placeholders() -> None:
+    template = _edit_template(
+        placeholders=[
+            {"location": "/name", "mode": "mapped", "value": "{{sender.fullName}}", "original": "Иванов"},
+            {"location": "/removed", "mode": "literal", "value": "x", "original": "x"},
+            {"location": "/amount", "mode": "dynamic", "value": "{{amount}}", "original": "100"},
+        ]
+    )
+    svc = _edit_svc(template)
+
+    # /removed is gone, /amount leaf was hand-edited to a literal, /name intact
+    new_content = '{\n  "name": "{{sender.fullName}}",\n  "amount": "500",\n  "extra": "added"\n}'
+    out = await svc.edit_content(cast(Any, None), new_content)
+
+    assert out.content == new_content
+    assert [ph["location"] for ph in out.placeholders] == ["/name"]
+
+
+@pytest.mark.asyncio
+async def test_edit_content_rebuilds_original_content_from_kept_originals() -> None:
+    template = _edit_template()
+    svc = _edit_svc(template)
+
+    new_content = '{\n  "name": "{{sender.fullName}}",\n  "amount": "{{amount}}",\n  "extra": "added"\n}'
+    out = await svc.edit_content(cast(Any, None), new_content)
+
+    original = json.loads(out.original_content)
+    assert original["name"] == "Иванов"
+    assert original["amount"] == "100"
+    # a newly added key must survive in both documents
+    assert original["extra"] == "added"
+    assert json.loads(out.content)["extra"] == "added"
+
+
+@pytest.mark.asyncio
+async def test_edit_content_without_kept_placeholders_keeps_text_verbatim() -> None:
+    template = _edit_template(placeholders=[])
+    svc = _edit_svc(template)
+
+    new_content = '{"compact":"kept-as-typed"}'
+    out = await svc.edit_content(cast(Any, None), new_content)
+
+    assert out.original_content == new_content
+    assert out.content == new_content
+
+
+@pytest.mark.asyncio
+async def test_edit_content_invalid_json_carries_line_and_col() -> None:
+    from app.utils.errors import ContentParseFailed
+
+    template = _edit_template()
+    svc = _edit_svc(template)
+
+    bad = '{\n  "a": 1,\n  "b": ,\n}'
+    with pytest.raises(ContentParseFailed) as exc_info:
+        await svc.edit_content(cast(Any, None), bad)
+
+    exc = exc_info.value
+    try:
+        json.loads(bad)
+    except json.JSONDecodeError as ref:
+        assert exc.line == ref.lineno
+        assert exc.col == ref.colno
+    assert exc.details  # rendered as "Строка N, позиция M"
+    assert exc.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_edit_content_xml_keeps_text_and_attr_placeholders() -> None:
+    template = _edit_template(
+        format="xml",
+        content='<doc id="{{rqUID}}"><name>{{sender.fullName}}</name></doc>',
+        original_content='<doc id="abc"><name>Иванов</name></doc>',
+        placeholders=[
+            {"location": "/doc/@id", "mode": "dynamic", "value": "{{rqUID}}", "original": "abc"},
+            {"location": "/doc/name[0]/#text", "mode": "mapped", "value": "{{sender.fullName}}", "original": "Иванов"},
+        ],
+    )
+    svc = _edit_svc(template)
+
+    new_content = '<doc id="{{rqUID}}"><name>{{sender.fullName}}</name><extra>x</extra></doc>'
+    out = await svc.edit_content(cast(Any, None), new_content)
+
+    assert [ph["location"] for ph in out.placeholders] == ["/doc/@id", "/doc/name[0]/#text"]
+    rebuilt = walker.walk_xml(out.original_content)
+    values = {leaf.location: leaf.value for leaf in rebuilt}
+    assert values["/doc/@id"] == "abc"
+    assert values["/doc/name[0]/#text"] == "Иванов"
+    assert values["/doc/extra[0]/#text"] == "x"
+
+
+@pytest.mark.asyncio
+async def test_edit_content_invalid_xml_reports_one_based_col() -> None:
+    from xml.etree import ElementTree as ET
+
+    from app.utils.errors import ContentParseFailed
+
+    template = _edit_template(format="xml", placeholders=[])
+    svc = _edit_svc(template)
+
+    bad = "<doc>\n  <broken>\n</doc>"
+    with pytest.raises(ContentParseFailed) as exc_info:
+        await svc.edit_content(cast(Any, None), bad)
+
+    try:
+        ET.fromstring(bad)
+    except ET.ParseError as ref:
+        assert exc_info.value.line == ref.position[0]
+        assert exc_info.value.col == ref.position[1] + 1
+
+
+@pytest.mark.asyncio
+async def test_edit_content_state_effects() -> None:
+    # llm_debug cleared, has_account_owner recomputed, import_status untouched.
+    template = _edit_template(
+        placeholders=[
+            {
+                "location": "/owner",
+                "mode": "mapped",
+                "value": "{{accountOwner.fullName}}",
+                "original": "Пётр",
+            }
+        ],
+        content='{"owner": "{{accountOwner.fullName}}"}',
+        llm_meta={"summary": "ok", "import_status": "processed", "has_account_owner": True},
+    )
+    svc = _edit_svc(template)
+
+    # the only accountOwner placeholder is edited away
+    out = await svc.edit_content(cast(Any, None), '{"owner": "литерал"}')
+
+    assert out.llm_debug is None
+    assert out.llm_meta["has_account_owner"] is False
+    assert out.llm_meta["import_status"] == "processed"
+    assert out.llm_meta["summary"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_edit_content_rejects_empty_body() -> None:
+    template = _edit_template()
+    svc = _edit_svc(template)
+
+    with pytest.raises(ValidationFailed):
+        await svc.edit_content(cast(Any, None), "   \n  ")

@@ -687,3 +687,122 @@ async def test_htmx_regenerate_meta_reports_plain_llm_failure(monkeypatch: pytes
     # Granular reprocess errors land in the panel's dedicated container.
     assert response.headers["HX-Retarget"] == "#panel-errors"
     assert response.headers["HX-Reswap"] == "innerHTML"
+
+
+# ---------- PUT /templates-htmx/{id}/content (manual body edit) ----------
+
+
+def test_template_htmx_content_route_does_not_shadow_update_route() -> None:
+    template_id = uuid.uuid4()
+    assert (
+        first_full_match_path(f"/templates-htmx/{template_id}/content", method="PUT")
+        == "/templates-htmx/{template_id}/content"
+    )
+    assert (
+        first_full_match_path(f"/templates-htmx/{template_id}", method="PUT")
+        == "/templates-htmx/{template_id}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_htmx_edit_content_success_renders_panel_with_toast(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    template_id = uuid.uuid4()
+    template = SimpleNamespace(id=template_id, name="T")
+    calls: list[tuple[str, Any]] = []
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def edit_content(self, requested_id: uuid.UUID, content: str) -> Any:
+            assert requested_id == template_id
+            calls.append(("edit_content", content))
+            return template
+
+    async def fake_commit(session: object, item: Any) -> Any:
+        calls.append(("commit_and_refresh", item))
+        return item
+
+    async def fake_panel_context(session: object, tpl: Any) -> dict[str, Any]:
+        return {"template": tpl}
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
+    monkeypatch.setattr(templates_reg, "_template_panel_context", fake_panel_context)
+
+    response = await templates_reg.htmx_edit_content(
+        template_id=template_id,
+        request=cast(Any, FakeFormRequest({"content": '{"a": "x"}'})),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert calls == [("edit_content", '{"a": "x"}'), ("commit_and_refresh", template)]
+    assert response.name == "partials/template_panel.html"
+    trigger = json.loads(response.headers["HX-Trigger"])
+    assert "Тело шаблона обновлено" in trigger["showToast"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_htmx_edit_content_parse_error_retargets_and_carries_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.utils.errors import ContentParseFailed
+
+    template_id = uuid.uuid4()
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def edit_content(self, requested_id: uuid.UUID, content: str) -> Any:
+            raise ContentParseFailed("Невалидный JSON: Expecting value", line=3, col=5)
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+
+    response = await templates_reg.htmx_edit_content(
+        template_id=template_id,
+        request=cast(Any, FakeFormRequest({"content": "{broken"})),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    # htmx 2 does not swap non-2xx responses → error partial ships as 200
+    # retargeted into the still-mounted editor.
+    assert response.status_code == 200
+    assert response.name == "partials/form_errors.html"
+    assert response.headers["HX-Retarget"] == "#body-edit-errors"
+    assert response.headers["HX-Reswap"] == "innerHTML"
+    event = json.loads(response.headers["HX-Trigger"])["template-body-error"]
+    assert event["line"] == 3
+    assert event["col"] == 5
+    assert "Невалидный JSON" in event["message"]
+
+
+@pytest.mark.asyncio
+async def test_htmx_edit_content_plain_validation_error_has_no_line_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    template_id = uuid.uuid4()
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def edit_content(self, requested_id: uuid.UUID, content: str) -> Any:
+            raise ValidationFailed("Пустой шаблон")
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+
+    response = await templates_reg.htmx_edit_content(
+        template_id=template_id,
+        request=cast(Any, FakeFormRequest({"content": "  "})),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["HX-Retarget"] == "#body-edit-errors"
+    assert "HX-Trigger" not in response.headers
