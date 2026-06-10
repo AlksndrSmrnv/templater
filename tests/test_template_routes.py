@@ -79,6 +79,23 @@ def test_sign_processed_proof_binds_content_and_meta_and_is_not_forgeable() -> N
     assert verify_processed(content, meta, None) is False
 
 
+def test_sign_processed_is_newline_canonical() -> None:
+    """Preview receives CRLF content (multipart serialisation), create receives
+    LF (urlencoded htmx submit) — the proof must survive that round trip."""
+
+    from app.utils.signing import verify_processed
+
+    crlf = '{\r\n  "a": "x"\r\n}'
+    lf = crlf.replace("\r\n", "\n")
+    meta = {"summary": "ok"}
+
+    proof = sign_processed(crlf, meta)
+    assert verify_processed(lf, meta, proof) is True
+    assert verify_processed(crlf, meta, proof) is True
+    # Canonicalisation covers newline flavour only — not other edits.
+    assert verify_processed(lf.replace("x", "y"), meta, proof) is False
+
+
 def test_template_htmx_tree_route_is_matched_before_template_id_route() -> None:
     assert first_full_match_path("/templates-htmx/tree") == "/templates-htmx/tree"
 
