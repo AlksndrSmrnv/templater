@@ -774,7 +774,7 @@ async def htmx_edit_content(
         request,
         "partials/template_panel.html",
         await _template_panel_context(session, template),
-        headers={"HX-Trigger": toast_header("Тело шаблона обновлено")},
+        headers={"HX-Trigger": toast_header("Тело шаблона обновлено — запустите обработку LLM заново")},
     )
 
 

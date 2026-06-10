@@ -253,6 +253,11 @@ class TemplateService:
         are kept, the rest are dropped. ``original_content`` is rebuilt by
         substituting each kept placeholder's ``original`` back at its location,
         so re-running LLM analysis later still works from a raw document.
+
+        The old analysis (summary etc.) described a different body, so
+        ``llm_meta`` is reset to ``import_status="imported"`` — parsable (the
+        edit just validated that, which also clears a stale "unparsed" flag)
+        but requiring a fresh LLM pass before the assistant may use it.
         """
 
         template = await self.get(template_id)
@@ -294,7 +299,7 @@ class TemplateService:
         # The stored prompts/response described the old body.
         template.llm_debug = None
         template.llm_meta = {
-            **(template.llm_meta or {}),
+            "import_status": "imported",
             "has_account_owner": placeholders_have_account_owner(kept),
         }
         await self.session.flush()

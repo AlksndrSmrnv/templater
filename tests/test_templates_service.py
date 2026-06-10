@@ -1270,8 +1270,10 @@ async def test_edit_content_invalid_xml_reports_one_based_col() -> None:
 
 
 @pytest.mark.asyncio
-async def test_edit_content_state_effects() -> None:
-    # llm_debug cleared, has_account_owner recomputed, import_status untouched.
+async def test_edit_content_resets_stale_analysis() -> None:
+    # The edited body is a different document: llm_debug and the old summary
+    # are dropped, "processed" is demoted to "imported" so the assistant won't
+    # use stale analysis, and has_account_owner is recomputed.
     template = _edit_template(
         placeholders=[
             {
@@ -1290,9 +1292,25 @@ async def test_edit_content_state_effects() -> None:
     out = await svc.edit_content(cast(Any, None), '{"owner": "литерал"}')
 
     assert out.llm_debug is None
-    assert out.llm_meta["has_account_owner"] is False
-    assert out.llm_meta["import_status"] == "processed"
-    assert out.llm_meta["summary"] == "ok"
+    assert out.llm_meta == {"import_status": "imported", "has_account_owner": False}
+
+
+@pytest.mark.asyncio
+async def test_edit_content_repairing_unparsed_body_clears_unparsed_flag() -> None:
+    # A successful save just proved the body parses — the tree's "unparsed"
+    # warning flag must not survive the repair.
+    template = _edit_template(
+        content='{"broken": ',
+        original_content='{"broken": ',
+        placeholders=[],
+        llm_meta={"import_status": "unparsed"},
+        llm_debug=None,
+    )
+    svc = _edit_svc(template)
+
+    out = await svc.edit_content(cast(Any, None), '{"fixed": "да"}')
+
+    assert out.llm_meta == {"import_status": "imported", "has_account_owner": False}
 
 
 @pytest.mark.asyncio
