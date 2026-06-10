@@ -32,10 +32,19 @@ _PURPOSE = b"llm-processed:v1"
 
 
 def _message(content: str, llm_meta: dict[str, Any] | None) -> bytes:
-    """Canonical, order-independent encoding of the signed result."""
+    """Canonical, order-independent encoding of the signed result.
+
+    Newlines in ``content`` are normalised to LF before signing: the upload form
+    posts preview as multipart (browsers serialise entry values with CRLF), while
+    the review form posts create as urlencoded (htmx submits the textarea/hidden
+    value with LF). Without canonicalisation the same template would sign as
+    CRLF and verify as LF, failing for any multiline body."""
 
     payload = json.dumps(
-        {"content": content, "llm_meta": llm_meta or {}},
+        {
+            "content": content.replace("\r\n", "\n").replace("\r", "\n"),
+            "llm_meta": llm_meta or {},
+        },
         sort_keys=True,
         ensure_ascii=False,
         separators=(",", ":"),
