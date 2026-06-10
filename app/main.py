@@ -58,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(filled_templates.router, prefix=app_prefix)
     app.include_router(send.router, prefix=app_prefix)
     app.include_router(settings_routes.router, prefix=app_prefix)
+    app.include_router(settings_routes.edit_router, prefix=app_prefix)
     app.include_router(export_import.router, prefix=app_prefix)
 
     @app.exception_handler(DomainError)

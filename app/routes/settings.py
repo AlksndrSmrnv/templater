@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -34,9 +34,56 @@ from app.schemas.attribute import (
     AttributeReorder,
 )
 from app.services.attribute_schema import AttributeSchemaService
-from app.utils.errors import DomainError, NotFoundError
+from app.utils.edit_mode import (
+    COOKIE_NAME,
+    TOKEN_TTL_SECONDS,
+    check_edit_key,
+    is_edit_mode,
+    issue_edit_token,
+)
+from app.utils.errors import DomainError, NotFoundError, SettingsLockedError
 
 router = APIRouter()
+
+
+def require_edit_mode(request: Request) -> None:
+    """Server-side gate for every settings mutation: hiding buttons in the
+    template is cosmetic, a hand-crafted request must fail too."""
+
+    if not is_edit_mode(request):
+        raise SettingsLockedError("Настройки доступны только для просмотра")
+
+
+# Everything that changes settings (or serves the edit forms) lives behind the
+# edit-mode cookie; read-only views stay on the open ``router``.
+edit_router = APIRouter(dependencies=[Depends(require_edit_mode)])
+
+
+@router.post("/settings-htmx/unlock")
+async def htmx_settings_unlock(request: Request) -> Response:
+    form = await request.form()
+    if not check_edit_key(form_str(form, "key")):
+        return Response(
+            status_code=200,
+            headers={"HX-Trigger": toast_header("Неверный ключ", toast_type="error")},
+        )
+    response = Response(status_code=204, headers={"HX-Refresh": "true"})
+    response.set_cookie(
+        COOKIE_NAME,
+        issue_edit_token(),
+        max_age=TOKEN_TTL_SECONDS,
+        httponly=True,
+        samesite="lax",
+        path="/templater",
+    )
+    return response
+
+
+@router.post("/settings-htmx/lock")
+async def htmx_settings_lock() -> Response:
+    response = Response(status_code=204, headers={"HX-Refresh": "true"})
+    response.delete_cookie(COOKIE_NAME, path="/templater")
+    return response
 
 
 @router.get("/settings")
@@ -76,6 +123,8 @@ async def page_settings(
             "selected_entity_type": "",
             "default_policy": default_policy,
             "prompts": prompts,
+            "edit_mode": is_edit_mode(request),
+            "unlock_available": bool(s.settings_edit_key),
         },
     )
 
@@ -137,11 +186,11 @@ async def htmx_attributes_table(
     return templates.TemplateResponse(
         request,
         "partials/attributes_table.html",
-        {"attributes": items, "usage_counts": usage_counts},
+        {"attributes": items, "usage_counts": usage_counts, "edit_mode": is_edit_mode(request)},
     )
 
 
-@router.get("/settings-htmx/attributes/new")
+@edit_router.get("/settings-htmx/attributes/new")
 async def htmx_attribute_new(
     request: Request,
     entity_type: str = "",
@@ -159,7 +208,7 @@ async def htmx_attribute_new(
     )
 
 
-@router.get("/settings-htmx/attributes/{attr_id}/edit")
+@edit_router.get("/settings-htmx/attributes/{attr_id}/edit")
 async def htmx_attribute_edit(
     attr_id: uuid.UUID,
     request: Request,
@@ -189,7 +238,7 @@ async def htmx_attribute_edit(
     )
 
 
-@router.post("/settings-htmx/attributes")
+@edit_router.post("/settings-htmx/attributes")
 async def htmx_attribute_create(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
@@ -213,7 +262,7 @@ async def htmx_attribute_create(
     )
 
 
-@router.put("/settings-htmx/attributes/{attr_id}")
+@edit_router.put("/settings-htmx/attributes/{attr_id}")
 async def htmx_attribute_update(
     attr_id: uuid.UUID,
     request: Request,
@@ -237,7 +286,7 @@ async def htmx_attribute_update(
     )
 
 
-@router.delete("/settings-htmx/attributes/{attr_id}")
+@edit_router.delete("/settings-htmx/attributes/{attr_id}")
 async def htmx_attribute_delete(
     attr_id: uuid.UUID, session: AsyncSession = SessionDep
 ) -> Response:
@@ -256,7 +305,7 @@ async def htmx_attribute_delete(
     )
 
 
-@router.post("/settings-htmx/attributes/reorder")
+@edit_router.post("/settings-htmx/attributes/reorder")
 async def htmx_attribute_reorder(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
@@ -283,7 +332,7 @@ async def htmx_attribute_reorder(
     )
 
 
-@router.put("/settings-htmx/import_policy")
+@edit_router.put("/settings-htmx/import_policy")
 async def htmx_import_policy(request: Request, session: AsyncSession = SessionDep) -> Response:
     form = await request.form()
     policy = form_str(form, "import_policy")
@@ -294,7 +343,7 @@ async def htmx_import_policy(request: Request, session: AsyncSession = SessionDe
     return Response(status_code=204, headers={"HX-Redirect": "/templater/settings?saved=1"})
 
 
-@router.put("/settings-htmx/prompts/{key}")
+@edit_router.put("/settings-htmx/prompts/{key}")
 async def htmx_prompt(key: str, request: Request, session: AsyncSession = SessionDep) -> Response:
     """Persist an edited LLM system instruction.
 

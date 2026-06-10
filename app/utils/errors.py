@@ -20,6 +20,13 @@ class NotFoundError(DomainError):
     code = "not_found"
 
 
+class SettingsLockedError(DomainError):
+    """Raised when a mutating settings endpoint is hit without edit mode."""
+
+    status_code = 403
+    code = "settings_locked"
+
+
 class ValidationFailed(DomainError):
     status_code = 422
     code = "validation_failed"

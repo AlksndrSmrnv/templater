@@ -6,7 +6,11 @@
         {% set uc_records = uc.get("records", 0) %}
         {% set uc_templates = uc.get("templates", 0) %}
         <tr data-id="{{ attr.id }}" data-entity="{{ attr.entity_type }}">
+            {% if edit_mode %}
             <td class="drag-handle" title="Перетащите для изменения порядка">⠿</td>
+            {% else %}
+            <td></td>
+            {% endif %}
             <td>{{ attr.entity_type }}</td>
             <td><code>{{ attr.name }}</code></td>
             <td>{{ attr.label }}</td>
@@ -21,6 +25,7 @@
             <td>{{ attr.description }}</td>
             <td class="muted">{{ uc_records }} зап. / ~{{ uc_templates }} шаб.</td>
             <td class="row-actions">
+                {% if edit_mode %}
                 <button class="btn"
                         type="button"
                         hx-get="/templater/settings-htmx/attributes/{{ attr.id }}/edit"
@@ -31,6 +36,7 @@
                         hx-delete="/templater/settings-htmx/attributes/{{ attr.id }}"
                         hx-swap="none"
                         hx-confirm="Удалить атрибут «{{ attr.label }}» ({{ attr.entity_type }}.{{ attr.name }})? Сохранённые значения в записях не удаляются. Используется: {{ uc_records }} записей, ~{{ uc_templates }} шаблонов.">Удалить</button>
+                {% endif %}
             </td>
         </tr>
     {% endfor %}

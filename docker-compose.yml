@@ -34,6 +34,9 @@ services:
       # valid across workers/restarts (gen: python -c "import secrets;
       # print(secrets.token_hex(32))"). Empty = random per-process key.
       SECRET_KEY: ${SECRET_KEY:-}
+      # Key phrase that unlocks editing on the settings page. Empty = settings
+      # are read-only for everyone.
+      SETTINGS_EDIT_KEY: ${SETTINGS_EDIT_KEY:-}
       GIGACHAT_BASE_URL: ${GIGACHAT_BASE_URL:-}
       GIGACHAT_CERT_B64: ${GIGACHAT_CERT_B64:-}
       GIGACHAT_KEY_B64: ${GIGACHAT_KEY_B64:-}
