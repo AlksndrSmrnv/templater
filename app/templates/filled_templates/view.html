@@ -48,6 +48,16 @@
                         {% endif %}
                     </td>
                 </tr>
+                <tr>
+                    <td>Проект</td>
+                    <td>
+                        {% if ft.project_name_snapshot | default('') %}
+                            <span class="project-badge"><span class="project-dot" style="background: {{ ft.project_color_snapshot or '#9E9E9E' }}"></span>{{ ft.project_name_snapshot }}</span>
+                        {% else %}
+                            <span class="muted">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
                 {% for role, title, label in role_rows %}
                     <tr>
                         <td>{{ title }}</td>

@@ -40,6 +40,16 @@
         </div>
         {% endif %}
         <div class="form-section">
+            <label>Проект <span class="required-mark">*</span>
+                <select name="project_id" required>
+                    <option value="" disabled selected>— выберите проект —</option>
+                    {% for p in projects | default([]) %}
+                    <option value="{{ p.id }}">{{ p.name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+        </div>
+        <div class="form-section">
             <label>Имя <span class="required-mark">*</span>
                 <input type="text" name="name" required>
             </label>

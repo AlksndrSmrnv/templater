@@ -150,6 +150,8 @@ class FilledTemplateService:
         role_labels = await collect_role_labels(self.session, fill_request)
         moment = now or datetime.utcnow()
         name = build_auto_name(template.name, role_labels, moment)
+        # getattr-safe: test doubles may not carry the project relationship.
+        project = getattr(template, "project", None)
         item = FilledTemplate(
             name=name,
             format=template.format,
@@ -158,6 +160,8 @@ class FilledTemplateService:
             unresolved=list(unresolved or []),
             message_template_id=template.id,
             template_name_snapshot=_truncate(template.name or "", limit=255),
+            project_name_snapshot=_truncate(getattr(project, "name", "") or "", limit=255),
+            project_color_snapshot=getattr(project, "color", "") or "",
             sender_client_id=fill_request.sender_client_id,
             sender_account_id=fill_request.sender_account_id,
             sender_card_id=fill_request.sender_card_id,

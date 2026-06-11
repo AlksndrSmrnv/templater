@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any, cast
 
@@ -27,7 +28,13 @@ from app.repositories.entity import (
 from app.repositories.template import TemplateRepository
 from app.schemas.attribute import ALLOWED_TYPES
 from app.schemas.exchange import ExportPackage, ExportRequest, ImportSummary
+from app.schemas.project import COLOR_PATTERN
 from app.services.attribute_schema import AttributeSchemaService
+from app.services.projects import (
+    DEFAULT_PROJECT_COLOR,
+    DEFAULT_PROJECT_NAME,
+    ProjectService,
+)
 from app.services.templates import normalize_placeholders
 from app.utils.errors import ValidationFailed
 
@@ -664,6 +671,28 @@ class ExportImportService:
         if not await safe_flush("collections"):
             return _zeroed_summary()
 
+        # ---- projects referenced by templates (resolved by name; created when
+        # missing). Old packages without ``project_name`` land in «Без проекта»,
+        # matching the migration semantics for pre-projects templates. ----
+        project_svc = ProjectService(self.session)
+        project_ids_by_name: dict[str, uuid.UUID] = {}
+
+        async def resolve_project_id(raw_name: Any, raw_color: Any) -> uuid.UUID:
+            name = (
+                raw_name.strip()
+                if isinstance(raw_name, str) and raw_name.strip()
+                else DEFAULT_PROJECT_NAME
+            )[:255]
+            if name not in project_ids_by_name:
+                color = (
+                    raw_color
+                    if isinstance(raw_color, str) and re.fullmatch(COLOR_PATTERN, raw_color)
+                    else DEFAULT_PROJECT_COLOR
+                )
+                project = await project_svc.get_or_create_by_name(name, color=color)
+                project_ids_by_name[name] = project.id
+            return project_ids_by_name[name]
+
         # templates
         seen_template_ids: set[str] = set()
         for raw in _as_list(package.get("templates")):
@@ -786,9 +815,14 @@ class ExportImportService:
                     if candidate is not None and await self.session.get(Collection, candidate) is not None:
                         new_collection_id = candidate
 
+                new_project_id = await resolve_project_id(
+                    raw.get("project_name"), raw.get("project_color")
+                )
+
                 if existing_template is None:
                     self.session.add(MessageTemplate(
                         id=tid,
+                        project_id=new_project_id,
                         name=new_name,
                         description=new_description or "",
                         format=fmt,
@@ -806,6 +840,7 @@ class ExportImportService:
                     created["templates"] += 1
                 else:
                     # all parsed — apply atomically
+                    existing_template.project_id = new_project_id
                     existing_template.name = new_name
                     existing_template.description = (
                         new_description if new_description is not None else existing_template.description
@@ -910,6 +945,10 @@ class ExportImportService:
             "original_content": t.original_content,
             "llm_meta": t.llm_meta,
             "placeholders": t.placeholders,
+            # Project by name (+color) — restored via get_or_create on import so
+            # the package is portable across instances with different project ids.
+            "project_name": getattr(getattr(t, "project", None), "name", None),
+            "project_color": getattr(getattr(t, "project", None), "color", None),
             # Workspace metadata (collection import) — kept so a backup/restore
             # preserves the collection tree, headers, method and URL.
             "collection_id": str(t.collection_id) if t.collection_id else None,

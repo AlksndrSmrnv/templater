@@ -138,6 +138,25 @@ class Card(Base):
     account: Mapped[Account] = relationship(back_populates="cards")
 
 
+class Project(Base):
+    """A user-defined project used to tag templates.
+
+    Every :class:`MessageTemplate` belongs to exactly one project; the project
+    carries a highlight color so the UI can render an explicit badge on each
+    template. Deletion is refused at the service level while templates
+    reference the project (the FK is RESTRICT as a backstop).
+    """
+
+    __tablename__ = "projects"
+    __table_args__ = (UniqueConstraint("name", name="uq_projects_name"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    color: Mapped[str] = mapped_column(String(16), nullable=False, default="#9E9E9E")
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
 class Collection(Base):
     """An imported request collection (Postman v2.1, later Insomnia, …).
 
@@ -167,7 +186,10 @@ class Collection(Base):
 
 class MessageTemplate(Base):
     __tablename__ = "message_templates"
-    __table_args__ = (Index("ix_message_templates_collection_id", "collection_id"),)
+    __table_args__ = (
+        Index("ix_message_templates_collection_id", "collection_id"),
+        Index("ix_message_templates_project_id", "project_id"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -190,6 +212,17 @@ class MessageTemplate(Base):
         ForeignKey("collections.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Every template belongs to exactly one project (RESTRICT is a backstop —
+    # ProjectService refuses deletion while templates reference the project).
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    # ``selectin`` so the badge is renderable from Jinja without an explicit
+    # eager-load on every query (async lazy access would raise MissingGreenlet).
+    project: Mapped[Project] = relationship(lazy="selectin")
+
     # Materialised folder path within the collection, e.g. ["Transfers", "A2A"].
     folder_path: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     # HTTP request headers: list of {"key","value","mode","original","disabled"}.
@@ -239,6 +272,11 @@ class FilledTemplate(Base):
         nullable=True,
     )
     template_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # Project of the source template at fill time. Snapshotted (like the name
+    # above) so the badge survives template deletion, after which the project
+    # is unreachable via the relationship.
+    project_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    project_color_snapshot: Mapped[str] = mapped_column(String(16), nullable=False, default="")
 
     sender_client_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("clients.id", ondelete="SET NULL"), nullable=True

@@ -176,6 +176,10 @@ class _EmptyResult:
     def all(self) -> list[Any]:
         return []
 
+    def scalar_one_or_none(self) -> None:
+        # Project-by-name lookup resolves to "missing" → import creates the row.
+        return None
+
 
 class _RoundTripSession:
     """In-memory AsyncSession stand-in: ``add`` makes objects visible to later
@@ -353,3 +357,75 @@ async def test_import_keeps_nonempty_unparsable_body_verbatim() -> None:
     assert template.placeholders == []
     assert template.llm_meta["import_status"] == "unparsed"
     assert template.http_method == "POST"
+
+
+# ---------- Projects: exported by name, restored via get-or-create ----------
+
+from app.db.models import Project  # noqa: E402
+from app.services.projects import DEFAULT_PROJECT_NAME  # noqa: E402
+
+
+def _project_template(name: str = "T", **overrides: Any) -> SimpleNamespace:
+    base = dict(
+        id=uuid.uuid4(), name=name, description="", format="json",
+        content='{"a": 1}', original_content='{"a": 1}',
+        llm_meta={}, placeholders=[], collection_id=None, folder_path=[],
+        headers=[], http_method="POST", url="", display_order=0,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_dump_template_includes_project_name_and_color() -> None:
+    template = _project_template(project=SimpleNamespace(name="Альфа", color="#112233"))
+    dump = ExportImportService._dump_template(cast(Any, template))
+    assert dump["project_name"] == "Альфа"
+    assert dump["project_color"] == "#112233"
+
+    # Doubles without the relationship degrade to None, not AttributeError.
+    bare = ExportImportService._dump_template(cast(Any, _project_template()))
+    assert bare["project_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_import_creates_named_project_and_links_templates() -> None:
+    package = {
+        "version": 2,
+        "templates": [
+            ExportImportService._dump_template(
+                cast(Any, _project_template(project=SimpleNamespace(name="Альфа", color="#112233")))
+            ),
+            ExportImportService._dump_template(
+                cast(Any, _project_template(name="T2", project=SimpleNamespace(name="Альфа", color="#112233")))
+            ),
+        ],
+    }
+    session = _RoundTripSession()
+    summary = await ExportImportService(cast(Any, session)).import_package(package, policy="skip")
+
+    assert summary.errors == []
+    projects = [p for p in session.added if isinstance(p, Project)]
+    # Both templates share one (cached) project row.
+    assert len(projects) == 1
+    assert projects[0].name == "Альфа"
+    assert projects[0].color == "#112233"
+    templates = [t for t in session.added if isinstance(t, MessageTemplate)]
+    assert all(t.project_id == projects[0].id for t in templates)
+
+
+@pytest.mark.asyncio
+async def test_import_without_project_name_falls_back_to_default_project() -> None:
+    # Old v2 packages predate projects — their templates land in «Без проекта»,
+    # mirroring the migration semantics. A bad color falls back to the default.
+    raw = ExportImportService._dump_template(cast(Any, _project_template()))
+    assert raw["project_name"] is None
+    package = {"version": 2, "templates": [raw]}
+    session = _RoundTripSession()
+    summary = await ExportImportService(cast(Any, session)).import_package(package, policy="skip")
+
+    assert summary.errors == []
+    projects = [p for p in session.added if isinstance(p, Project)]
+    assert len(projects) == 1
+    assert projects[0].name == DEFAULT_PROJECT_NAME
+    templates = [t for t in session.added if isinstance(t, MessageTemplate)]
+    assert templates[0].project_id == projects[0].id

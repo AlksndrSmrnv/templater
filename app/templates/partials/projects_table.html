@@ -1,0 +1,50 @@
+{% set rows = projects | default([]) %}
+{% if rows %}
+    {% for p in rows %}
+        <tr data-id="{{ p.id }}">
+            <td>
+                <span class="project-badge"><span class="project-dot" style="background: {{ p.color }}"></span>{{ p.name }}</span>
+            </td>
+            {% if edit_mode %}
+            <td colspan="2">
+                <form class="filters-inline"
+                      hx-put="/templater/settings-htmx/projects/{{ p.id }}"
+                      hx-swap="none">
+                    <input type="text" name="name" value="{{ p.name }}" required maxlength="255">
+                    <input type="color" name="color" value="{{ p.color }}" title="Цвет подсветки">
+                    <button class="btn primary" type="submit">Сохранить</button>
+                </form>
+            </td>
+            <td class="row-actions">
+                <button class="btn danger"
+                        type="button"
+                        hx-delete="/templater/settings-htmx/projects/{{ p.id }}"
+                        hx-swap="none"
+                        hx-confirm="Удалить проект «{{ p.name }}»? Удаление невозможно, пока к проекту привязаны шаблоны.">Удалить</button>
+            </td>
+            {% else %}
+            <td><code>{{ p.color }}</code></td>
+            <td></td>
+            <td></td>
+            {% endif %}
+        </tr>
+    {% endfor %}
+{% else %}
+    <tr>
+        <td colspan="4" class="muted" style="text-align:center; padding:24px;">Нет проектов</td>
+    </tr>
+{% endif %}
+{% if edit_mode %}
+    <tr>
+        <td colspan="4">
+            <form class="filters-inline"
+                  hx-post="/templater/settings-htmx/projects"
+                  hx-swap="none"
+                  hx-on::after-request="if (event.detail.successful) this.reset()">
+                <input type="text" name="name" placeholder="Название проекта" required maxlength="255">
+                <input type="color" name="color" value="#1E88E5" title="Цвет подсветки">
+                <button class="btn primary" type="submit">Добавить проект</button>
+            </form>
+        </td>
+    </tr>
+{% endif %}

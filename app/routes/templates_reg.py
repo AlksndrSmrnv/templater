@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.runner import llm_service
 from app.repositories.filled_template import FilledTemplateRepository
+from app.repositories.project import ProjectRepository
 from app.routes.deps import SessionDep, TemplatesDep
 from app.routes.entities_htmx import entity_label
 from app.routes.htmx_utils import form_errors_response, form_str, toast_header, validation_errors_response
@@ -134,6 +135,8 @@ async def preview_template(data: TemplateCreate, session: AsyncSession) -> dict[
         # lands in the collection/folder the user started from.
         "preset_collection_id": str(data.collection_id) if data.collection_id else "",
         "preset_folder_path": list(data.folder_path or []),
+        "preset_project_id": str(data.project_id),
+        "preset_project": await ProjectRepository(session).get(data.project_id),
     }
 
 
@@ -176,6 +179,8 @@ async def _template_panel_context(session: AsyncSession, template: Any) -> dict[
     context["headers"] = template.headers or []
     context["has_account_owner"] = template_has_account_owner(template)
     context["filled_links"] = await FilledTemplateRepository(session).list_by_template(template.id)
+    # All projects for the reassign select in the panel header.
+    context["projects"] = await ProjectRepository(session).list_all()
     # Show the LLM prompts/response captured at the last analysis (incl. bulk
     # collection processing) so it can be inspected from the collections menu.
     context["llm_debug"] = getattr(template, "llm_debug", None)
@@ -225,10 +230,23 @@ def _placement_from_form(form: Any) -> tuple[uuid.UUID | None, list[str]]:
     return collection_id, folder_path
 
 
+def _project_id_from_form(form: Any) -> uuid.UUID:
+    """Read the mandatory project of the new-template form."""
+
+    raw = form_str(form, "project_id").strip()
+    if not raw:
+        raise ValidationFailed("Выберите проект")
+    try:
+        return uuid.UUID(raw)
+    except ValueError as exc:
+        raise ValidationFailed("Выберите проект") from exc
+
+
 async def _template_create_from_form(request: Request) -> TemplateCreate:
     form = await request.form()
     collection_id, folder_path = _placement_from_form(form)
     return TemplateCreate(
+        project_id=_project_id_from_form(form),
         name=form_str(form, "name"),
         description=form_str(form, "description"),
         format=form_str(form, "format") or "json",
@@ -245,6 +263,7 @@ async def _template_preview_from_form(request: Request) -> TemplateCreate:
     form = await request.form()
     collection_id, folder_path = _placement_from_form(form)
     return TemplateCreate(
+        project_id=_project_id_from_form(form),
         name=form_str(form, "name"),
         description=form_str(form, "description"),
         format=form_str(form, "format") or "json",
@@ -365,7 +384,12 @@ async def page_list(
     return templates.TemplateResponse(
         request,
         "templates_reg/workspace.html",
-        {"active": "templates", "open_template_id": open_template_id, **tree},
+        {
+            "active": "templates",
+            "open_template_id": open_template_id,
+            "projects": await ProjectRepository(session).list_all(),
+            **tree,
+        },
     )
 
 
@@ -375,6 +399,7 @@ async def page_new(
     collection_id: str = "",
     folder: str = "",
     templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
 ) -> Response:
     # ``folder`` is a JSON array of path segments coming from the "+ запрос"
     # buttons in the collections tree; surfaced to the form as hidden fields so
@@ -395,6 +420,7 @@ async def page_new(
             "preset_collection_id": collection_id.strip(),
             "preset_folder_path": folder_path,
             "preset_folder_label": " / ".join(folder_path),
+            "projects": await ProjectRepository(session).list_all(),
         },
     )
 
@@ -726,6 +752,38 @@ async def htmx_update(
         "partials/template_editor_response.html",
         await _template_editor_context(session, template),
         headers={"HX-Trigger": toast_header("Шаблон обновлён")},
+    )
+
+
+@router.post("/templates-htmx/{template_id}/project")
+async def htmx_set_project(
+    template_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    """Reassign a template to another project and re-render its panel."""
+
+    form = await request.form()
+    svc = TemplateService(session)
+    try:
+        project_id = _project_id_from_form(form)
+        template = await svc.update(template_id, TemplateUpdate(project_id=project_id))
+        template = await commit_and_refresh(session, template)
+    except DomainError as exc:
+        return form_errors_response(
+            request,
+            templates,
+            exc.message,
+            details=exc.details,
+            status_code=200,
+            headers={"HX-Retarget": "#panel-errors", "HX-Reswap": "innerHTML"},
+        )
+    return templates.TemplateResponse(
+        request,
+        "partials/template_panel.html",
+        await _template_panel_context(session, template),
+        headers={"HX-Trigger": toast_header("Проект изменён")},
     )
 
 

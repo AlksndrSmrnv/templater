@@ -30,6 +30,12 @@
                       hx-swap="innerHTML"
                       hx-indicator="#import-indicator"
                       hx-on::after-request="this.reset()">
+                    <select name="project_id" class="import-project-select" required title="Проект для импортируемых шаблонов">
+                        <option value="" disabled selected>— проект для импорта —</option>
+                        {% for p in projects | default([]) %}
+                        <option value="{{ p.id }}">{{ p.name }}</option>
+                        {% endfor %}
+                    </select>
                     <input type="file" name="file" x-ref="fileInput" accept=".json,application/json" hidden
                            onchange="if (this.files.length) this.form.requestSubmit()">
                     <button type="button" class="btn primary" @click="$refs.fileInput.click()"><iconify-icon icon="lucide:upload"></iconify-icon> Импортировать коллекцию</button>

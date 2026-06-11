@@ -14,6 +14,8 @@ class TemplateBase(BaseModel):
 
 
 class TemplateCreate(TemplateBase):
+    # Every template belongs to exactly one project — required.
+    project_id: uuid.UUID
     analyze_with_llm: bool = True
     placeholders: list[dict[str, Any]] | None = None
     llm_meta: dict[str, Any] | None = None
@@ -25,6 +27,7 @@ class TemplateCreate(TemplateBase):
 
 class TemplateUpdate(BaseModel):
     name: str | None = None
+    project_id: uuid.UUID | None = None
     description: str | None = None
     content: str | None = None
     placeholders: list[dict[str, Any]] | None = None

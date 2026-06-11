@@ -33,7 +33,9 @@ from app.schemas.attribute import (
     AttributeDefinitionUpdate,
     AttributeReorder,
 )
+from app.schemas.project import ProjectCreate, ProjectUpdate
 from app.services.attribute_schema import AttributeSchemaService
+from app.services.projects import ProjectService
 from app.utils.edit_mode import (
     COOKIE_NAME,
     TOKEN_TTL_SECONDS,
@@ -122,6 +124,7 @@ async def page_settings(
             "usage_counts": usage_counts,
             "selected_entity_type": "",
             "default_policy": default_policy,
+            "projects": await ProjectService(session).list_all(),
             "prompts": prompts,
             "edit_mode": is_edit_mode(request),
             "unlock_available": bool(s.settings_edit_key),
@@ -329,6 +332,88 @@ async def htmx_attribute_reorder(
     return Response(
         status_code=204,
         headers={"HX-Trigger": toast_header("Порядок обновлён", refresh_attributes=True)},
+    )
+
+
+@router.get("/settings-htmx/projects/table")
+async def htmx_projects_table(
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    return templates.TemplateResponse(
+        request,
+        "partials/projects_table.html",
+        {
+            "projects": await ProjectService(session).list_all(),
+            "edit_mode": is_edit_mode(request),
+        },
+    )
+
+
+@edit_router.post("/settings-htmx/projects")
+async def htmx_project_create(
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    form = await request.form()
+    svc = ProjectService(session)
+    try:
+        data = ProjectCreate(name=form_str(form, "name"), color=form_str(form, "color"))
+        await commit_and_refresh(session, await svc.create(data))
+    except ValidationError as exc:
+        return validation_errors_response(request, templates, exc)
+    except DomainError as exc:
+        return form_errors_response(
+            request, templates, exc.message, details=exc.details, status_code=exc.status_code
+        )
+    return Response(
+        status_code=204,
+        headers={"HX-Trigger": toast_header("Проект сохранён", refresh_projects=True)},
+    )
+
+
+@edit_router.put("/settings-htmx/projects/{project_id}")
+async def htmx_project_update(
+    project_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    form = await request.form()
+    svc = ProjectService(session)
+    try:
+        data = ProjectUpdate(name=form_str(form, "name"), color=form_str(form, "color"))
+        await commit_and_refresh(session, await svc.update(project_id, data))
+    except ValidationError as exc:
+        return validation_errors_response(request, templates, exc)
+    except DomainError as exc:
+        return form_errors_response(
+            request, templates, exc.message, details=exc.details, status_code=exc.status_code
+        )
+    return Response(
+        status_code=204,
+        headers={"HX-Trigger": toast_header("Проект сохранён", refresh_projects=True)},
+    )
+
+
+@edit_router.delete("/settings-htmx/projects/{project_id}")
+async def htmx_project_delete(
+    project_id: uuid.UUID, session: AsyncSession = SessionDep
+) -> Response:
+    svc = ProjectService(session)
+    try:
+        await svc.delete(project_id)
+    except DomainError as exc:
+        return Response(
+            status_code=exc.status_code,
+            headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
+        )
+    await commit_or_409(session, message="Не удалось удалить проект")
+    return Response(
+        status_code=204,
+        headers={"HX-Trigger": toast_header("Проект удалён", refresh_projects=True)},
     )
 
 

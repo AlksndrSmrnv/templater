@@ -10,6 +10,7 @@ from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import MessageTemplate
+from app.repositories.project import ProjectRepository
 from app.repositories.template import TemplateRepository
 from app.schemas.template import PlaceholderInfo, TemplateCreate, TemplateUpdate
 from app.services.attribute_schema import AttributeSchemaService
@@ -187,7 +188,9 @@ class TemplateService:
             self._extract_leaves(fmt, data.content)
         except Exception as exc:
             raise ValidationFailed(f"Шаблон не парсится как {fmt}: {exc}")
+        await self._require_project(data.project_id)
         template = MessageTemplate(
+            project_id=data.project_id,
             name=data.name,
             description=data.description,
             format=fmt,
@@ -206,6 +209,9 @@ class TemplateService:
         content_replaced = False
         if data.name is not None:
             template.name = data.name
+        if data.project_id is not None:
+            await self._require_project(data.project_id)
+            template.project_id = data.project_id
         if data.description is not None:
             template.description = data.description
         if data.content is not None:
@@ -241,6 +247,10 @@ class TemplateService:
             template.placeholders = normalize_placeholders(data.placeholders)
         await self.session.flush()
         return template
+
+    async def _require_project(self, project_id: uuid.UUID) -> None:
+        if await ProjectRepository(self.session).get(project_id) is None:
+            raise ValidationFailed("Проект не найден")
 
     async def delete(self, template_id: uuid.UUID) -> None:
         template = await self.get(template_id)

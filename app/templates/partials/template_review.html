@@ -11,6 +11,15 @@
     <input type="hidden" name="llm_proof" value="{{ llm_proof | default('') }}">
     <input type="hidden" name="collection_id" value="{{ preset_collection_id | default('') }}">
     <input type="hidden" name="folder_path" value="{{ (preset_folder_path | default([])) | tojson | forceescape }}">
+    <input type="hidden" name="project_id" value="{{ preset_project_id | default('') }}">
+
+    {% set proj = preset_project | default(none) %}
+    {% if proj %}
+    <p style="margin:0 0 10px;">
+        Проект:
+        <span class="project-badge"><span class="project-dot" style="background: {{ proj.color }}"></span>{{ proj.name }}</span>
+    </p>
+    {% endif %}
 
     <div style="display:flex; gap:24px; margin-bottom:14px; flex-wrap: wrap;">
         <div style="flex:1; min-width:260px;">
