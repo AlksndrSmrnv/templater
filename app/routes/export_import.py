@@ -8,15 +8,40 @@ from fastapi.responses import Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.project import ProjectRepository
 from app.repositories.settings import SettingsRepository
 from app.routes.deps import SessionDep, TemplatesDep
 from app.services.export_import import ExportImportService
+from app.services.projects import DEFAULT_PROJECT_NAME
 from app.utils.edit_mode import is_edit_mode
 from app.utils.errors import DomainError
 
 router = APIRouter()
 
 VALID_POLICIES = {"skip", "overwrite", "fail"}
+
+
+async def _missing_project_names(session: AsyncSession, package: Any) -> list[str]:
+    """Project names the package's templates reference that don't exist yet.
+
+    Mirrors the name resolution of ``ExportImportService.import_package``:
+    blank/absent ``project_name`` falls back to «Без проекта», names are
+    truncated to 255 chars. A non-empty result means the import would *create*
+    projects — a settings mutation that must stay behind the edit-mode lock.
+    """
+
+    raw_templates = package.get("templates") if isinstance(package, dict) else None
+    if not isinstance(raw_templates, list):
+        return []
+    names: set[str] = set()
+    for raw in raw_templates:
+        if not isinstance(raw, dict):
+            continue
+        name = raw.get("project_name")
+        cleaned = name.strip() if isinstance(name, str) and name.strip() else DEFAULT_PROJECT_NAME
+        names.add(cleaned[:255])
+    repo = ProjectRepository(session)
+    return [name for name in sorted(names) if await repo.get_by_name(name) is None]
 
 
 @router.get("/import")
@@ -65,6 +90,27 @@ async def htmx_import(
                     "Файл содержит раздел attribute_schema — изменение атрибутов "
                     "доступно только в режиме редактирования настроек. Разблокируйте "
                     "настройки или удалите раздел из файла."
+                ),
+                "details": [],
+            },
+            status_code=403,
+        )
+    # Creating a project is the same settings mutation the «Проекты» section
+    # locks behind edit mode — an import that references unknown project names
+    # must not become a side door. Imports into existing projects stay open.
+    missing_projects = await _missing_project_names(session, package)
+    if missing_projects and not is_edit_mode(request):
+        return templates.TemplateResponse(
+            request,
+            "partials/import_result.html",
+            {
+                "ok": False,
+                "message": (
+                    "Импорт создаст новые проекты ("
+                    + ", ".join(missing_projects)
+                    + ") — создание проектов доступно только в режиме "
+                    "редактирования настроек. Разблокируйте настройки или "
+                    "создайте проекты заранее."
                 ),
                 "details": [],
             },

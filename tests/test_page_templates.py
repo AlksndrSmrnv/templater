@@ -1141,3 +1141,13 @@ def test_filled_template_view_shows_project_row_from_snapshot() -> None:
     )
     assert "Проект" in without_project
     assert "project-badge" not in without_project
+
+
+def test_workspace_tree_listens_for_refresh_tree_event() -> None:
+    # The reassign endpoint fires refresh-tree so the sidebar badge updates
+    # without a page reload — the tree container must subscribe to it.
+    html = render_template("templates_reg/workspace.html", _workspace_context())
+    trees = [tag for tag in start_tags(html, "div") if tag.get("id") == "collections-tree"]
+    assert len(trees) == 1
+    assert trees[0].get("hx-trigger") == "refresh-tree from:body"
+    assert trees[0].get("hx-get") == "/templater/templates-htmx/tree"

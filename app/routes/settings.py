@@ -351,10 +351,22 @@ async def htmx_projects_table(
     )
 
 
+# The project forms submit with hx-swap="none", so failures must surface as
+# toasts (HX-Trigger is processed regardless of status code) — a rendered HTML
+# error body would be silently dropped.
+_PROJECT_FORM_ERROR = "Проверьте название (1–255 символов) и цвет (#RRGGBB)"
+
+
+def _project_error_response(message: str, status_code: int) -> Response:
+    return Response(
+        status_code=status_code,
+        headers={"HX-Trigger": toast_header(message, toast_type="error")},
+    )
+
+
 @edit_router.post("/settings-htmx/projects")
 async def htmx_project_create(
     request: Request,
-    templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
 ) -> Response:
     form = await request.form()
@@ -362,12 +374,10 @@ async def htmx_project_create(
     try:
         data = ProjectCreate(name=form_str(form, "name"), color=form_str(form, "color"))
         await commit_and_refresh(session, await svc.create(data))
-    except ValidationError as exc:
-        return validation_errors_response(request, templates, exc)
+    except ValidationError:
+        return _project_error_response(_PROJECT_FORM_ERROR, 422)
     except DomainError as exc:
-        return form_errors_response(
-            request, templates, exc.message, details=exc.details, status_code=exc.status_code
-        )
+        return _project_error_response(exc.message, exc.status_code)
     return Response(
         status_code=204,
         headers={"HX-Trigger": toast_header("Проект сохранён", refresh_projects=True)},
@@ -378,7 +388,6 @@ async def htmx_project_create(
 async def htmx_project_update(
     project_id: uuid.UUID,
     request: Request,
-    templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
 ) -> Response:
     form = await request.form()
@@ -386,12 +395,10 @@ async def htmx_project_update(
     try:
         data = ProjectUpdate(name=form_str(form, "name"), color=form_str(form, "color"))
         await commit_and_refresh(session, await svc.update(project_id, data))
-    except ValidationError as exc:
-        return validation_errors_response(request, templates, exc)
+    except ValidationError:
+        return _project_error_response(_PROJECT_FORM_ERROR, 422)
     except DomainError as exc:
-        return form_errors_response(
-            request, templates, exc.message, details=exc.details, status_code=exc.status_code
-        )
+        return _project_error_response(exc.message, exc.status_code)
     return Response(
         status_code=204,
         headers={"HX-Trigger": toast_header("Проект сохранён", refresh_projects=True)},

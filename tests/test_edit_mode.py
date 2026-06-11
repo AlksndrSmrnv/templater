@@ -222,6 +222,73 @@ async def test_data_only_import_stays_open_when_locked(
     assert len(import_service_spy) == 1
 
 
+@pytest.fixture()
+def project_repo_with(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Install a fake ProjectRepository knowing a fixed set of project names."""
+
+    from app.routes import export_import as export_import_routes
+
+    def install(known_names: set[str]) -> None:
+        class FakeProjectRepo:
+            def __init__(self, session: object) -> None:
+                pass
+
+            async def get_by_name(self, name: str) -> object | None:
+                return SimpleNamespace(name=name) if name in known_names else None
+
+        monkeypatch.setattr(export_import_routes, "ProjectRepository", FakeProjectRepo)
+
+    return install
+
+
+async def test_import_creating_projects_is_blocked_when_locked(
+    fake_settings: SimpleNamespace,
+    import_service_spy: list[dict[str, object]],
+    project_repo_with: Any,
+) -> None:
+    # Creating a project is gated like attribute_schema — import must not be a
+    # side door around the «Проекты» edit-mode lock.
+    project_repo_with(set())
+    package = {"templates": [{"id": "x", "name": "T", "project_name": "Новый"}]}
+    response = await run_import(package, cookies={})
+    assert response.status_code == 403
+    assert "Новый" in str(response.context["message"])
+    assert import_service_spy == []
+
+
+async def test_import_creating_projects_passes_in_edit_mode(
+    fake_settings: SimpleNamespace,
+    import_service_spy: list[dict[str, object]],
+    project_repo_with: Any,
+) -> None:
+    project_repo_with(set())
+    package = {"templates": [{"id": "x", "name": "T", "project_name": "Новый"}]}
+    response = await run_import(package, cookies={COOKIE_NAME: issue_edit_token()})
+    assert response.status_code == 200
+    assert len(import_service_spy) == 1
+
+
+async def test_import_into_existing_projects_stays_open_when_locked(
+    fake_settings: SimpleNamespace,
+    import_service_spy: list[dict[str, object]],
+    project_repo_with: Any,
+) -> None:
+    # Templates without project_name resolve to «Без проекта» — if it (and every
+    # referenced name) already exists, nothing is created, so the import is open.
+    from app.services.projects import DEFAULT_PROJECT_NAME
+
+    project_repo_with({DEFAULT_PROJECT_NAME, "Альфа"})
+    package = {
+        "templates": [
+            {"id": "x", "name": "T", "project_name": "Альфа"},
+            {"id": "y", "name": "T2"},
+        ]
+    }
+    response = await run_import(package, cookies={})
+    assert response.status_code == 200
+    assert len(import_service_spy) == 1
+
+
 def test_every_mutating_settings_route_is_gated() -> None:
     gate_deps = [dep.dependency for dep in settings_routes.edit_router.dependencies]
     assert settings_routes.require_edit_mode in gate_deps
@@ -259,3 +326,39 @@ def test_every_mutating_settings_route_is_gated() -> None:
         "/settings-htmx/unlock",
         "/settings-htmx/lock",
     }
+
+
+async def test_project_form_errors_surface_as_toasts(
+    fake_settings: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The project forms post with hx-swap='none', so failures must arrive as
+    HX-Trigger toasts — a rendered HTML error body would be invisible."""
+
+    # Schema failure (bad color) → 422 + error toast, no service call needed.
+    response = await settings_routes.htmx_project_create(
+        cast(Request, FakeFormRequest({"name": "P", "color": "red"})),
+        session=cast(Any, object()),
+    )
+    assert response.status_code == 422
+    payload = json.loads(response.headers["HX-Trigger"])
+    assert payload["showToast"]["type"] == "error"
+
+    # Domain failure (duplicate name) → its message in an error toast.
+    from app.utils.errors import ValidationFailed
+
+    class FakeProjectService:
+        def __init__(self, session: object) -> None:
+            pass
+
+        async def create(self, data: Any) -> Any:
+            raise ValidationFailed("Проект с таким именем уже существует")
+
+    monkeypatch.setattr(settings_routes, "ProjectService", FakeProjectService)
+    response = await settings_routes.htmx_project_create(
+        cast(Request, FakeFormRequest({"name": "P", "color": "#112233"})),
+        session=cast(Any, object()),
+    )
+    assert response.status_code == 422
+    payload = json.loads(response.headers["HX-Trigger"])
+    assert payload["showToast"]["type"] == "error"
+    assert "уже существует" in payload["showToast"]["message"]

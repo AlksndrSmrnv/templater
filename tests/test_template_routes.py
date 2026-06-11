@@ -704,3 +704,58 @@ async def test_htmx_regenerate_meta_reports_plain_llm_failure(monkeypatch: pytes
     # Granular reprocess errors land in the panel's dedicated container.
     assert response.headers["HX-Retarget"] == "#panel-errors"
     assert response.headers["HX-Reswap"] == "innerHTML"
+
+
+@pytest.mark.asyncio
+async def test_htmx_set_project_refreshes_tree_and_panel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reassigning the project re-renders the panel AND triggers a sidebar
+    refresh — otherwise the tree keeps showing the old badge."""
+
+    template_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    captured: dict[str, Any] = {}
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def update(self, tid: uuid.UUID, data: Any) -> Any:
+            captured["project_id"] = data.project_id
+            return SimpleNamespace(id=tid)
+
+    async def fake_commit(session: object, item: Any) -> Any:
+        return item
+
+    async def fake_panel_context(session: object, template: Any) -> dict[str, Any]:
+        return {"template": template}
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
+    monkeypatch.setattr(templates_reg, "_template_panel_context", fake_panel_context)
+
+    response = await templates_reg.htmx_set_project(
+        template_id,
+        request=cast(Any, FakeFormRequest({"project_id": str(project_id)})),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert captured["project_id"] == project_id
+    assert response.name == "partials/template_panel.html"
+    trigger = json.loads(response.headers["HX-Trigger"])
+    assert "refresh-tree" in trigger
+
+
+@pytest.mark.asyncio
+async def test_htmx_set_project_rejects_missing_project_id() -> None:
+    response = await templates_reg.htmx_set_project(
+        uuid.uuid4(),
+        request=cast(Any, FakeFormRequest({"project_id": ""})),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+    # Error rendered into the panel errors slot, not a 500.
+    assert response.status_code == 200
+    assert response.headers["HX-Retarget"] == "#panel-errors"

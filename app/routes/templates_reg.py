@@ -783,7 +783,9 @@ async def htmx_set_project(
         request,
         "partials/template_panel.html",
         await _template_panel_context(session, template),
-        headers={"HX-Trigger": toast_header("Проект изменён")},
+        # refresh-tree re-renders the sidebar so the tree badge matches the
+        # template's new project immediately.
+        headers={"HX-Trigger": toast_header("Проект изменён", refresh_tree=True)},
     )
 
 

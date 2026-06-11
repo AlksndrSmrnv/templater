@@ -53,7 +53,10 @@
                    hx-trigger="input changed delay:200ms">
             <span id="tree-indicator" class="htmx-indicator muted"><span class="spinner"></span> Обработка…</span>
         </div>
-        <div id="collections-tree" class="collections-tree">
+        <div id="collections-tree" class="collections-tree"
+             hx-get="/templater/templates-htmx/tree"
+             hx-trigger="refresh-tree from:body"
+             hx-swap="innerHTML">
             {% include "partials/collections_tree.html" %}
         </div>
     </aside>
