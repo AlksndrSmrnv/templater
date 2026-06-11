@@ -92,7 +92,7 @@ async def htmx_import_collection(
             headers={"HX-Trigger": toast_header(f"Не удалось прочитать файл: {exc}", toast_type="error")},
         )
     try:
-        summary = await CollectionService(session).import_postman(
+        summary = await CollectionService(session).import_collection(
             data, project_id=target_project.id
         )
         await commit_or_409(session)

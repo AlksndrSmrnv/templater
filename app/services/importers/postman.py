@@ -10,11 +10,14 @@ kept verbatim with ``parsable=False``).
 
 from __future__ import annotations
 
-import json
 from typing import Any
-from xml.etree import ElementTree as ET
 
-from app.services.importers.base import ParsedCollection, ParsedRequest
+from app.services.importers.base import (
+    ParsedCollection,
+    ParsedRequest,
+    detect_format,
+    make_header,
+)
 from app.utils.errors import ValidationFailed
 
 UNNAMED = "(без имени)"
@@ -134,7 +137,7 @@ def _parse_headers(header: Any) -> list[dict[str, str | bool]]:
             key = key.strip()
             value = value.strip()
             if key:
-                out.append(_header(key, value, disabled=False))
+                out.append(make_header(key, value, disabled=False))
         return out
     if not isinstance(header, list):
         return out
@@ -145,13 +148,9 @@ def _parse_headers(header: Any) -> list[dict[str, str | bool]]:
         if not key:
             continue
         out.append(
-            _header(key, _as_str(item.get("value")), disabled=bool(item.get("disabled", False)))
+            make_header(key, _as_str(item.get("value")), disabled=bool(item.get("disabled", False)))
         )
     return out
-
-
-def _header(key: str, value: str, *, disabled: bool) -> dict[str, str | bool]:
-    return {"key": key, "value": value, "mode": "literal", "original": value, "disabled": disabled}
 
 
 def _parse_body(body: Any) -> tuple[str, str, bool]:
@@ -170,7 +169,7 @@ def _parse_body(body: Any) -> tuple[str, str, bool]:
     if not isinstance(raw, str) or not raw.strip():
         return "", "json", False
     language = _body_language(body)
-    return _detect_format(raw, language)
+    return detect_format(raw, language)
 
 
 def _body_language(body: dict[str, Any]) -> str:
@@ -180,36 +179,6 @@ def _body_language(body: dict[str, Any]) -> str:
         if isinstance(raw_opts, dict):
             return _as_str(raw_opts.get("language")).lower()
     return ""
-
-
-def _detect_format(content: str, language: str) -> tuple[str, str, bool]:
-    """Pick ``json``/``xml`` from the language hint + a content sniff.
-
-    Returns ``(content, fmt, parsable)`` where ``parsable`` is ``True`` only if
-    the content actually parses as the chosen format.
-    """
-
-    stripped = content.lstrip()
-    prefers_xml = language == "xml" or (not language and stripped.startswith("<"))
-    if prefers_xml:
-        try:
-            ET.fromstring(content)
-            return content, "xml", True
-        except ET.ParseError:
-            return content, "xml", False
-    # default to JSON
-    try:
-        json.loads(content)
-        return content, "json", True
-    except (json.JSONDecodeError, ValueError):
-        # JSON hint but invalid, or unknown language with non-XML content.
-        if stripped.startswith("<"):
-            try:
-                ET.fromstring(content)
-                return content, "xml", True
-            except ET.ParseError:
-                return content, "xml", False
-        return content, "json", False
 
 
 def _detect_schema_version(schema: Any) -> str:
