@@ -163,8 +163,14 @@ def import_service_spy(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object
         def __init__(self, session: object) -> None:
             pass
 
-        async def import_package(self, package: dict[str, object], *, policy: str) -> SimpleNamespace:
-            calls.append(package)
+        async def import_package(
+            self,
+            package: dict[str, object],
+            *,
+            policy: str,
+            allow_project_creation: bool = True,
+        ) -> SimpleNamespace:
+            calls.append({"package": package, "allow_project_creation": allow_project_creation})
             return SimpleNamespace(model_dump=lambda: {})
 
     class FakeSettingsRepo:
@@ -179,7 +185,9 @@ def import_service_spy(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object
     return calls
 
 
-async def run_import(package: dict[str, object], cookies: dict[str, str]) -> SimpleNamespace:
+async def run_import(
+    package: dict[str, object], cookies: dict[str, str], policy: str = "overwrite"
+) -> SimpleNamespace:
     from app.routes.export_import import htmx_import
 
     return cast(
@@ -187,7 +195,7 @@ async def run_import(package: dict[str, object], cookies: dict[str, str]) -> Sim
         await htmx_import(
             request_with_cookies(cookies),
             file=cast(Any, FakeUploadFile(package)),
-            policy="overwrite",
+            policy=policy,
             templates=cast(Any, FakeTemplateRenderer()),
             session=cast(Any, None),
         ),
@@ -222,6 +230,24 @@ async def test_data_only_import_stays_open_when_locked(
     assert len(import_service_spy) == 1
 
 
+async def test_import_passes_project_creation_permission_from_edit_mode(
+    fake_settings: SimpleNamespace, import_service_spy: list[dict[str, object]]
+) -> None:
+    """The route forwards is_edit_mode as allow_project_creation; the service
+    enforces it at the exact point a project would be created (per-row), so
+    skipped conflicts / duplicates / invalid records are never blocked."""
+
+    package = {"templates": [{"id": "x", "name": "T", "project_name": "Новый"}]}
+
+    response = await run_import(package, cookies={})
+    assert response.status_code == 200
+    assert import_service_spy[-1]["allow_project_creation"] is False
+
+    response = await run_import(package, cookies={COOKIE_NAME: issue_edit_token()})
+    assert response.status_code == 200
+    assert import_service_spy[-1]["allow_project_creation"] is True
+
+
 def test_every_mutating_settings_route_is_gated() -> None:
     gate_deps = [dep.dependency for dep in settings_routes.edit_router.dependencies]
     assert settings_routes.require_edit_mode in gate_deps
@@ -239,6 +265,9 @@ def test_every_mutating_settings_route_is_gated() -> None:
         ("/settings-htmx/attributes/{attr_id}", "PUT"),
         ("/settings-htmx/attributes/{attr_id}", "DELETE"),
         ("/settings-htmx/attributes/reorder", "POST"),
+        ("/settings-htmx/projects", "POST"),
+        ("/settings-htmx/projects/{project_id}", "PUT"),
+        ("/settings-htmx/projects/{project_id}", "DELETE"),
         ("/settings-htmx/import_policy", "PUT"),
         ("/settings-htmx/prompts/{key}", "PUT"),
     }
@@ -252,6 +281,48 @@ def test_every_mutating_settings_route_is_gated() -> None:
     assert open_paths == {
         "/settings",
         "/settings-htmx/attributes/table",
+        "/settings-htmx/projects/table",
         "/settings-htmx/unlock",
         "/settings-htmx/lock",
     }
+
+
+async def test_project_form_errors_surface_as_toasts(
+    fake_settings: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The project forms post with hx-swap='none', so failures must arrive as
+    HX-Trigger toasts — a rendered HTML error body would be invisible."""
+
+    # Schema failure (bad color) → error toast. Status must be 200: htmx does
+    # not process HX-Trigger swaps/events from 4xx responses (see
+    # test_uow_and_errors.py for the same convention on entity deletes).
+    response = await settings_routes.htmx_project_create(
+        cast(Request, FakeFormRequest({"name": "P", "color": "red"})),
+        session=cast(Any, object()),
+    )
+    assert response.status_code == 200
+    payload = json.loads(response.headers["HX-Trigger"])
+    assert payload["showToast"]["type"] == "error"
+    # The success-path refresh must NOT fire on error.
+    assert "refresh-projects" not in payload
+
+    # Domain failure (duplicate name) → its message in an error toast.
+    from app.utils.errors import ValidationFailed
+
+    class FakeProjectService:
+        def __init__(self, session: object) -> None:
+            pass
+
+        async def create(self, data: Any) -> Any:
+            raise ValidationFailed("Проект с таким именем уже существует")
+
+    monkeypatch.setattr(settings_routes, "ProjectService", FakeProjectService)
+    response = await settings_routes.htmx_project_create(
+        cast(Request, FakeFormRequest({"name": "P", "color": "#112233"})),
+        session=cast(Any, object()),
+    )
+    assert response.status_code == 200
+    payload = json.loads(response.headers["HX-Trigger"])
+    assert payload["showToast"]["type"] == "error"
+    assert "уже существует" in payload["showToast"]["message"]
+    assert "refresh-projects" not in payload

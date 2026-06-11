@@ -419,3 +419,60 @@ def test_repository_list_all_defers_heavy_columns_and_limits() -> None:
     sql_search = str(stmt_search.compile(compile_kwargs={"literal_binds": True})).lower()
     assert "filled_content" not in sql_search
     assert "limit" in sql_search
+
+
+# ---------------------------------------------------------------------------
+# Project snapshots: filled templates capture project name/color at fill time.
+# ---------------------------------------------------------------------------
+
+from app.schemas.template import TemplateFillRequest  # noqa: E402
+from app.services.filled_templates import FilledTemplateService  # noqa: E402
+
+
+class _SnapshotSession:
+    def __init__(self) -> None:
+        self.added: list[Any] = []
+
+    def add(self, obj: Any) -> None:
+        self.added.append(obj)
+
+    async def flush(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_save_from_fill_snapshots_project_name_and_color() -> None:
+    session = _SnapshotSession()
+    template = SimpleNamespace(
+        id=uuid.uuid4(),
+        name="A2A",
+        format="json",
+        project=SimpleNamespace(name="Альфа", color="#112233"),
+    )
+    saved = await FilledTemplateService(cast(Any, session)).save_from_fill(
+        template=cast(Any, template),
+        fill_request=TemplateFillRequest(),
+        rendered="{}",
+        changed=[],
+        unresolved=[],
+        now=_now(),
+    )
+    assert saved.project_name_snapshot == "Альфа"
+    assert saved.project_color_snapshot == "#112233"
+
+
+@pytest.mark.asyncio
+async def test_save_from_fill_tolerates_template_without_project() -> None:
+    # Test doubles (and defensive paths) may not carry the relationship at all.
+    session = _SnapshotSession()
+    template = SimpleNamespace(id=uuid.uuid4(), name="A2A", format="json")
+    saved = await FilledTemplateService(cast(Any, session)).save_from_fill(
+        template=cast(Any, template),
+        fill_request=TemplateFillRequest(),
+        rendered="{}",
+        changed=[],
+        unresolved=[],
+        now=_now(),
+    )
+    assert saved.project_name_snapshot == ""
+    assert saved.project_color_snapshot == ""

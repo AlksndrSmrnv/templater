@@ -195,7 +195,9 @@ class CollectionService:
             raise NotFoundError("Коллекция не найдена")
         return collection
 
-    async def import_postman(self, data: Any) -> ImportCollectionSummary:
+    async def import_postman(
+        self, data: Any, *, project_id: uuid.UUID
+    ) -> ImportCollectionSummary:
         parsed = parse_postman_collection(data)
         collection = Collection(
             name=parsed.name,
@@ -212,6 +214,7 @@ class CollectionService:
             if not request.parsable:
                 unparsable += 1
             template = MessageTemplate(
+                project_id=project_id,
                 name=request.name or "(без имени)",
                 description=request.description,
                 format=request.fmt if request.fmt in ("json", "xml") else "json",

@@ -1123,6 +1123,82 @@ async def test_regenerate_meta_only_updates_meta_and_keeps_placeholders() -> Non
     assert out.llm_debug["response_text"] == "r"
 
 
+# ---------------------------------------------------------------------------
+# Projects: every template belongs to exactly one project.
+# ---------------------------------------------------------------------------
+
+from pydantic import ValidationError as PydanticSchemaError  # noqa: E402
+
+from app.schemas.template import TemplateCreate, TemplateUpdate  # noqa: E402
+
+
+class _ProjectAwareSession:
+    """Session double: ``get`` resolves only the known project id."""
+
+    def __init__(self, known_project_id: uuid.UUID) -> None:
+        self.known_project_id = known_project_id
+        self.added: list[Any] = []
+
+    async def get(self, model: type, ident: Any) -> Any:
+        if ident == self.known_project_id:
+            return SimpleNamespace(id=ident, name="P", color="#112233")
+        return None
+
+    def add(self, obj: Any) -> None:
+        self.added.append(obj)
+
+    async def flush(self) -> None:
+        return None
+
+
+def test_template_create_schema_requires_project_id() -> None:
+    with pytest.raises(PydanticSchemaError):
+        TemplateCreate(name="T", format="json", content="{}")
+
+
+@pytest.mark.asyncio
+async def test_create_sets_project_and_rejects_unknown_project() -> None:
+    project_id = uuid.uuid4()
+    session = _ProjectAwareSession(project_id)
+    svc = TemplateService(cast(Any, session))
+
+    template = await svc.create(
+        TemplateCreate(name="T", format="json", content="{}", project_id=project_id)
+    )
+    assert template.project_id == project_id
+
+    with pytest.raises(ValidationFailed):
+        await svc.create(
+            TemplateCreate(name="T", format="json", content="{}", project_id=uuid.uuid4())
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_reassigns_project_and_rejects_unknown() -> None:
+    project_id = uuid.uuid4()
+    session = _ProjectAwareSession(project_id)
+    svc = TemplateService(cast(Any, session))
+    template = SimpleNamespace(
+        format="json",
+        content="{}",
+        original_content="{}",
+        placeholders=[],
+        llm_meta={},
+        project_id=uuid.uuid4(),
+    )
+
+    async def fake_get(tid: Any) -> Any:
+        return template
+
+    svc.get = fake_get  # type: ignore[method-assign, assignment]
+
+    await svc.update(cast(Any, None), TemplateUpdate(project_id=project_id))
+    assert template.project_id == project_id
+
+    with pytest.raises(ValidationFailed):
+        await svc.update(cast(Any, None), TemplateUpdate(project_id=uuid.uuid4()))
+
+
 # ---------- edit_content (manual in-place body editing) ----------
 
 

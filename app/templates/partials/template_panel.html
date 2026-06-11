@@ -5,6 +5,22 @@
         <div class="panel-title">
             <span class="tree-method method-{{ (template.http_method or '')|lower }}">{{ template.http_method or '·' }}</span>
             <h2>{{ template.name }}</h2>
+            {% set proj = template.project if template.project is defined else none %}
+            {% if proj %}
+            <span class="project-badge" title="Проект: {{ proj.name }}"><span class="project-dot" style="background: {{ proj.color }}"></span>{{ proj.name }}</span>
+            {% endif %}
+            {% if projects | default([]) %}
+            <form class="project-reassign"
+                  hx-post="/templater/templates-htmx/{{ template.id }}/project"
+                  hx-target="#template-panel"
+                  hx-swap="innerHTML">
+                <select name="project_id" title="Перенести шаблон в другой проект" onchange="this.form.requestSubmit()">
+                    {% for p in projects %}
+                    <option value="{{ p.id }}" {% if proj and p.id == proj.id %}selected{% endif %}>{{ p.name }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            {% endif %}
         </div>
         {% set processed = (template.llm_meta or {}).get('import_status') == 'processed' %}
         <div class="panel-actions">
@@ -138,6 +154,9 @@
             {% for f in filled_links %}
             <li>
                 <a href="/templater/filled-templates/{{ f.id }}">{{ f.name }}</a>
+                {% if f.project_name_snapshot | default('') %}
+                <span class="project-badge"><span class="project-dot" style="background: {{ f.project_color_snapshot or '#9E9E9E' }}"></span>{{ f.project_name_snapshot }}</span>
+                {% endif %}
                 <span class="muted">· {{ f.created_at.strftime('%d.%m.%Y %H:%M') }}</span>
             </li>
             {% endfor %}

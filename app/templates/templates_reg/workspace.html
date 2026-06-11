@@ -36,6 +36,12 @@
                       hx-swap="innerHTML"
                       hx-indicator="#import-indicator"
                       hx-on::after-request="this.reset()">
+                    <select name="project_id" class="import-project-select" required title="Проект для импортируемых шаблонов">
+                        <option value="" disabled selected>— проект для импорта —</option>
+                        {% for p in projects | default([]) %}
+                        <option value="{{ p.id }}">{{ p.name }}</option>
+                        {% endfor %}
+                    </select>
                     <input type="file" name="file" x-ref="fileInput" accept=".json,application/json" hidden
                            onchange="if (this.files.length) this.form.requestSubmit()">
                     <button type="button" class="btn primary" @click="$refs.fileInput.click()"><iconify-icon icon="lucide:upload"></iconify-icon> Импортировать коллекцию</button>
@@ -53,7 +59,11 @@
                    hx-trigger="input changed delay:200ms">
             <span id="tree-indicator" class="htmx-indicator muted"><span class="spinner"></span> Обработка…</span>
         </div>
-        <div id="collections-tree" class="collections-tree">
+        <div id="collections-tree" class="collections-tree"
+             hx-get="/templater/templates-htmx/tree"
+             hx-trigger="refresh-tree from:body"
+             hx-include=".tree-search"
+             hx-swap="innerHTML">
             {% include "partials/collections_tree.html" %}
         </div>
     </aside>

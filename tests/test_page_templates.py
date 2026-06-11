@@ -1080,3 +1080,115 @@ def test_assistant_result_partial_warns_on_unresolved() -> None:
     )
     assert "Не заполнены поля" in html
     assert "sender.account.number" in html
+
+
+# ---------------------------------------------------------------------------
+# Project badges: explicit colored chip on tree items, panel and filled views.
+# ---------------------------------------------------------------------------
+
+
+def test_collections_tree_renders_project_badge() -> None:
+    item = _tree_template("A2A Transfer")
+    item.project = SimpleNamespace(id=uuid.uuid4(), name="Альфа", color="#112233")
+    context = {
+        "collection_nodes": [],
+        "ungrouped_tree": {"folders": {}, "templates": [item]},
+        "ungrouped_count": 1,
+        "search": "",
+    }
+    html = render_template("partials/collections_tree.html", context)
+    assert 'class="project-badge"' in html
+    assert "Альфа" in html
+    assert "background: #112233" in html
+
+
+def test_collections_tree_tolerates_template_without_project() -> None:
+    # Doubles (and pre-refresh rows) without the relationship render no badge.
+    item = _tree_template("Bare")
+    context = {
+        "collection_nodes": [],
+        "ungrouped_tree": {"folders": {}, "templates": [item]},
+        "ungrouped_count": 1,
+        "search": "",
+    }
+    html = render_template("partials/collections_tree.html", context)
+    assert "project-badge" not in html
+
+
+def test_template_panel_shows_project_badge_and_reassign_select() -> None:
+    project = SimpleNamespace(id=uuid.uuid4(), name="Альфа", color="#112233")
+    other = SimpleNamespace(id=uuid.uuid4(), name="Бета", color="#445566")
+    template = _panel_template(project=project)
+    context = _panel_context(template, parsable=True)
+    context["projects"] = [project, other]
+    html = render_template("partials/template_panel.html", context)
+
+    assert 'class="project-badge"' in html
+    assert "background: #112233" in html
+    forms = [tag for tag in start_tags(html, "form") if "/project" in (tag.get("hx-post") or "")]
+    assert len(forms) == 1
+    # current project preselected in the reassign select
+    options = start_tags(html, "option")
+    selected = [o for o in options if "selected" in o and o.get("value") == str(project.id)]
+    assert selected
+
+
+def test_template_panel_filled_links_show_project_snapshot_badge() -> None:
+    template = _panel_template(project=SimpleNamespace(id=uuid.uuid4(), name="Альфа", color="#112233"))
+    filled = SimpleNamespace(
+        id=uuid.uuid4(),
+        name="A2A — 29.05.2026",
+        created_at=__import__("datetime").datetime(2026, 5, 29, 12, 0),
+        project_name_snapshot="Альфа",
+        project_color_snapshot="#112233",
+    )
+    context = _panel_context(template, parsable=True, filled_links=[filled])
+    context["projects"] = []
+    html = render_template("partials/template_panel.html", context)
+    assert html.count('class="project-badge"') >= 2  # panel header + filled link
+
+
+def test_filled_template_view_shows_project_row_from_snapshot() -> None:
+    base = dict(
+        id="3db678b1-1111-2222-3333-444444444444",
+        name="Filled",
+        message_template_id=None,
+        template_name_snapshot=None,
+        created_at=None,
+        unresolved=[],
+    )
+    context = {
+        "active": "filled_templates",
+        "role_rows": [],
+        "role_client_ids": {},
+        "alive_client_ids": set(),
+        "rendered_html": "{}",
+    }
+
+    with_project = render_template(
+        "filled_templates/view.html",
+        {**context, "ft": SimpleNamespace(**base, project_name_snapshot="Альфа", project_color_snapshot="#112233")},
+    )
+    assert "Проект" in with_project
+    assert 'class="project-badge"' in with_project
+    assert "background: #112233" in with_project
+
+    without_project = render_template(
+        "filled_templates/view.html",
+        {**context, "ft": SimpleNamespace(**base)},
+    )
+    assert "Проект" in without_project
+    assert "project-badge" not in without_project
+
+
+def test_workspace_tree_listens_for_refresh_tree_event() -> None:
+    # The reassign endpoint fires refresh-tree so the sidebar badge updates
+    # without a page reload — the tree container must subscribe to it.
+    html = render_template("templates_reg/workspace.html", _workspace_context())
+    trees = [tag for tag in start_tags(html, "div") if tag.get("id") == "collections-tree"]
+    assert len(trees) == 1
+    assert trees[0].get("hx-trigger") == "refresh-tree from:body"
+    assert trees[0].get("hx-get") == "/templater/templates-htmx/tree"
+    # The refresh must carry the current search value, or it would silently
+    # drop an active filter while the search box still shows the query.
+    assert trees[0].get("hx-include") == ".tree-search"

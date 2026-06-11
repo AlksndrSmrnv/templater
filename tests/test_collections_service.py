@@ -40,7 +40,10 @@ class FakeSession:
 async def test_import_postman_creates_collection_and_templates() -> None:
     data = json.loads(FIXTURE.read_text(encoding="utf-8"))
     session = FakeSession()
-    summary = await CollectionService(session).import_postman(data)  # type: ignore[arg-type]
+    project_id = uuid.uuid4()
+    summary = await CollectionService(session).import_postman(  # type: ignore[arg-type]
+        data, project_id=project_id
+    )
 
     collections = [o for o in session.added if isinstance(o, Collection)]
     templates = [o for o in session.added if isinstance(o, MessageTemplate)]
@@ -52,6 +55,7 @@ async def test_import_postman_creates_collection_and_templates() -> None:
 
     collection = collections[0]
     assert all(t.collection_id == collection.id for t in templates)
+    assert all(t.project_id == project_id for t in templates)
 
     a2a = next(t for t in templates if t.name == "A2A Transfer")
     assert a2a.folder_path == ["Transfers"]
@@ -70,7 +74,9 @@ async def test_import_postman_creates_collection_and_templates() -> None:
 @pytest.mark.asyncio
 async def test_import_postman_rejects_garbage() -> None:
     with pytest.raises(ValidationFailed):
-        await CollectionService(FakeSession()).import_postman({"nope": 1})  # type: ignore[arg-type]
+        await CollectionService(FakeSession()).import_postman(  # type: ignore[arg-type]
+            {"nope": 1}, project_id=uuid.uuid4()
+        )
 
 
 @pytest.mark.asyncio

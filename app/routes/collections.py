@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 
-from fastapi import APIRouter, File, Request, UploadFile
+from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,7 @@ from app.routes.deps import SessionDep, TemplatesDep
 from app.routes.htmx_utils import form_str, toast_header
 from app.routes.uow import commit_or_409
 from app.services.collections import CollectionService
+from app.services.projects import ProjectService
 from app.utils.errors import DomainError
 
 router = APIRouter()
@@ -65,9 +66,21 @@ def _parse_uuids(raw: str) -> list[uuid.UUID]:
 async def htmx_import_collection(
     request: Request,
     file: UploadFile = File(...),
+    project_id: str = Form(""),
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
 ) -> Response:
+    # Every template belongs to exactly one project, so the import form must
+    # name the target project for the whole collection.
+    try:
+        target_project = await ProjectService(session).get(uuid.UUID(project_id.strip()))
+    except (ValueError, DomainError):
+        return await _tree_response(
+            request,
+            templates,
+            session,
+            headers={"HX-Trigger": toast_header("Выберите проект для импорта", toast_type="error")},
+        )
     try:
         raw = await file.read()
         data = json.loads(raw.decode("utf-8"))
@@ -79,7 +92,9 @@ async def htmx_import_collection(
             headers={"HX-Trigger": toast_header(f"Не удалось прочитать файл: {exc}", toast_type="error")},
         )
     try:
-        summary = await CollectionService(session).import_postman(data)
+        summary = await CollectionService(session).import_postman(
+            data, project_id=target_project.id
+        )
         await commit_or_409(session)
     except DomainError as exc:
         await session.rollback()

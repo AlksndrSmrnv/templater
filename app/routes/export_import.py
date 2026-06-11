@@ -74,7 +74,14 @@ async def htmx_import(
         if policy is None or policy not in VALID_POLICIES:
             saved = await SettingsRepository(session).get("import_policy", "skip")
             policy = saved if saved in VALID_POLICIES else "skip"
-        summary = await ExportImportService(session).import_package(package, policy=policy)
+        # Creating a project is the same settings mutation the «Проекты» section
+        # locks behind edit mode — an import must not become a side door. The
+        # service checks the permission at the exact point a project would be
+        # created, so rows the import never writes (skip/fail conflicts,
+        # duplicates, invalid records) and existing projects stay unaffected.
+        summary = await ExportImportService(session).import_package(
+            package, policy=policy, allow_project_creation=is_edit_mode(request)
+        )
     except DomainError as exc:
         return templates.TemplateResponse(
             request,

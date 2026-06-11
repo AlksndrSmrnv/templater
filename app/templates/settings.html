@@ -71,6 +71,24 @@
 </div>
 
 <div class="settings-section">
+    <h2><iconify-icon icon="lucide:folder-kanban"></iconify-icon> Проекты</h2>
+    <p class="muted">Каждый шаблон обязательно относится ровно к одному проекту. Цвет проекта используется как явная метка на шаблонах и заполненных шаблонах. Удалить можно только проект без привязанных шаблонов.</p>
+    <div class="table-wrap">
+        <table class="data-table" id="projects-table">
+            <thead><tr>
+                <th>Проект</th><th>Цвет</th><th class="no-sort"></th><th class="no-sort"></th>
+            </tr></thead>
+            <tbody id="projects-body"
+                   hx-get="/templater/settings-htmx/projects/table"
+                   hx-trigger="refresh-projects from:body"
+                   hx-swap="innerHTML">
+                {% include "partials/projects_table.html" %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="settings-section">
     <h2><iconify-icon icon="lucide:message-square-text"></iconify-icon> Промпты LLM</h2>
     <p class="muted">
         Системные инструкции, которые отправляются модели. Изменения сохраняются в БД и

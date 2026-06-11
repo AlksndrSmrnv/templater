@@ -23,6 +23,9 @@
                 {% else %}
                     <span class="muted">{{ ft.template_name_snapshot or '—' }} (удалён)</span>
                 {% endif %}
+                {% if ft.project_name_snapshot | default('') %}
+                    <span class="project-badge"><span class="project-dot" style="background: {{ ft.project_color_snapshot or '#9E9E9E' }}"></span>{{ ft.project_name_snapshot }}</span>
+                {% endif %}
             </td>
             <td>{{ ft.format }}</td>
             <td>{{ (ft.role_labels_snapshot or {}).get('sender', '—') }}</td>

@@ -43,6 +43,19 @@ class FakeFormRequest:
         return self._form
 
 
+class FakeProjectRepository:
+    """ProjectRepository double: every id resolves to a stub project."""
+
+    def __init__(self, session: object) -> None:
+        self.session = session
+
+    async def get(self, project_id: uuid.UUID) -> SimpleNamespace:
+        return SimpleNamespace(id=project_id, name="P", color="#1E88E5")
+
+    async def list_all(self) -> list[SimpleNamespace]:
+        return []
+
+
 def first_full_match_path(path: str, method: str = "GET") -> str:
     scope = {
         "type": "http",
@@ -220,6 +233,7 @@ async def test_htmx_create_marks_processed_only_with_valid_proof(
                     "placeholders": "[]",
                     "llm_meta": json.dumps(submitted_meta),
                     "llm_proof": llm_proof,
+                    "project_id": str(uuid.uuid4()),
                 }
             ),
         ),
@@ -282,6 +296,7 @@ async def test_htmx_create_strips_client_supplied_import_status(
                     # Forged: status smuggled in, no proof supplied.
                     "llm_meta": '{"summary": "ok", "import_status": "processed"}',
                     "llm_proof": "",
+                    "project_id": str(uuid.uuid4()),
                 }
             ),
         ),
@@ -334,9 +349,10 @@ async def test_preview_template_includes_llm_debug_key(monkeypatch: pytest.Monke
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
     monkeypatch.setattr(templates_reg, "llm_service", lambda *a, **k: FakeLlmContext())
     monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
+    monkeypatch.setattr(templates_reg, "ProjectRepository", FakeProjectRepository)
 
     response = await templates_reg.preview_template(
-        TemplateCreate(name="T", format="json", content='{"a": "x"}'),
+        TemplateCreate(name="T", format="json", content='{"a": "x"}', project_id=uuid.uuid4()),
         session=cast(Any, object()),
     )
 
@@ -384,9 +400,10 @@ async def test_preview_template_marks_llm_unused_when_no_debug_returned(
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
     monkeypatch.setattr(templates_reg, "llm_service", lambda *a, **k: FakeLlmContext())
     monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
+    monkeypatch.setattr(templates_reg, "ProjectRepository", FakeProjectRepository)
 
     response = await templates_reg.preview_template(
-        TemplateCreate(name="T", format="json", content="{}"),
+        TemplateCreate(name="T", format="json", content="{}", project_id=uuid.uuid4()),
         session=cast(Any, object()),
     )
 
@@ -687,6 +704,61 @@ async def test_htmx_regenerate_meta_reports_plain_llm_failure(monkeypatch: pytes
     # Granular reprocess errors land in the panel's dedicated container.
     assert response.headers["HX-Retarget"] == "#panel-errors"
     assert response.headers["HX-Reswap"] == "innerHTML"
+
+
+@pytest.mark.asyncio
+async def test_htmx_set_project_refreshes_tree_and_panel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reassigning the project re-renders the panel AND triggers a sidebar
+    refresh — otherwise the tree keeps showing the old badge."""
+
+    template_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    captured: dict[str, Any] = {}
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def update(self, tid: uuid.UUID, data: Any) -> Any:
+            captured["project_id"] = data.project_id
+            return SimpleNamespace(id=tid)
+
+    async def fake_commit(session: object, item: Any) -> Any:
+        return item
+
+    async def fake_panel_context(session: object, template: Any) -> dict[str, Any]:
+        return {"template": template}
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
+    monkeypatch.setattr(templates_reg, "_template_panel_context", fake_panel_context)
+
+    response = await templates_reg.htmx_set_project(
+        template_id,
+        request=cast(Any, FakeFormRequest({"project_id": str(project_id)})),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert captured["project_id"] == project_id
+    assert response.name == "partials/template_panel.html"
+    trigger = json.loads(response.headers["HX-Trigger"])
+    assert "refresh-tree" in trigger
+
+
+@pytest.mark.asyncio
+async def test_htmx_set_project_rejects_missing_project_id() -> None:
+    response = await templates_reg.htmx_set_project(
+        uuid.uuid4(),
+        request=cast(Any, FakeFormRequest({"project_id": ""})),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+    # Error rendered into the panel errors slot, not a 500.
+    assert response.status_code == 200
+    assert response.headers["HX-Retarget"] == "#panel-errors"
 
 
 # ---------- PUT /templates-htmx/{id}/content (manual body edit) ----------
