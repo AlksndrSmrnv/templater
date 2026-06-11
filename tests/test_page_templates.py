@@ -219,8 +219,9 @@ def test_import_page_uses_htmx_upload_form() -> None:
     assert 'hx-encoding="multipart/form-data"' in html
     assert "htmx.org@2.0.4" in html
     assert "alpinejs@3.14.1" in html
-    assert "htmx:load" in html
-    assert "Alpine.initTree(e.detail.elt)" in html
+    # Alpine 3 initializes htmx-swapped DOM via its MutationObserver; a manual
+    # bridge would double-init components (duplicate editors/handlers).
+    assert "Alpine.initTree" not in html
     assert "Alpine.destroyTree" not in html
     assert "htmx:afterSwap" not in html
     assert "htmx:oobAfterSwap" not in html
