@@ -1151,3 +1151,6 @@ def test_workspace_tree_listens_for_refresh_tree_event() -> None:
     assert len(trees) == 1
     assert trees[0].get("hx-trigger") == "refresh-tree from:body"
     assert trees[0].get("hx-get") == "/templater/templates-htmx/tree"
+    # The refresh must carry the current search value, or it would silently
+    # drop an active filter while the search box still shows the query.
+    assert trees[0].get("hx-include") == ".tree-search"

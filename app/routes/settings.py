@@ -352,14 +352,14 @@ async def htmx_projects_table(
 
 
 # The project forms submit with hx-swap="none", so failures must surface as
-# toasts (HX-Trigger is processed regardless of status code) — a rendered HTML
-# error body would be silently dropped.
+# toasts. Status 200 (not 4xx) so htmx processes the HX-Trigger header — on
+# error statuses it ignores the response (see test_uow_and_errors.py).
 _PROJECT_FORM_ERROR = "Проверьте название (1–255 символов) и цвет (#RRGGBB)"
 
 
-def _project_error_response(message: str, status_code: int) -> Response:
+def _project_error_response(message: str) -> Response:
     return Response(
-        status_code=status_code,
+        status_code=200,
         headers={"HX-Trigger": toast_header(message, toast_type="error")},
     )
 
@@ -375,9 +375,9 @@ async def htmx_project_create(
         data = ProjectCreate(name=form_str(form, "name"), color=form_str(form, "color"))
         await commit_and_refresh(session, await svc.create(data))
     except ValidationError:
-        return _project_error_response(_PROJECT_FORM_ERROR, 422)
+        return _project_error_response(_PROJECT_FORM_ERROR)
     except DomainError as exc:
-        return _project_error_response(exc.message, exc.status_code)
+        return _project_error_response(exc.message)
     return Response(
         status_code=204,
         headers={"HX-Trigger": toast_header("Проект сохранён", refresh_projects=True)},
@@ -396,9 +396,9 @@ async def htmx_project_update(
         data = ProjectUpdate(name=form_str(form, "name"), color=form_str(form, "color"))
         await commit_and_refresh(session, await svc.update(project_id, data))
     except ValidationError:
-        return _project_error_response(_PROJECT_FORM_ERROR, 422)
+        return _project_error_response(_PROJECT_FORM_ERROR)
     except DomainError as exc:
-        return _project_error_response(exc.message, exc.status_code)
+        return _project_error_response(exc.message)
     return Response(
         status_code=204,
         headers={"HX-Trigger": toast_header("Проект сохранён", refresh_projects=True)},
@@ -413,10 +413,7 @@ async def htmx_project_delete(
     try:
         await svc.delete(project_id)
     except DomainError as exc:
-        return Response(
-            status_code=exc.status_code,
-            headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
-        )
+        return _project_error_response(exc.message)
     await commit_or_409(session, message="Не удалось удалить проект")
     return Response(
         status_code=204,

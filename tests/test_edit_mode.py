@@ -179,7 +179,9 @@ def import_service_spy(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object
     return calls
 
 
-async def run_import(package: dict[str, object], cookies: dict[str, str]) -> SimpleNamespace:
+async def run_import(
+    package: dict[str, object], cookies: dict[str, str], policy: str = "overwrite"
+) -> SimpleNamespace:
     from app.routes.export_import import htmx_import
 
     return cast(
@@ -187,7 +189,7 @@ async def run_import(package: dict[str, object], cookies: dict[str, str]) -> Sim
         await htmx_import(
             request_with_cookies(cookies),
             file=cast(Any, FakeUploadFile(package)),
-            policy="overwrite",
+            policy=policy,
             templates=cast(Any, FakeTemplateRenderer()),
             session=cast(Any, None),
         ),
@@ -289,6 +291,40 @@ async def test_import_into_existing_projects_stays_open_when_locked(
     assert len(import_service_spy) == 1
 
 
+async def test_skip_policy_import_of_existing_templates_stays_open_when_locked(
+    fake_settings: SimpleNamespace,
+    import_service_spy: list[dict[str, object]],
+    project_repo_with: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # With policy=skip the service leaves an already-existing template id
+    # untouched, so its unknown project_name creates nothing — the gate must
+    # not 403 such an import.
+    from app.routes import export_import as export_import_routes
+
+    existing_id = "11111111-1111-1111-1111-111111111111"
+
+    class FakeTemplateRepo:
+        def __init__(self, session: object) -> None:
+            pass
+
+        async def get(self, tid: object) -> object | None:
+            return SimpleNamespace(id=tid) if str(tid) == existing_id else None
+
+    monkeypatch.setattr(export_import_routes, "TemplateRepository", FakeTemplateRepo)
+    project_repo_with(set())
+    package = {"templates": [{"id": existing_id, "name": "T", "project_name": "Новый"}]}
+
+    response = await run_import(package, cookies={}, policy="skip")
+    assert response.status_code == 200
+    assert len(import_service_spy) == 1
+
+    # The same package under overwrite *would* write the row → still gated.
+    response = await run_import(package, cookies={}, policy="overwrite")
+    assert response.status_code == 403
+    assert len(import_service_spy) == 1
+
+
 def test_every_mutating_settings_route_is_gated() -> None:
     gate_deps = [dep.dependency for dep in settings_routes.edit_router.dependencies]
     assert settings_routes.require_edit_mode in gate_deps
@@ -334,14 +370,18 @@ async def test_project_form_errors_surface_as_toasts(
     """The project forms post with hx-swap='none', so failures must arrive as
     HX-Trigger toasts — a rendered HTML error body would be invisible."""
 
-    # Schema failure (bad color) → 422 + error toast, no service call needed.
+    # Schema failure (bad color) → error toast. Status must be 200: htmx does
+    # not process HX-Trigger swaps/events from 4xx responses (see
+    # test_uow_and_errors.py for the same convention on entity deletes).
     response = await settings_routes.htmx_project_create(
         cast(Request, FakeFormRequest({"name": "P", "color": "red"})),
         session=cast(Any, object()),
     )
-    assert response.status_code == 422
+    assert response.status_code == 200
     payload = json.loads(response.headers["HX-Trigger"])
     assert payload["showToast"]["type"] == "error"
+    # The success-path refresh must NOT fire on error.
+    assert "refresh-projects" not in payload
 
     # Domain failure (duplicate name) → its message in an error toast.
     from app.utils.errors import ValidationFailed
@@ -358,7 +398,8 @@ async def test_project_form_errors_surface_as_toasts(
         cast(Request, FakeFormRequest({"name": "P", "color": "#112233"})),
         session=cast(Any, object()),
     )
-    assert response.status_code == 422
+    assert response.status_code == 200
     payload = json.loads(response.headers["HX-Trigger"])
     assert payload["showToast"]["type"] == "error"
     assert "уже существует" in payload["showToast"]["message"]
+    assert "refresh-projects" not in payload

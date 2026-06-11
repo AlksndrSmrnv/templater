@@ -56,6 +56,7 @@
         <div id="collections-tree" class="collections-tree"
              hx-get="/templater/templates-htmx/tree"
              hx-trigger="refresh-tree from:body"
+             hx-include=".tree-search"
              hx-swap="innerHTML">
             {% include "partials/collections_tree.html" %}
         </div>

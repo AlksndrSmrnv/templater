@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.project import ProjectRepository
 from app.repositories.settings import SettingsRepository
+from app.repositories.template import TemplateRepository
 from app.routes.deps import SessionDep, TemplatesDep
 from app.services.export_import import ExportImportService
 from app.services.projects import DEFAULT_PROJECT_NAME
@@ -21,22 +23,33 @@ router = APIRouter()
 VALID_POLICIES = {"skip", "overwrite", "fail"}
 
 
-async def _missing_project_names(session: AsyncSession, package: Any) -> list[str]:
+async def _missing_project_names(session: AsyncSession, package: Any, policy: str) -> list[str]:
     """Project names the package's templates reference that don't exist yet.
 
     Mirrors the name resolution of ``ExportImportService.import_package``:
     blank/absent ``project_name`` falls back to «Без проекта», names are
-    truncated to 255 chars. A non-empty result means the import would *create*
-    projects — a settings mutation that must stay behind the edit-mode lock.
+    truncated to 255 chars. Rows the import won't write are excluded — with
+    the ``skip`` policy an already-existing template id is left untouched, so
+    its project name needs no project row. A non-empty result means the import
+    would *create* projects — a settings mutation that must stay behind the
+    edit-mode lock.
     """
 
     raw_templates = package.get("templates") if isinstance(package, dict) else None
     if not isinstance(raw_templates, list):
         return []
+    template_repo = TemplateRepository(session)
     names: set[str] = set()
     for raw in raw_templates:
         if not isinstance(raw, dict):
             continue
+        if policy == "skip":
+            try:
+                tid = uuid.UUID(str(raw.get("id")))
+            except (ValueError, AttributeError, TypeError):
+                tid = None
+            if tid is not None and await template_repo.get(tid) is not None:
+                continue
         name = raw.get("project_name")
         cleaned = name.strip() if isinstance(name, str) and name.strip() else DEFAULT_PROJECT_NAME
         names.add(cleaned[:255])
@@ -95,10 +108,15 @@ async def htmx_import(
             },
             status_code=403,
         )
+    # Resolve the effective policy first: the project gate below must judge the
+    # same rows the import will actually write (skip leaves existing ids alone).
+    if policy is None or policy not in VALID_POLICIES:
+        saved = await SettingsRepository(session).get("import_policy", "skip")
+        policy = saved if saved in VALID_POLICIES else "skip"
     # Creating a project is the same settings mutation the «Проекты» section
     # locks behind edit mode — an import that references unknown project names
     # must not become a side door. Imports into existing projects stay open.
-    missing_projects = await _missing_project_names(session, package)
+    missing_projects = await _missing_project_names(session, package, policy)
     if missing_projects and not is_edit_mode(request):
         return templates.TemplateResponse(
             request,
@@ -117,9 +135,6 @@ async def htmx_import(
             status_code=403,
         )
     try:
-        if policy is None or policy not in VALID_POLICIES:
-            saved = await SettingsRepository(session).get("import_policy", "skip")
-            policy = saved if saved in VALID_POLICIES else "skip"
         summary = await ExportImportService(session).import_package(package, policy=policy)
     except DomainError as exc:
         return templates.TemplateResponse(
