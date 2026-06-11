@@ -42,7 +42,11 @@ def upgrade() -> None:
     op.execute(
         sa.text(
             "INSERT INTO projects (id, name, color) VALUES (:id, :name, :color)"
-        ).bindparams(id=DEFAULT_PROJECT_ID, name=DEFAULT_PROJECT_NAME, color=DEFAULT_PROJECT_COLOR)
+        ).bindparams(
+            sa.bindparam("id", DEFAULT_PROJECT_ID, type_=postgresql.UUID()),
+            sa.bindparam("name", DEFAULT_PROJECT_NAME),
+            sa.bindparam("color", DEFAULT_PROJECT_COLOR),
+        )
     )
 
     op.add_column(
@@ -50,7 +54,9 @@ def upgrade() -> None:
         sa.Column("project_id", postgresql.UUID(as_uuid=True), nullable=True),
     )
     op.execute(
-        sa.text("UPDATE message_templates SET project_id = :id").bindparams(id=DEFAULT_PROJECT_ID)
+        sa.text("UPDATE message_templates SET project_id = :id").bindparams(
+            sa.bindparam("id", DEFAULT_PROJECT_ID, type_=postgresql.UUID())
+        )
     )
     op.alter_column("message_templates", "project_id", nullable=False)
     op.create_index("ix_message_templates_project_id", "message_templates", ["project_id"])
