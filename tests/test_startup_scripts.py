@@ -25,9 +25,7 @@ def test_docker_entrypoint_runs_migrations_then_application_without_reference_se
 printf 'python' >> "$CALL_LOG"
 printf ' %s' "$@" >> "$CALL_LOG"
 printf '\\n' >> "$CALL_LOG"
-if [ "$#" -eq 0 ]; then
-    cat >/dev/null
-fi
+cat >/dev/null
 """,
     )
     _write_executable(
