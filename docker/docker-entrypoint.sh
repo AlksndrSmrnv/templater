@@ -61,9 +61,4 @@ PY
 echo "Applying Alembic migrations..."
 alembic upgrade head
 
-if [ "${SEED_REFERENCE_DATA:-1}" = "1" ]; then
-    echo "Seeding reference data (idempotent)..."
-    python -m scripts.seed_reference_data || echo "Seeding failed (continuing)"
-fi
-
 exec "$@"
