@@ -99,32 +99,51 @@
         {% endif %}
     </section>
 
-    <section class="panel-section">
-        <h3>Тело сообщения</h3>
+    <section class="panel-section"
+             x-data="templateBodyEditor('{{ template.format }}')"
+             @template-body-error.window="onServerError($event.detail)">
+        <div class="panel-section-title">
+            <h3>Тело сообщения</h3>
+            {% if template.content %}
+            <button type="button" class="btn small" x-show="!editing" @click="startEdit()"
+                    title="Редактировать тело вручную — шаблон сохраняется на месте, связанные заполненные шаблоны не теряются">
+                <iconify-icon icon="lucide:pencil"></iconify-icon> Редактировать тело
+            </button>
+            {% endif %}
+        </div>
         {% if parsable %}
-        <p class="muted" style="margin:0 0 8px;">
-            Наведите на подсвеченное значение и выберите поле из тестовых данных, либо оставьте исходное.
-        </p>
-        <form id="template-editor-form"
-              class="template-editor"
-              hx-put="/templater/templates-htmx/{{ template.id }}"
-              hx-target="#template-code-wrap"
-              hx-swap="outerHTML">
-            <div id="regen-errors" class="errors"></div>
-            <div style="margin-bottom:14px;">
-                {% include "partials/template_edit_llm_panel.html" %}
-            </div>
-            {% include "partials/template_code.html" %}
-            <div class="form-actions" style="margin-top:10px;">
-                <button class="btn primary" type="submit">Сохранить изменения</button>
-            </div>
-        </form>
+        <div x-show="!editing">
+            <p class="muted" style="margin:0 0 8px;">
+                Наведите на подсвеченное значение и выберите поле из тестовых данных, либо оставьте исходное.
+            </p>
+            <form id="template-editor-form"
+                  class="template-editor"
+                  hx-put="/templater/templates-htmx/{{ template.id }}"
+                  hx-target="#template-code-wrap"
+                  hx-swap="outerHTML">
+                <div id="regen-errors" class="errors"></div>
+                <div style="margin-bottom:14px;">
+                    {% include "partials/template_edit_llm_panel.html" %}
+                </div>
+                {% include "partials/template_code.html" %}
+                <div class="form-actions" style="margin-top:10px;">
+                    <button class="btn primary" type="submit">Сохранить изменения</button>
+                </div>
+            </form>
+        </div>
         {% elif template.content %}
-        {% include "partials/template_meta.html" %}
-        <pre class="template-code" style="margin-top:10px;">{{ template.content }}</pre>
-        <p class="muted">Тело не разбирается как {{ template.format|upper }} — редактор плейсхолдеров и обработка LLM недоступны.</p>
+        <div x-show="!editing">
+            {% include "partials/template_meta.html" %}
+            <pre class="template-code" style="margin-top:10px;">{{ template.content }}</pre>
+            <p class="muted">Тело не разбирается как {{ template.format|upper }} — редактор плейсхолдеров и обработка LLM недоступны. Исправьте тело вручную через «Редактировать тело».</p>
+        </div>
         {% else %}
         <p class="muted">Нет тела запроса (например, GET-запрос). Сохранены метод, URL и заголовки.</p>
+        {% endif %}
+        {% if template.content %}
+        <div x-show="editing" x-cloak>
+            {% include "partials/template_body_edit.html" %}
+        </div>
         {% endif %}
     </section>
 

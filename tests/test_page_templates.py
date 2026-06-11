@@ -917,6 +917,32 @@ def test_template_panel_processed_shows_split_reprocess_buttons() -> None:
     assert not any("/process-llm" in p for p in posts)
 
 
+def test_template_panel_offers_manual_body_edit_when_content_present() -> None:
+    template = _panel_template()
+    html = render_template("partials/template_panel.html", _panel_context(template, parsable=True))
+    assert "Редактировать тело" in html
+    forms = [tag.get("hx-put") or "" for tag in start_tags(html, "form")]
+    assert any(f.endswith(f"/templates-htmx/{template.id}/content") for f in forms)
+    # editor textarea carries the current (placeholderized) body
+    assert "body-edit-errors" in html
+
+
+def test_template_panel_manual_edit_available_for_unparsable_body_as_repair_path() -> None:
+    template = _panel_template(content='{"broken": ')
+    html = render_template("partials/template_panel.html", _panel_context(template, parsable=False))
+    assert "Редактировать тело" in html
+    forms = [tag.get("hx-put") or "" for tag in start_tags(html, "form")]
+    assert any(f.endswith(f"/templates-htmx/{template.id}/content") for f in forms)
+
+
+def test_template_panel_hides_manual_edit_without_body() -> None:
+    template = _panel_template(http_method="GET", content="", headers=[])
+    html = render_template("partials/template_panel.html", _panel_context(template, parsable=False))
+    assert "Редактировать тело" not in html
+    forms = [tag.get("hx-put") or "" for tag in start_tags(html, "form")]
+    assert not any("/content" in f for f in forms)
+
+
 def test_template_panel_has_delete_button_and_no_editor_link() -> None:
     # Delete moved into the panel; the standalone editor page link is gone.
     html = render_template("partials/template_panel.html", _panel_context(_panel_template(), parsable=True))
@@ -960,6 +986,18 @@ def test_workspace_escapes_malicious_open_template_id() -> None:
     assert '"});alert' not in html  # no raw double-quote breakout
     assert "&#34;" in html  # x-data value HTML-escaped
     assert "%22" in html  # panel URL urlencoded
+
+
+def test_workspace_loads_codemirror_and_body_editor_component() -> None:
+    html = render_template("templates_reg/workspace.html", _workspace_context())
+    scripts = [tag.get("src") or "" for tag in start_tags(html, "script")]
+    assert any("codemirror" in s and s.endswith("codemirror.min.js") for s in scripts)
+    assert any(s.endswith("mode/javascript/javascript.min.js") for s in scripts)
+    assert any(s.endswith("mode/xml/xml.min.js") for s in scripts)
+    links = [tag.get("href") or "" for tag in start_tags(html, "link")]
+    assert any(h.endswith("codemirror.min.css") for h in links)
+    # Alpine component used by the panel partial must be registered on this page.
+    assert "templateBodyEditor" in html
 
 
 def test_template_panel_lists_filled_links() -> None:
