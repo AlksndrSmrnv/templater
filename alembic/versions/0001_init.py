@@ -1,9 +1,8 @@
 """Initial schema + default attribute definitions
 
-Single migration for a clean install: creates all tables and seeds the
-default ``attribute_definitions`` (the app's "schema as data"). Reference
-*values* (currencies, banks, ...) are seeded separately and idempotently by
-``scripts/seed_reference_data.py``.
+Creates the original tables and seeds the default ``attribute_definitions``
+(the app's "schema as data"). The reference tables and ``ref`` attribute type
+created by this historical migration are removed by ``0009_drop_references``.
 
 Revision ID: 0001_init
 Revises:
