@@ -847,6 +847,22 @@ li.tree-item.sortable-chosen { background: var(--surface-2); }
 .panel-url-method { display: inline-block; margin-right: 6px; }
 .panel-section { margin-top: 22px; }
 .panel-section h3 { margin: 0 0 8px; font-size: var(--fs-base); }
+.panel-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+
+/* Ручной редактор тела шаблона (CodeMirror поверх textarea). */
+.CodeMirror {
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    height: auto; max-height: 480px;
+    font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Mono", monospace;
+    font-size: var(--fs-sm); line-height: 1.55;
+}
+.CodeMirror-scroll { max-height: 480px; }
+.cm-error-line { background: rgba(220, 38, 38, 0.14); }
+/* Fallback, когда CDN CodeMirror недоступен — обычная textarea. */
+.body-edit-source {
+    width: 100%; min-height: 240px; resize: vertical;
+    border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px;
+}
 
 .headers-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
 .headers-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }

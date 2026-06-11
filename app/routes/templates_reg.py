@@ -729,6 +729,55 @@ async def htmx_update(
     )
 
 
+@router.put("/templates-htmx/{template_id}/content")
+async def htmx_edit_content(
+    template_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    """Save a manually edited body, re-rendering the whole panel on success.
+
+    On a parse error the editor must stay mounted, so the error is retargeted
+    into ``#body-edit-errors`` and the line/column travels via ``HX-Trigger``
+    so the client can highlight the offending line.
+    """
+
+    form = await request.form()
+    content = form_str(form, "content")
+    try:
+        template = await TemplateService(session).edit_content(template_id, content)
+        template = await commit_and_refresh(session, template)
+    except DomainError as exc:
+        headers = {"HX-Retarget": "#body-edit-errors", "HX-Reswap": "innerHTML"}
+        line = getattr(exc, "line", None)
+        if line is not None:
+            # ensure_ascii (json.dumps default) keeps the header latin-1-safe.
+            headers["HX-Trigger"] = json.dumps(
+                {
+                    "template-body-error": {
+                        "line": line,
+                        "col": getattr(exc, "col", None),
+                        "message": exc.message,
+                    }
+                }
+            )
+        return form_errors_response(
+            request,
+            templates,
+            exc.message,
+            details=exc.details,
+            status_code=200,
+            headers=headers,
+        )
+    return templates.TemplateResponse(
+        request,
+        "partials/template_panel.html",
+        await _template_panel_context(session, template),
+        headers={"HX-Trigger": toast_header("Тело шаблона обновлено — запустите обработку LLM заново")},
+    )
+
+
 @router.delete("/templates-htmx/{template_id}")
 async def htmx_delete(
     template_id: uuid.UUID,

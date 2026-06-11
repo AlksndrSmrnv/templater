@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Шаблоны сообщений — Template Maker{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css"
+      integrity="sha512-uf06llspW44/LZpHzHT6qBOIVODjWtv4MxCricRxkzvopAlSWnTf6hpZTFxuuZcuNE9CBQhqE0Seu1CoRk84nQ=="
+      crossorigin="anonymous">
+{% endblock %}
 {% block content %}
 <div class="workspace" x-data="{ selected: {{ (open_template_id | default('') or none) | tojson | forceescape }} }">
     <aside class="workspace-left">
@@ -70,6 +76,107 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"
+        integrity="sha512-6cPYokihlrofMNApz7OXVQNObWjLiKGIBBb7+UB+AuMiRCLKmFKgrwms21sHq3bdFFZWpfHYRJBJvMFMPj1S9g=="
+        crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/javascript/javascript.min.js"
+        integrity="sha512-Cbz+kvn+l5pi5HfXsEB/FYgZVKjGIhOgYNBwj4W2IHP2y8r3AdyDCQRnEUqIQ+6aJjygKPTyaNT2eIihaykJlw=="
+        crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/xml/xml.min.js"
+        integrity="sha512-LarNmzVokUmcA7aUDtqZ6oTS+YXmUKzpGdm8DxC46A6AHu+PQiYCUlwEGWidjVYMo/QXZMFMIadZtrkfApYp/g=="
+        crossorigin="anonymous"></script>
+<script>
+    // Manual body editor for the template panel (partials/template_body_edit.html).
+    // Registered here because the panel is only ever swapped into this page;
+    // the inline script runs before the deferred Alpine CDN bundle executes,
+    // so `alpine:init` is guaranteed to be caught.
+    document.addEventListener('alpine:init', () => {
+        Alpine.data('templateBodyEditor', (fmt) => ({
+            editing: false,
+            cm: null,
+            errorText: '',
+            markedLine: null,
+            startEdit() {
+                this.editing = true;
+                this.$nextTick(() => {
+                    // CDN blocked → degrade to a plain textarea: validation and
+                    // save still work, only line numbers/highlight are lost.
+                    if (this.cm || typeof CodeMirror === 'undefined') return;
+                    this.cm = CodeMirror.fromTextArea(this.$refs.source, {
+                        mode: fmt === 'xml' ? 'application/xml' : { name: 'javascript', json: true },
+                        lineNumbers: true,
+                        lineWrapping: true,
+                    });
+                    this.cm.on('change', () => this.clearError());
+                });
+            },
+            cancelEdit() {
+                if (this.cm) { this.cm.toTextArea(); this.cm = null; }
+                this.$refs.source.value = this.$refs.source.defaultValue;
+                this.clearError();
+                this.editing = false;
+            },
+            save() {
+                if (this.cm) this.cm.save(); // sync editor → textarea
+                this.clearError();
+                const err = this.validate(this.$refs.source.value);
+                if (err) { this.showError(err.line, err.col, err.message); return; }
+                this.$refs.editForm.requestSubmit(); // htmx intercepts the submit
+            },
+            validate(text) {
+                if (fmt === 'xml') {
+                    const doc = new DOMParser().parseFromString(text, 'application/xml');
+                    const errEl = doc.querySelector('parsererror');
+                    if (!errEl) return null;
+                    const m = (errEl.textContent || '').match(/line[^\d]*(\d+)[^\d]*column[^\d]*(\d+)/i);
+                    return { line: m ? +m[1] : 1, col: m ? +m[2] : 1, message: 'Невалидный XML' };
+                }
+                try { JSON.parse(text); return null; }
+                catch (e) {
+                    const msg = String(e.message || e);
+                    let m = msg.match(/line (\d+) column (\d+)/i); // Firefox + modern V8
+                    if (m) return { line: +m[1], col: +m[2], message: msg };
+                    m = msg.match(/position (\d+)/i); // older V8 → derive line/col
+                    if (m) {
+                        const pos = +m[1], head = text.slice(0, pos);
+                        return { line: head.split('\n').length, col: pos - head.lastIndexOf('\n'), message: msg };
+                    }
+                    return { line: 1, col: 1, message: msg };
+                }
+            },
+            onServerError(detail) {
+                // The message itself is already swapped into #body-edit-errors by
+                // HX-Retarget — the event only drives the line highlight.
+                if (detail && detail.line) this.highlight(detail.line, detail.col);
+            },
+            showError(line, col, message) {
+                this.errorText = 'Строка ' + line + (col ? ', позиция ' + col : '') + ': ' + message;
+                this.highlight(line, col);
+            },
+            highlight(line, col) {
+                if (!this.cm) return;
+                this.clearMark();
+                this.markedLine = Math.max(0, line - 1);
+                this.cm.addLineClass(this.markedLine, 'background', 'cm-error-line');
+                this.cm.setCursor({ line: this.markedLine, ch: Math.max(0, (col || 1) - 1) });
+                this.cm.scrollIntoView({ line: this.markedLine, ch: 0 }, 80);
+                this.cm.focus();
+            },
+            clearMark() {
+                if (this.cm && this.markedLine !== null) {
+                    this.cm.removeLineClass(this.markedLine, 'background', 'cm-error-line');
+                }
+                this.markedLine = null;
+            },
+            clearError() {
+                this.errorText = '';
+                this.clearMark();
+                const box = document.getElementById('body-edit-errors');
+                if (box) box.innerHTML = '';
+            },
+        }));
+    });
+</script>
 <script src="https://unpkg.com/sortablejs@1.15.6/Sortable.min.js"
         integrity="sha384-HZZ/fukV+9G8gwTNjN7zQDG0Sp7MsZy5DDN6VfY3Be7V9dvQpEpR2jF2HlyFUUjU"
         crossorigin="anonymous"></script>

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import uuid
 from collections import Counter, defaultdict
 from typing import Any, Protocol
+from xml.etree import ElementTree as ET
 
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +18,7 @@ from app.services.attribute_schema import AttributeSchemaService
 from app.services.dynamic_fields import resolve_dynamic_token
 from app.services.role_resolver import resolve_role_from_path
 from app.utils import walker
-from app.utils.errors import NotFoundError, ValidationFailed
+from app.utils.errors import ContentParseFailed, NotFoundError, ValidationFailed
 from app.utils.paths import path_segments
 
 log = logging.getLogger(__name__)
@@ -239,6 +241,67 @@ class TemplateService:
         # touching content) is honored after structural validation.
         if data.placeholders is not None and not content_replaced:
             template.placeholders = normalize_placeholders(data.placeholders)
+        await self.session.flush()
+        return template
+
+    async def edit_content(self, template_id: uuid.UUID, new_content: str) -> MessageTemplate:
+        """Edit the current body in place, keeping placeholders that survived.
+
+        Unlike :meth:`update` (content replacement = re-upload), this edits the
+        *processed* ``content`` (with ``{{token}}`` markup): placeholders whose
+        location still exists in the new document with an unchanged leaf value
+        are kept, the rest are dropped. ``original_content`` is rebuilt by
+        substituting each kept placeholder's ``original`` back at its location,
+        so re-running LLM analysis later still works from a raw document.
+
+        The old analysis (summary etc.) described a different body, so
+        ``llm_meta`` is reset to ``import_status="imported"`` — parsable (the
+        edit just validated that, which also clears a stale "unparsed" flag)
+        but requiring a fresh LLM pass before the assistant may use it.
+        """
+
+        template = await self.get(template_id)
+        if not new_content.strip():
+            raise ValidationFailed("Пустой шаблон")
+        try:
+            leaves = self._extract_leaves(template.format, new_content)
+        except json.JSONDecodeError as exc:
+            raise ContentParseFailed(
+                f"Невалидный JSON: {exc.msg}", line=exc.lineno, col=exc.colno
+            ) from exc
+        except ET.ParseError as exc:
+            line, col = exc.position  # expat column is 0-based
+            raise ContentParseFailed(f"Невалидный XML: {exc}", line=line, col=col + 1) from exc
+        except Exception as exc:
+            raise ValidationFailed(f"content не парсится как {template.format}: {exc}") from exc
+
+        leaf_values = {leaf.location: leaf.value for leaf in leaves}
+        kept = [
+            ph
+            for ph in (template.placeholders or [])
+            if isinstance(ph, dict)
+            and ph.get("location") in leaf_values
+            and leaf_values[ph["location"]] == ph.get("value")
+        ]
+
+        if kept:
+            originals = {ph["location"]: ph.get("original", "") for ph in kept}
+            template.original_content = (
+                walker.replace_json(new_content, originals)
+                if template.format == "json"
+                else walker.replace_xml(new_content, originals)
+            )
+        else:
+            template.original_content = new_content
+
+        template.content = new_content
+        template.placeholders = kept
+        # The stored prompts/response described the old body.
+        template.llm_debug = None
+        template.llm_meta = {
+            "import_status": "imported",
+            "has_account_owner": placeholders_have_account_owner(kept),
+        }
         await self.session.flush()
         return template
 

@@ -1,0 +1,22 @@
+{# Manual body editor: CodeMirror over a textarea, saved via the in-place
+   content route so filled-template links survive. Client-side parse check
+   runs before submit; the server backstop retargets its error here and
+   triggers `template-body-error` for the line highlight. #}
+<div id="body-edit-errors" class="errors"></div>
+<p class="errors" x-show="errorText" x-text="errorText" x-cloak></p>
+<form x-ref="editForm"
+      hx-put="/templater/templates-htmx/{{ template.id }}/content"
+      hx-target="#template-panel"
+      hx-swap="innerHTML"
+      hx-indicator="#body-edit-indicator">
+    <textarea name="content"
+              x-ref="source"
+              class="body-edit-source code-input"
+              rows="16"
+              spellcheck="false">{{ template.content }}</textarea>
+    <div class="form-actions" style="margin-top:10px;">
+        <button type="button" class="btn primary" @click="save()">Сохранить тело</button>
+        <button type="button" class="btn" @click="cancelEdit()">Отмена</button>
+        <span id="body-edit-indicator" class="htmx-indicator muted"><span class="spinner"></span> Сохранение…</span>
+    </div>
+</form>
