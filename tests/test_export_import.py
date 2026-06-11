@@ -429,3 +429,104 @@ async def test_import_without_project_name_falls_back_to_default_project() -> No
     assert projects[0].name == DEFAULT_PROJECT_NAME
     templates = [t for t in session.added if isinstance(t, MessageTemplate)]
     assert templates[0].project_id == projects[0].id
+
+
+class _KnownProjectSession(_RoundTripSession):
+    """Round-trip session whose project-by-name lookup resolves to a fixed row."""
+
+    def __init__(self, project: Project) -> None:
+        super().__init__()
+        self._project = project
+
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        project = self._project
+
+        class _Result(_EmptyResult):
+            def scalar_one_or_none(self) -> Project:
+                return project
+
+        return _Result()
+
+
+@pytest.mark.asyncio
+async def test_import_without_permission_errors_rows_needing_new_project() -> None:
+    # allow_project_creation=False: a row whose project doesn't exist fails with
+    # a row-level error instead of creating the project behind the lock.
+    package = {
+        "version": 2,
+        "templates": [
+            ExportImportService._dump_template(
+                cast(Any, _project_template(project=SimpleNamespace(name="Новый", color="#112233")))
+            )
+        ],
+    }
+    session = _RoundTripSession()
+    summary = await ExportImportService(cast(Any, session)).import_package(
+        package, policy="skip", allow_project_creation=False
+    )
+
+    assert summary.created["templates"] == 0
+    assert any("Новый" in err and "режиме редактирования" in err for err in summary.errors)
+    assert [p for p in session.added if isinstance(p, Project)] == []
+
+
+@pytest.mark.asyncio
+async def test_import_without_permission_reuses_existing_project() -> None:
+    existing = Project(id=uuid.uuid4(), name="Альфа", color="#112233")
+    package = {
+        "version": 2,
+        "templates": [
+            ExportImportService._dump_template(
+                cast(Any, _project_template(project=SimpleNamespace(name="Альфа", color="#112233")))
+            )
+        ],
+    }
+    session = _KnownProjectSession(existing)
+    summary = await ExportImportService(cast(Any, session)).import_package(
+        package, policy="skip", allow_project_creation=False
+    )
+
+    assert summary.errors == []
+    assert summary.created["templates"] == 1
+    templates = [t for t in session.added if isinstance(t, MessageTemplate)]
+    assert templates[0].project_id == existing.id
+    # Reused, not recreated.
+    assert [p for p in session.added if isinstance(p, Project)] == []
+
+
+@pytest.mark.asyncio
+async def test_import_without_permission_skips_existing_rows_without_error() -> None:
+    # policy=skip + existing template id: the row is never written, so its
+    # unknown project_name must not surface a permission error (previously the
+    # route-level preflight produced a false 403 here).
+    tid = uuid.uuid4()
+    existing = SimpleNamespace(
+        id=tid, name="Old", description="", format="json",
+        content='{"a":"x"}', original_content='{"a":"x"}',
+        llm_meta={}, placeholders=[], llm_debug=None,
+        collection_id=None, folder_path=[], headers=[],
+        http_method="", url="", display_order=0,
+    )
+    session = _RoundTripSession()
+    session.store[(MessageTemplate, tid)] = existing
+
+    package = {
+        "version": 2,
+        "templates": [
+            {
+                "id": str(tid),
+                "name": "New",
+                "format": "json",
+                "content": '{"b":"y"}',
+                "placeholders": [],
+                "project_name": "Новый",
+            }
+        ],
+    }
+    summary = await ExportImportService(cast(Any, session)).import_package(
+        package, policy="skip", allow_project_creation=False
+    )
+
+    assert summary.errors == []
+    assert summary.skipped["templates"] == 1
+    assert [p for p in session.added if isinstance(p, Project)] == []

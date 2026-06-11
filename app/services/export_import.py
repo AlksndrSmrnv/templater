@@ -219,6 +219,7 @@ class ExportImportService:
         package: Any,
         *,
         policy: str = "skip",
+        allow_project_creation: bool = True,
     ) -> ImportSummary:
         if policy not in ("skip", "overwrite", "fail"):
             policy = "skip"
@@ -673,7 +674,10 @@ class ExportImportService:
 
         # ---- projects referenced by templates (resolved by name; created when
         # missing). Old packages without ``project_name`` land in «Без проекта»,
-        # matching the migration semantics for pre-projects templates. ----
+        # matching the migration semantics for pre-projects templates. The
+        # permission is checked here — at the exact point a project would be
+        # created — so only rows that genuinely need a new project are affected;
+        # skipped conflicts, duplicates and invalid records never reach this. ----
         project_svc = ProjectService(self.session)
         project_ids_by_name: dict[str, uuid.UUID] = {}
 
@@ -684,6 +688,15 @@ class ExportImportService:
                 else DEFAULT_PROJECT_NAME
             )[:255]
             if name not in project_ids_by_name:
+                existing_project = await project_svc.repo.get_by_name(name)
+                if existing_project is not None:
+                    project_ids_by_name[name] = existing_project.id
+                    return existing_project.id
+                if not allow_project_creation:
+                    raise ValidationFailed(
+                        f"проект «{name}» не существует — создание проектов доступно "
+                        "только в режиме редактирования настроек"
+                    )
                 color = (
                     raw_color
                     if isinstance(raw_color, str) and re.fullmatch(COLOR_PATTERN, raw_color)

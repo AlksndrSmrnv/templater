@@ -163,8 +163,14 @@ def import_service_spy(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object
         def __init__(self, session: object) -> None:
             pass
 
-        async def import_package(self, package: dict[str, object], *, policy: str) -> SimpleNamespace:
-            calls.append(package)
+        async def import_package(
+            self,
+            package: dict[str, object],
+            *,
+            policy: str,
+            allow_project_creation: bool = True,
+        ) -> SimpleNamespace:
+            calls.append({"package": package, "allow_project_creation": allow_project_creation})
             return SimpleNamespace(model_dump=lambda: {})
 
     class FakeSettingsRepo:
@@ -224,105 +230,22 @@ async def test_data_only_import_stays_open_when_locked(
     assert len(import_service_spy) == 1
 
 
-@pytest.fixture()
-def project_repo_with(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Install a fake ProjectRepository knowing a fixed set of project names."""
-
-    from app.routes import export_import as export_import_routes
-
-    def install(known_names: set[str]) -> None:
-        class FakeProjectRepo:
-            def __init__(self, session: object) -> None:
-                pass
-
-            async def get_by_name(self, name: str) -> object | None:
-                return SimpleNamespace(name=name) if name in known_names else None
-
-        monkeypatch.setattr(export_import_routes, "ProjectRepository", FakeProjectRepo)
-
-    return install
-
-
-async def test_import_creating_projects_is_blocked_when_locked(
-    fake_settings: SimpleNamespace,
-    import_service_spy: list[dict[str, object]],
-    project_repo_with: Any,
+async def test_import_passes_project_creation_permission_from_edit_mode(
+    fake_settings: SimpleNamespace, import_service_spy: list[dict[str, object]]
 ) -> None:
-    # Creating a project is gated like attribute_schema — import must not be a
-    # side door around the «Проекты» edit-mode lock.
-    project_repo_with(set())
+    """The route forwards is_edit_mode as allow_project_creation; the service
+    enforces it at the exact point a project would be created (per-row), so
+    skipped conflicts / duplicates / invalid records are never blocked."""
+
     package = {"templates": [{"id": "x", "name": "T", "project_name": "Новый"}]}
+
     response = await run_import(package, cookies={})
-    assert response.status_code == 403
-    assert "Новый" in str(response.context["message"])
-    assert import_service_spy == []
+    assert response.status_code == 200
+    assert import_service_spy[-1]["allow_project_creation"] is False
 
-
-async def test_import_creating_projects_passes_in_edit_mode(
-    fake_settings: SimpleNamespace,
-    import_service_spy: list[dict[str, object]],
-    project_repo_with: Any,
-) -> None:
-    project_repo_with(set())
-    package = {"templates": [{"id": "x", "name": "T", "project_name": "Новый"}]}
     response = await run_import(package, cookies={COOKIE_NAME: issue_edit_token()})
     assert response.status_code == 200
-    assert len(import_service_spy) == 1
-
-
-async def test_import_into_existing_projects_stays_open_when_locked(
-    fake_settings: SimpleNamespace,
-    import_service_spy: list[dict[str, object]],
-    project_repo_with: Any,
-) -> None:
-    # Templates without project_name resolve to «Без проекта» — if it (and every
-    # referenced name) already exists, nothing is created, so the import is open.
-    from app.services.projects import DEFAULT_PROJECT_NAME
-
-    project_repo_with({DEFAULT_PROJECT_NAME, "Альфа"})
-    package = {
-        "templates": [
-            {"id": "x", "name": "T", "project_name": "Альфа"},
-            {"id": "y", "name": "T2"},
-        ]
-    }
-    response = await run_import(package, cookies={})
-    assert response.status_code == 200
-    assert len(import_service_spy) == 1
-
-
-async def test_skip_policy_import_of_existing_templates_stays_open_when_locked(
-    fake_settings: SimpleNamespace,
-    import_service_spy: list[dict[str, object]],
-    project_repo_with: Any,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # With policy=skip the service leaves an already-existing template id
-    # untouched, so its unknown project_name creates nothing — the gate must
-    # not 403 such an import.
-    from app.routes import export_import as export_import_routes
-
-    existing_id = "11111111-1111-1111-1111-111111111111"
-
-    class FakeTemplateRepo:
-        def __init__(self, session: object) -> None:
-            pass
-
-        async def get(self, tid: object) -> object | None:
-            return SimpleNamespace(id=tid) if str(tid) == existing_id else None
-
-    monkeypatch.setattr(export_import_routes, "TemplateRepository", FakeTemplateRepo)
-    project_repo_with(set())
-    package = {"templates": [{"id": existing_id, "name": "T", "project_name": "Новый"}]}
-
-    response = await run_import(package, cookies={}, policy="skip")
-    assert response.status_code == 200
-    assert len(import_service_spy) == 1
-
-    # The same package under overwrite *would* write the row → still gated.
-    response = await run_import(package, cookies={}, policy="overwrite")
-    assert response.status_code == 403
-    assert len(import_service_spy) == 1
+    assert import_service_spy[-1]["allow_project_creation"] is True
 
 
 def test_every_mutating_settings_route_is_gated() -> None:
