@@ -18,6 +18,7 @@ from app.services.templates import TemplateService
 from app.utils.errors import ValidationFailed
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "postman_sample.json"
+INSOMNIA_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "insomnia_sample.json"
 
 
 class FakeSession:
@@ -41,7 +42,7 @@ async def test_import_postman_creates_collection_and_templates() -> None:
     data = json.loads(FIXTURE.read_text(encoding="utf-8"))
     session = FakeSession()
     project_id = uuid.uuid4()
-    summary = await CollectionService(session).import_postman(  # type: ignore[arg-type]
+    summary = await CollectionService(session).import_collection(  # type: ignore[arg-type]
         data, project_id=project_id
     )
 
@@ -72,9 +73,39 @@ async def test_import_postman_creates_collection_and_templates() -> None:
 
 
 @pytest.mark.asyncio
-async def test_import_postman_rejects_garbage() -> None:
+async def test_import_insomnia_creates_collection_and_templates() -> None:
+    data = json.loads(INSOMNIA_FIXTURE.read_text(encoding="utf-8"))
+    session = FakeSession()
+    project_id = uuid.uuid4()
+    summary = await CollectionService(session).import_collection(  # type: ignore[arg-type]
+        data, project_id=project_id
+    )
+
+    collections = [o for o in session.added if isinstance(o, Collection)]
+    templates = [o for o in session.added if isinstance(o, MessageTemplate)]
+    assert len(collections) == 1
+    assert collections[0].source == "insomnia"
+    assert len(templates) == 3
+    assert summary.unparsable == 1  # the GET health check
+    assert summary.name == "Demo Bank"
+
+    a2a = next(t for t in templates if t.name == "A2A Transfer")
+    assert a2a.folder_path == ["Transfers"]
+    assert a2a.http_method == "POST"
+    assert a2a.format == "json"
+    assert a2a.llm_meta["import_status"] == "imported"
+    rquid = next(h for h in a2a.headers if h["key"] == "RqUID")
+    assert rquid["mode"] == "dynamic" and rquid["value"] == "{{rqUID}}"
+
+    # Nested folder paths are seeded onto the collection, incl. the prefix.
+    assert ["Transfers"] in collections[0].folders
+    assert ["Transfers", "Legacy"] in collections[0].folders
+
+
+@pytest.mark.asyncio
+async def test_import_collection_rejects_garbage() -> None:
     with pytest.raises(ValidationFailed):
-        await CollectionService(FakeSession()).import_postman(  # type: ignore[arg-type]
+        await CollectionService(FakeSession()).import_collection(  # type: ignore[arg-type]
             {"nope": 1}, project_id=uuid.uuid4()
         )
 

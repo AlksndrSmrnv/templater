@@ -21,7 +21,7 @@ from app.repositories.collection import CollectionRepository
 from app.repositories.settings import SettingsRepository
 from app.repositories.template import TemplateRepository
 from app.schemas.collection import ImportCollectionSummary, ProcessCollectionSummary
-from app.services.importers import parse_postman_collection
+from app.services.importers import detect_and_parse
 from app.services.templates import TemplateService, apply_dynamic_headers
 from app.utils.errors import NotFoundError, ValidationFailed
 
@@ -195,10 +195,10 @@ class CollectionService:
             raise NotFoundError("Коллекция не найдена")
         return collection
 
-    async def import_postman(
+    async def import_collection(
         self, data: Any, *, project_id: uuid.UUID
     ) -> ImportCollectionSummary:
-        parsed = parse_postman_collection(data)
+        parsed = detect_and_parse(data)
         collection = Collection(
             name=parsed.name,
             description=parsed.description,

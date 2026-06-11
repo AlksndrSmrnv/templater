@@ -1,0 +1,78 @@
+{
+    "_type": "export",
+    "__export_format": 4,
+    "__export_date": "2026-06-11T10:00:00.000Z",
+    "__export_source": "insomnia.desktop.app:v2021.5.0",
+    "resources": [
+        {
+            "_id": "wrk_demo",
+            "_type": "workspace",
+            "name": "Demo Bank",
+            "description": "Insomnia export of the demo bank API"
+        },
+        {
+            "_id": "env_base",
+            "_type": "environment",
+            "parentId": "wrk_demo",
+            "name": "Base Environment",
+            "data": {"baseUrl": "https://api.bank.test"}
+        },
+        {
+            "_id": "fld_transfers",
+            "_type": "request_group",
+            "parentId": "wrk_demo",
+            "name": "Transfers",
+            "metaSortKey": -200
+        },
+        {
+            "_id": "fld_legacy",
+            "_type": "request_group",
+            "parentId": "fld_transfers",
+            "name": "Legacy",
+            "metaSortKey": -50
+        },
+        {
+            "_id": "req_health",
+            "_type": "request",
+            "parentId": "wrk_demo",
+            "name": "Health Check",
+            "method": "GET",
+            "url": "https://api.bank.test/health",
+            "headers": [{"name": "Accept", "value": "application/json"}],
+            "metaSortKey": -100
+        },
+        {
+            "_id": "req_xml",
+            "_type": "request",
+            "parentId": "fld_legacy",
+            "name": "Legacy XML Transfer",
+            "method": "POST",
+            "url": "https://api.bank.test/transfer/legacy",
+            "headers": [{"name": "Content-Type", "value": "text/xml"}],
+            "body": {
+                "mimeType": "application/xml",
+                "text": "<Transfer><Amount>10.00</Amount></Transfer>"
+            },
+            "metaSortKey": -10
+        },
+        {
+            "_id": "req_a2a",
+            "_type": "request",
+            "parentId": "fld_transfers",
+            "name": "A2A Transfer",
+            "description": "Account-to-account transfer",
+            "method": "POST",
+            "url": "https://api.bank.test/transfer/a2a",
+            "headers": [
+                {"name": "Content-Type", "value": "application/json"},
+                {"name": "RqUID", "value": "00000000-0000-0000-0000-000000000000"},
+                {"name": "X-Debug", "value": "1", "disabled": true}
+            ],
+            "body": {
+                "mimeType": "application/json",
+                "text": "{\"payerName\": \"Ivan\", \"amount\": \"10.00\"}"
+            },
+            "metaSortKey": -100
+        }
+    ]
+}

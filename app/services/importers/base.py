@@ -7,7 +7,9 @@ onto a ``MessageTemplate`` row without knowing the source format.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from xml.etree import ElementTree as ET
 
 
 @dataclass
@@ -39,3 +41,41 @@ class ParsedCollection:
     source_format: str = ""
     variables: list[dict[str, object]] = field(default_factory=list)
     requests: list[ParsedRequest] = field(default_factory=list)
+
+
+def make_header(key: str, value: str, *, disabled: bool) -> dict[str, str | bool]:
+    """Build the normalised header dict shared by all importers; ``original``
+    keeps the raw value so dynamic-token detection can rewrite ``value``
+    without losing the source."""
+
+    return {"key": key, "value": value, "mode": "literal", "original": value, "disabled": disabled}
+
+
+def detect_format(content: str, language: str) -> tuple[str, str, bool]:
+    """Pick ``json``/``xml`` from the language hint + a content sniff.
+
+    Returns ``(content, fmt, parsable)`` where ``parsable`` is ``True`` only if
+    the content actually parses as the chosen format.
+    """
+
+    stripped = content.lstrip()
+    prefers_xml = language == "xml" or (not language and stripped.startswith("<"))
+    if prefers_xml:
+        try:
+            ET.fromstring(content)
+            return content, "xml", True
+        except ET.ParseError:
+            return content, "xml", False
+    # default to JSON
+    try:
+        json.loads(content)
+        return content, "json", True
+    except (json.JSONDecodeError, ValueError):
+        # JSON hint but invalid, or unknown language with non-XML content.
+        if stripped.startswith("<"):
+            try:
+                ET.fromstring(content)
+                return content, "xml", True
+            except ET.ParseError:
+                return content, "xml", False
+        return content, "json", False
