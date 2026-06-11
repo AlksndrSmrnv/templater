@@ -309,5 +309,18 @@ class FilledTemplate(Base):
     # {"sender": "Иванов · ACC-001", "receiver": "...", "accountOwner": "..."}
     role_labels_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
+    # Materialised folder path on the «Заполненные шаблоны» page, e.g.
+    # ["Проект", "Релиз", "Фича"]. Explicit (possibly empty) folders live in
+    # the ``filled_root_folders`` app setting — same scheme as message
+    # templates use with collections/root folders.
+    folder_path: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # HTTP request snapshot copied from the source template at save time, so
+    # the filled template stays runnable (future "send request" feature) even
+    # after the source template changes or is deleted.
+    http_method_snapshot: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    url_snapshot: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    headers_snapshot: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()

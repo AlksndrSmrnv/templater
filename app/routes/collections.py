@@ -9,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.routes.deps import SessionDep, TemplatesDep
-from app.routes.htmx_utils import form_str, toast_header
+from app.routes.htmx_utils import form_str, parse_json_path, parse_uuid_list, toast_header
 from app.routes.uow import commit_or_409
 from app.services.collections import CollectionService
 from app.services.projects import ProjectService
@@ -34,32 +34,12 @@ async def _tree_response(
     )
 
 
-def _parse_path(raw: str) -> list[str]:
-    """Decode a folder path sent as a JSON array of segments (empty/absent ⇒ root)."""
-
-    raw = (raw or "").strip()
-    if not raw:
-        return []
-    try:
-        value = json.loads(raw)
-    except ValueError:
-        return []
-    if not isinstance(value, list):
-        return []
-    return [str(seg).strip() for seg in value if str(seg).strip()]
+# Folder paths travel as JSON arrays in form fields — shared decoder lives in
+# ``htmx_utils.parse_json_path`` (also used by the filled-templates routes).
+_parse_path = parse_json_path
 
 
-def _parse_uuids(raw: str) -> list[uuid.UUID]:
-    out: list[uuid.UUID] = []
-    for item in (raw or "").split(","):
-        item = item.strip()
-        if not item:
-            continue
-        try:
-            out.append(uuid.UUID(item))
-        except ValueError:
-            continue
-    return out
+_parse_uuids = parse_uuid_list
 
 
 @router.post("/collections/import-htmx")

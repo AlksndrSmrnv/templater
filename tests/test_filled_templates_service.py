@@ -176,6 +176,11 @@ def test_filled_template_model_columns_exist() -> None:
         "account_owner_account_id",
         "account_owner_card_id",
         "role_labels_snapshot",
+        "folder_path",
+        "display_order",
+        "http_method_snapshot",
+        "url_snapshot",
+        "headers_snapshot",
         "created_at",
         "updated_at",
     }
@@ -272,6 +277,8 @@ async def test_htmx_fill_save_persists_form_snapshot_without_rerender(
         "content": '{"name": "FROZEN VALUE"}',
         "changed_json": json.dumps(["/name"]),
         "unresolved_json": json.dumps(["sender.unknown"]),
+        # Destination folder from the «Сохранить в папку» selector.
+        "folder_path": json.dumps(["Проект", "Релиз"], ensure_ascii=False),
     }
     response = await templates_reg.htmx_fill_save(
         template_id=tpl_id,
@@ -286,11 +293,13 @@ async def test_htmx_fill_save_persists_form_snapshot_without_rerender(
     assert kwargs["rendered"] == '{"name": "FROZEN VALUE"}'
     assert kwargs["changed"] == ["/name"]
     assert kwargs["unresolved"] == ["sender.unknown"]
+    assert kwargs["folder_path"] == ["Проект", "Релиз"]
     # Role IDs are still parsed from the form (for FK columns).
     assert kwargs["fill_request"].sender_client_id == sender_id
     assert response.status_code == 204
-    assert response.headers["HX-Redirect"].startswith("/templater/filled-templates/")
-    assert response.headers["HX-Redirect"].endswith("?saved=1")
+    # Redirect lands in the workspace with the saved item's panel open.
+    assert response.headers["HX-Redirect"].startswith("/templater/filled-templates?open=")
+    assert response.headers["HX-Redirect"].endswith("&saved=1")
 
 
 @pytest.mark.asyncio
@@ -476,3 +485,56 @@ async def test_save_from_fill_tolerates_template_without_project() -> None:
     )
     assert saved.project_name_snapshot == ""
     assert saved.project_color_snapshot == ""
+
+
+# ---------------------------------------------------------------------------
+# Execution snapshots + folder placement: filled templates capture the HTTP
+# method/url/headers of the source template (for the future "send request"
+# feature) and land in the folder picked at save time.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_save_from_fill_snapshots_http_request_and_folder() -> None:
+    session = _SnapshotSession()
+    template = SimpleNamespace(
+        id=uuid.uuid4(),
+        name="A2A",
+        format="json",
+        http_method="POST",
+        url="https://api.example.com/v1/transfer",
+        headers=[{"key": "RqUID", "value": "{{rqUID}}", "mode": "dynamic"}],
+    )
+    saved = await FilledTemplateService(cast(Any, session)).save_from_fill(
+        template=cast(Any, template),
+        fill_request=TemplateFillRequest(),
+        rendered="{}",
+        changed=[],
+        unresolved=[],
+        folder_path=["Проект", "Релиз", "Фича"],
+        now=_now(),
+    )
+    assert saved.folder_path == ["Проект", "Релиз", "Фича"]
+    assert saved.http_method_snapshot == "POST"
+    assert saved.url_snapshot == "https://api.example.com/v1/transfer"
+    assert saved.headers_snapshot == [
+        {"key": "RqUID", "value": "{{rqUID}}", "mode": "dynamic"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_save_from_fill_defaults_when_http_fields_and_folder_absent() -> None:
+    session = _SnapshotSession()
+    template = SimpleNamespace(id=uuid.uuid4(), name="A2A", format="json")
+    saved = await FilledTemplateService(cast(Any, session)).save_from_fill(
+        template=cast(Any, template),
+        fill_request=TemplateFillRequest(),
+        rendered="{}",
+        changed=[],
+        unresolved=[],
+        now=_now(),
+    )
+    assert saved.folder_path == []
+    assert saved.http_method_snapshot == ""
+    assert saved.url_snapshot == ""
+    assert saved.headers_snapshot == []

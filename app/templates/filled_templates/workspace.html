@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Заполненные шаблоны — Template Maker{% endblock %}
+{% block content %}
+<div class="workspace" x-data="{ selected: {{ (open_filled_id | default('') or none) | tojson | forceescape }} }">
+    <aside class="workspace-left">
+        <div class="workspace-left-header">
+            <div class="workspace-left-title">
+                <h2><iconify-icon icon="lucide:package"></iconify-icon> Заполненные</h2>
+                <a class="btn small" href="/templater/templates" title="К шаблонам сообщений">К шаблонам</a>
+            </div>
+            <input class="tree-search"
+                   type="search"
+                   name="search"
+                   placeholder="Поиск по имени / шаблону…"
+                   hx-get="/templater/filled-templates-htmx/tree"
+                   hx-target="#filled-tree"
+                   hx-swap="innerHTML"
+                   hx-trigger="input changed delay:200ms">
+        </div>
+        <div id="filled-tree" class="collections-tree"
+             hx-get="/templater/filled-templates-htmx/tree"
+             hx-trigger="refresh-filled-tree from:body"
+             hx-include=".tree-search"
+             hx-swap="innerHTML">
+            {% include "partials/filled_tree.html" %}
+        </div>
+    </aside>
+
+    <section class="workspace-center" id="filled-panel">
+        {% if open_filled_id | default('') %}
+        {# Deep link (e.g. the post-save redirect) — load that item's panel on
+           page load. #}
+        <div hx-get="/templater/filled-templates-htmx/{{ open_filled_id | urlencode }}/panel"
+             hx-trigger="load"
+             hx-target="#filled-panel"
+             hx-swap="innerHTML"></div>
+        {% else %}
+        {% include "partials/filled_panel_empty.html" %}
+        {% endif %}
+    </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // ?saved=1 lands here from the fill-save redirect: show the toast and
+    // scrub the param so a reload doesn't re-announce it.
+    (() => {
+        const url = new URL(window.location.href);
+        if (url.searchParams.get('saved') !== '1') return;
+        url.searchParams.delete('saved');
+        const query = url.searchParams.toString();
+        window.history.replaceState(null, '', `${url.pathname}${query ? `?${query}` : ''}${url.hash}`);
+        // 'load' fires after the deferred Alpine bundle has initialised the
+        // toast listener; DOMContentLoaded would race it and lose the event.
+        window.addEventListener('load', () =>
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Сохранено' } })));
+    })();
+</script>
+<script src="https://unpkg.com/sortablejs@1.15.6/Sortable.min.js"
+        integrity="sha384-HZZ/fukV+9G8gwTNjN7zQDG0Sp7MsZy5DDN6VfY3Be7V9dvQpEpR2jF2HlyFUUjU"
+        crossorigin="anonymous"></script>
+<script>
+    (function () {
+        let instances = [];
+
+        function destroyTreeSortables() {
+            instances.forEach((s) => { try { s.destroy(); } catch (e) {} });
+            instances = [];
+        }
+
+        function initTreeSortables() {
+            const root = document.getElementById('filled-tree');
+            if (!root || !window.Sortable) return;
+            destroyTreeSortables();
+            // Every folder list (and the root) is a drop target; a shared group
+            // lets filled templates move across folders.
+            root.querySelectorAll('ul.tree-list').forEach((ul) => {
+                instances.push(Sortable.create(ul, {
+                    group: 'filled-tree',
+                    handle: '.tree-drag-handle',
+                    draggable: '.tree-item',
+                    animation: 150,
+                    fallbackOnBody: true,
+                    ghostClass: 'sortable-ghost',
+                    chosenClass: 'sortable-chosen',
+                    onEnd(evt) {
+                        const item = evt.item;
+                        const id = item && item.dataset ? item.dataset.id : '';
+                        const target = evt.to;
+                        if (!id || !target) return;
+                        const order = Array.from(
+                            target.querySelectorAll(':scope > li.tree-item')
+                        ).map((li) => li.dataset.id).filter(Boolean);
+                        htmx.ajax('POST', '/templater/filled-templates-htmx/move', {
+                            values: {
+                                filled_id: id,
+                                folder: target.dataset.folderPath || '[]',
+                                order: order.join(','),
+                            },
+                            target: '#filled-tree',
+                            swap: 'innerHTML',
+                        });
+                    },
+                }));
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', initTreeSortables);
+        // The tree is re-rendered by htmx (search, folder ops, moves) —
+        // rebuild Sortable on the fresh DOM.
+        document.body.addEventListener('htmx:afterSwap', function (e) {
+            if (e.detail.target && e.detail.target.id === 'filled-tree') initTreeSortables();
+        });
+    })();
+</script>
+{% endblock %}

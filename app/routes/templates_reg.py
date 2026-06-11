@@ -19,7 +19,13 @@ from app.repositories.filled_template import FilledTemplateRepository
 from app.repositories.project import ProjectRepository
 from app.routes.deps import SessionDep, TemplatesDep
 from app.routes.entities_htmx import entity_label
-from app.routes.htmx_utils import form_errors_response, form_str, toast_header, validation_errors_response
+from app.routes.htmx_utils import (
+    form_errors_response,
+    form_str,
+    parse_json_path,
+    toast_header,
+    validation_errors_response,
+)
 from app.routes.uow import commit_and_refresh, commit_or_409
 from app.schemas.template import TemplateCreate, TemplateFillRequest, TemplateUpdate
 from app.services.collections import CollectionService
@@ -443,8 +449,13 @@ async def page_fill(
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
 ) -> Response:
+    from app.services.filled_templates import FilledTemplateService
+
     template = await TemplateService(session).get(template_id)
     clients = await ClientService(session).list_all()
+    # Existing folders of the «Заполненные шаблоны» tree feed the «Сохранить в
+    # папку» selector: (JSON-encoded path, human-readable label) pairs.
+    folder_paths = await FilledTemplateService(session).list_folder_paths()
     return templates.TemplateResponse(
         request,
         "templates_reg/fill.html",
@@ -454,6 +465,9 @@ async def page_fill(
             "clients": clients,
             "labels": await _fill_labels(session),
             "has_account_owner": template_has_account_owner(template),
+            "folder_options": [
+                (json.dumps(p, ensure_ascii=False), " / ".join(p)) for p in folder_paths
+            ],
             # Optional preselection carried in the query string (e.g. from the
             # home-page LLM assistant link) — seeds the role pickers.
             "preset": _fill_preset_from_query(request),
@@ -1056,9 +1070,12 @@ async def htmx_fill_save(
         rendered=filled_content,
         changed=[str(x) for x in changed_locations],
         unresolved=[str(x) for x in unresolved],
+        folder_path=parse_json_path(form_str(form, "folder_path")),
     )
     saved = await commit_and_refresh(session, saved)
+    # Land in the filled-templates workspace with the saved item's panel open
+    # and highlighted in its folder.
     return Response(
         status_code=204,
-        headers={"HX-Redirect": f"/templater/filled-templates/{saved.id}?saved=1"},
+        headers={"HX-Redirect": f"/templater/filled-templates?open={saved.id}&saved=1"},
     )

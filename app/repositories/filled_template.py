@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,11 +29,12 @@ class FilledTemplateRepository:
     ) -> list[FilledTemplate]:
         """Return up to ``limit`` rows with heavy text columns deferred.
 
-        ``filled_content`` (full rendered body) and ``changed_locations``
-        (per-leaf JSONPath/XPath list) are not used by the list page, so
-        they are deferred: accessing them on a returned row would trigger
-        an extra SELECT. Templates rendering this list MUST NOT read those
-        attributes — use ``get()`` for the detail page instead.
+        ``filled_content`` (full rendered body), ``changed_locations``
+        (per-leaf JSONPath/XPath list) and ``headers_snapshot`` are not used
+        by the tree/list views, so they are deferred: accessing them on a
+        returned row would trigger an extra SELECT. Templates rendering this
+        list MUST NOT read those attributes — use ``get()`` for the detail
+        page instead.
         """
 
         stmt = (
@@ -40,6 +42,7 @@ class FilledTemplateRepository:
             .options(
                 defer(FilledTemplate.filled_content),
                 defer(FilledTemplate.changed_locations),
+                defer(FilledTemplate.headers_snapshot),
             )
             .order_by(FilledTemplate.created_at.desc())
             .limit(limit)
@@ -79,6 +82,22 @@ class FilledTemplateRepository:
 
     async def get(self, filled_id: uuid.UUID) -> FilledTemplate | None:
         return await self.session.get(FilledTemplate, filled_id)
+
+    async def get_many(self, ids: Sequence[uuid.UUID]) -> list[FilledTemplate]:
+        """Rows by id (heavy columns deferred) — used by move/renumber."""
+
+        if not ids:
+            return []
+        stmt = (
+            select(FilledTemplate)
+            .options(
+                defer(FilledTemplate.filled_content),
+                defer(FilledTemplate.changed_locations),
+                defer(FilledTemplate.headers_snapshot),
+            )
+            .where(FilledTemplate.id.in_(ids))
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
     async def add(self, item: FilledTemplate) -> FilledTemplate:
         self.session.add(item)

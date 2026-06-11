@@ -1,0 +1,111 @@
+{# Detail body of a filled template. Used in two homes:
+   - the workspace panel (#filled-panel), standalone=false — header with
+     actions, delete swaps in the empty-state and refreshes the tree;
+   - the standalone page (filled_templates/view.html), standalone=true —
+     the page renders its own header, delete redirects to the workspace. #}
+{% set standalone = standalone | default(false) %}
+<div x-data="{
+    /*
+     * Copy the *original* filled body from /raw, NOT textContent of the
+     * highlighted <pre>: render_filled_html() re-serializes JSON/XML for
+     * display, which would drop original whitespace, XML declarations and
+     * comments. The /raw endpoint serves the exact stored filled_content.
+     */
+    copy() {
+        fetch('/templater/filled-templates/{{ ft.id }}/raw')
+            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+            .then(t => navigator.clipboard.writeText(t))
+            .then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Скопировано' } })))
+            .catch(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Не удалось скопировать', type: 'error' } })));
+    }
+}">
+
+    {% if not standalone %}
+    <div class="panel-header">
+        <div class="panel-title">
+            <span class="tree-method method-{{ (ft.http_method_snapshot or '')|lower }}">{{ ft.http_method_snapshot or '·' }}</span>
+            <h2 title="{{ ft.name }}">{{ ft.name }}</h2>
+            {% if ft.project_name_snapshot %}
+            <span class="project-badge" title="Проект: {{ ft.project_name_snapshot }}"><span class="project-dot" style="background: {{ ft.project_color_snapshot or '#9E9E9E' }}"></span>{{ ft.project_name_snapshot }}</span>
+            {% endif %}
+        </div>
+        <div class="panel-actions">
+            <a class="btn" href="/templater/filled-templates/{{ ft.id }}" title="Открыть на отдельной странице"><iconify-icon icon="lucide:external-link"></iconify-icon></a>
+            {% if ft.message_template_id %}
+                <a class="btn" href="/templater/templates?template={{ ft.message_template_id }}">К исходному шаблону</a>
+            {% endif %}
+            <a class="btn" href="/templater/filled-templates/{{ ft.id }}/raw?download=1"><iconify-icon icon="lucide:download"></iconify-icon> Скачать</a>
+            <button class="btn danger"
+                    type="button"
+                    hx-delete="/templater/filled-templates-htmx/{{ ft.id }}?panel=1"
+                    hx-target="#filled-panel"
+                    hx-swap="innerHTML"
+                    hx-confirm="Удалить заполненный шаблон?">Удалить</button>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if ft.url_snapshot %}
+    <div class="panel-url"><span class="panel-url-method">{{ ft.http_method_snapshot or '' }}</span> <code>{{ ft.url_snapshot }}</code></div>
+    {% endif %}
+
+    <section style="margin-top:14px;">
+        <h3>Параметры подстановки</h3>
+        <table class="data-table">
+            <thead><tr><th>Роль</th><th>Сущность</th></tr></thead>
+            <tbody>
+                <tr>
+                    <td>Шаблон</td>
+                    <td>
+                        {% if ft.message_template_id %}
+                            <a href="/templater/templates?template={{ ft.message_template_id }}">{{ ft.template_name_snapshot or '—' }}</a>
+                        {% else %}
+                            <span class="muted">{{ ft.template_name_snapshot or '—' }} (удалён)</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>Проект</td>
+                    <td>
+                        {% if ft.project_name_snapshot | default('') %}
+                            <span class="project-badge"><span class="project-dot" style="background: {{ ft.project_color_snapshot or '#9E9E9E' }}"></span>{{ ft.project_name_snapshot }}</span>
+                        {% else %}
+                            <span class="muted">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% for role, title, label in role_rows %}
+                    <tr>
+                        <td>{{ title }}</td>
+                        <td>
+                            {% set cid = role_client_ids.get(role) %}
+                            {% if cid and cid in alive_client_ids %}
+                                <a href="/templater/clients/{{ cid }}">{{ label or '—' }}</a>
+                            {% elif cid %}
+                                <span class="muted">{{ label or '—' }} (удалён)</span>
+                            {% else %}
+                                <span class="muted">{{ label or '—' }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+                <tr>
+                    <td>Создан</td>
+                    <td>{{ ft.created_at.strftime('%d.%m.%Y %H:%M:%S') if ft.created_at else '' }}</td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+
+    {% with unresolved = ft.unresolved %}
+        {% include "partials/unresolved_notice.html" %}
+    {% endwith %}
+
+    <div class="form-actions" style="margin-top:18px;">
+        <button class="btn primary" type="button" @click="copy()"><iconify-icon icon="lucide:clipboard-copy"></iconify-icon> Копировать</button>
+    </div>
+
+    <h3 style="margin-top:18px;">Результат</h3>
+    <pre class="template-code">{{ rendered_html | safe }}</pre>
+
+</div>
