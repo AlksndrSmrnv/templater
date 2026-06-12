@@ -374,9 +374,18 @@ class CollectionService:
         order: list[uuid.UUID],
     ) -> None:
         """Move a request into ``target_folder_path`` of ``target_collection_id``
-        (``None`` = ungrouped) and renumber ``display_order`` for the target
-        folder's siblings according to ``order``. Handles intra-folder reorder,
-        moves between folders and moves between collections in one call."""
+        (``None`` = ungrouped) and renumber ``display_order`` across the target
+        folder's siblings. Handles intra-folder reorder, moves between folders
+        and moves between collections in one call.
+
+        ``order`` carries the ids the client currently *sees* — search may hide
+        part of the folder, so it can be a subset. Visible items are
+        re-sequenced in payload order across the slots they occupy; hidden
+        siblings keep theirs. The whole folder is renumbered 0..n-1, so a
+        partial payload can never produce duplicate ``display_order`` values.
+        Ids that don't belong to the folder (crafted or stale payloads) are
+        ignored.
+        """
 
         template = await self.templates.get(template_id)
         if template is None:
@@ -387,23 +396,28 @@ class CollectionService:
         target_folder = _norm_path(target_folder_path)
         template.collection_id = target_collection_id
         template.folder_path = target_folder
+        # The session runs with autoflush=False (app/db/session.py) — flush
+        # explicitly so the sibling query below sees the moved row in its new
+        # collection/folder.
+        await self.session.flush()
 
-        # Renumber ``display_order`` only across templates that actually live in
-        # the target collection/folder (after the move). This stops a crafted or
-        # stale ``order`` payload from reshuffling unrelated templates elsewhere.
-        if order:
-            siblings = {t.id: t for t in await self.templates.get_many(order)}
-            position = 0
-            for sibling_id in order:
-                sibling = siblings.get(sibling_id)
-                if sibling is None:
-                    continue
-                if sibling.collection_id != target_collection_id:
-                    continue
-                if _norm_path(sibling.folder_path) != target_folder:
-                    continue
-                sibling.display_order = position
-                position += 1
+        siblings = await self.templates.list_by_folder(
+            target_collection_id, target_folder
+        )
+        full = sorted(siblings, key=lambda t: (t.display_order, t.created_at))
+        by_id = {t.id: t for t in full}
+        payload: list[uuid.UUID] = []
+        payload_ids: set[uuid.UUID] = set()
+        for raw_id in order:
+            if raw_id in by_id and raw_id not in payload_ids:
+                payload.append(raw_id)
+                payload_ids.add(raw_id)
+        payload_iter = iter(payload)
+        resequenced = (
+            by_id[next(payload_iter)] if t.id in payload_ids else t for t in full
+        )
+        for position, t in enumerate(resequenced):
+            t.display_order = position
         await self.session.flush()
 
     async def process_collection_llm(self, collection_id: uuid.UUID) -> ProcessCollectionSummary:

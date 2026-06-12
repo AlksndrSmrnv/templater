@@ -191,6 +191,7 @@ class TemplateService:
         except Exception as exc:
             raise ValidationFailed(f"Шаблон не парсится как {fmt}: {exc}")
         await self._require_project(data.project_id)
+        folder_path = [str(seg) for seg in (data.folder_path or [])]
         template = MessageTemplate(
             project_id=data.project_id,
             name=data.name,
@@ -201,7 +202,13 @@ class TemplateService:
             llm_meta={},
             placeholders=[],
             collection_id=data.collection_id,
-            folder_path=[str(seg) for seg in (data.folder_path or [])],
+            folder_path=folder_path,
+            # Append after the folder's manually ordered siblings — the
+            # default of 0 would jump the new request to the top of a sorted
+            # folder and collide with the existing first item.
+            display_order=await self.repo.next_display_order(
+                data.collection_id, folder_path
+            ),
         )
         await self.repo.add(template)
         return template

@@ -1135,9 +1135,14 @@ from app.schemas.template import TemplateCreate, TemplateUpdate  # noqa: E402
 class _ProjectAwareSession:
     """Session double: ``get`` resolves only the known project id."""
 
-    def __init__(self, known_project_id: uuid.UUID) -> None:
+    def __init__(
+        self, known_project_id: uuid.UUID, *, max_display_order: int = -1
+    ) -> None:
         self.known_project_id = known_project_id
         self.added: list[Any] = []
+        # What the ``next_display_order`` aggregate "finds" in the target
+        # folder; -1 mirrors an empty folder (COALESCE(MAX(...), -1)).
+        self._max_display_order = max_display_order
 
     async def get(self, model: type, ident: Any) -> Any:
         if ident == self.known_project_id:
@@ -1149,6 +1154,10 @@ class _ProjectAwareSession:
 
     async def flush(self) -> None:
         return None
+
+    async def execute(self, stmt: Any) -> Any:
+        value = self._max_display_order
+        return SimpleNamespace(scalar_one=lambda: value)
 
 
 def test_template_create_schema_requires_project_id() -> None:
@@ -1166,11 +1175,33 @@ async def test_create_sets_project_and_rejects_unknown_project() -> None:
         TemplateCreate(name="T", format="json", content="{}", project_id=project_id)
     )
     assert template.project_id == project_id
+    assert template.display_order == 0  # first row in an empty folder
 
     with pytest.raises(ValidationFailed):
         await svc.create(
             TemplateCreate(name="T", format="json", content="{}", project_id=uuid.uuid4())
         )
+
+
+@pytest.mark.asyncio
+async def test_create_appends_after_ordered_siblings() -> None:
+    # A folder whose siblings were manually ordered up to 4: the new request
+    # must land *after* them (display_order=5), not at the default 0 where it
+    # would jump to the top and collide with the existing first item.
+    project_id = uuid.uuid4()
+    session = _ProjectAwareSession(project_id, max_display_order=4)
+    svc = TemplateService(cast(Any, session))
+
+    template = await svc.create(
+        TemplateCreate(
+            name="T",
+            format="json",
+            content="{}",
+            project_id=project_id,
+            folder_path=["Проект"],
+        )
+    )
+    assert template.display_order == 5
 
 
 @pytest.mark.asyncio
