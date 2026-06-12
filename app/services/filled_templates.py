@@ -307,9 +307,12 @@ class FilledTemplateService:
         item = await self.get(filled_id)
         target_folder = _norm_path(target_folder_path)
         item.folder_path = target_folder
+        # The session runs with autoflush=False (app/db/session.py) — flush
+        # explicitly so the sibling query below sees the moved item in its new
+        # folder; otherwise it would keep a stale display_order that can
+        # collide with the renumbered siblings.
+        await self.session.flush()
 
-        # Only the target folder's rows are loaded; the pending folder change
-        # above is autoflushed before the query, so the moved item is included.
         siblings = await self.repo.list_by_folder(target_folder)
         full = sorted(siblings, key=lambda row: (row.display_order, row.created_at))
         by_id = {row.id: row for row in full}

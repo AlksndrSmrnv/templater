@@ -21,13 +21,30 @@ from app.utils.errors import NotFoundError, ValidationFailed
 
 
 class _FakeSession:
+    """Models the real session's ``autoflush=False``: queries see only the
+    state present at the last explicit ``flush()``."""
+
+    def __init__(self) -> None:
+        self.repo: _FakeFilledRepo | None = None
+
     async def flush(self) -> None:
-        return None
+        if self.repo is not None:
+            self.repo.sync_flushed()
 
 
 class _FakeFilledRepo:
     def __init__(self, items: list[SimpleNamespace]) -> None:
         self.items = items
+        self.sync_flushed()
+
+    def sync_flushed(self) -> None:
+        """Snapshot folder placement as the "database" would see it after a
+        flush — lets ``list_by_folder`` model that a SQL query does NOT see
+        pending in-memory mutations (autoflush is off in app.db.session)."""
+
+        self._flushed_paths = {
+            i.id: list(i.folder_path or []) for i in self.items
+        }
 
     async def list_all(
         self, *, search: str = "", limit: int | None = 200
@@ -56,7 +73,14 @@ class _FakeFilledRepo:
         return [(i.id, list(i.folder_path or [])) for i in self.items]
 
     async def list_by_folder(self, folder_path: list[str]) -> list[SimpleNamespace]:
-        return [i for i in self.items if list(i.folder_path or []) == list(folder_path)]
+        # Like the real SQL query, this sees only *flushed* folder placement —
+        # a service that mutates folder_path and queries without flushing
+        # must fail here the same way it would against Postgres.
+        return [
+            i
+            for i in self.items
+            if self._flushed_paths.get(i.id) == list(folder_path)
+        ]
 
     async def next_display_order(self, folder_path: list[str]) -> int:
         orders = [
@@ -93,8 +117,11 @@ def _service(
     *,
     settings: _FakeSettingsRepo | None = None,
 ) -> FilledTemplateService:
-    svc = FilledTemplateService(cast(Any, _FakeSession()))
-    svc.repo = _FakeFilledRepo(items)  # type: ignore[assignment]
+    session = _FakeSession()
+    repo = _FakeFilledRepo(items)
+    session.repo = repo  # flush() refreshes the repo's "database" snapshot
+    svc = FilledTemplateService(cast(Any, session))
+    svc.repo = repo  # type: ignore[assignment]
     svc.settings = settings or _FakeSettingsRepo()  # type: ignore[assignment]
     return svc
 
