@@ -23,10 +23,16 @@ INSOMNIA_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "insomnia_samp
 
 class FakeSession:
     """Minimal AsyncSession stand-in: ``add`` assigns ids like a real flush
-    would, so service code that reads ``collection.id`` after add works."""
+    would, so service code that reads ``collection.id`` after add works.
+
+    Models the real session's ``autoflush=False`` for folder placement:
+    when wired to a ``_FakeTemplateRepo``, ``flush()`` refreshes the repo's
+    "database" snapshot, and query-like repo methods read only that snapshot.
+    """
 
     def __init__(self) -> None:
         self.added: list[object] = []
+        self.template_repo: _FakeTemplateRepo | None = None
 
     def add(self, obj: object) -> None:
         if getattr(obj, "id", None) is None:
@@ -34,7 +40,8 @@ class FakeSession:
         self.added.append(obj)
 
     async def flush(self) -> None:
-        return None
+        if self.template_repo is not None:
+            self.template_repo.sync_flushed()
 
 
 @pytest.mark.asyncio
@@ -179,9 +186,21 @@ class _FakeCollectionRepo:
         return self.by_id.get(collection_id)
 
 
+def _placement(t: SimpleNamespace) -> tuple[object, tuple[str, ...]]:
+    return (getattr(t, "collection_id", None), tuple(t.folder_path or []))
+
+
 class _FakeTemplateRepo:
     def __init__(self, templates: list[SimpleNamespace]) -> None:
         self.templates = templates
+        self.sync_flushed()
+
+    def sync_flushed(self) -> None:
+        """Snapshot collection/folder placement as the "database" would see it
+        after a flush — ``list_by_folder`` must not observe pending in-memory
+        mutations (autoflush is off in app.db.session)."""
+
+        self._flushed = {t.id: _placement(t) for t in self.templates}
 
     async def list_all(self) -> list[SimpleNamespace]:
         return list(self.templates)
@@ -198,6 +217,22 @@ class _FakeTemplateRepo:
     async def get_many(self, ids):  # type: ignore[no-untyped-def]
         wanted = set(ids)
         return [t for t in self.templates if t.id in wanted]
+
+    async def list_by_folder(
+        self, collection_id: uuid.UUID | None, folder_path: list[str]
+    ) -> list[SimpleNamespace]:
+        # Like the real SQL query, this sees only *flushed* placement — a
+        # service that mutates collection_id/folder_path and queries without
+        # flushing must fail here the same way it would against Postgres.
+        key = (collection_id, tuple(folder_path))
+        return [t for t in self.templates if self._flushed.get(t.id) == key]
+
+    async def next_display_order(
+        self, collection_id: uuid.UUID | None, folder_path: list[str]
+    ) -> int:
+        key = (collection_id, tuple(folder_path))
+        orders = [t.display_order for t in self.templates if _placement(t) == key]
+        return (max(orders) + 1) if orders else 0
 
 
 class _FakeSettingsRepo:
@@ -219,9 +254,12 @@ def _service(
     *,
     settings: _FakeSettingsRepo | None = None,
 ) -> CollectionService:
-    svc = CollectionService(FakeSession())  # type: ignore[arg-type]
+    session = FakeSession()
+    template_repo = _FakeTemplateRepo(templates)
+    session.template_repo = template_repo  # flush() refreshes the snapshot
+    svc = CollectionService(session)  # type: ignore[arg-type]
     svc.repo = _FakeCollectionRepo(collections)  # type: ignore[assignment]
-    svc.templates = _FakeTemplateRepo(templates)  # type: ignore[assignment]
+    svc.templates = template_repo  # type: ignore[assignment]
     svc.settings = settings or _FakeSettingsRepo()  # type: ignore[assignment]
     return svc
 
@@ -311,6 +349,25 @@ async def test_move_request_sets_placement_and_reorders() -> None:
     await svc.move_request(t1.id, coll.id, ["B"], [t2.id, t1.id])
     assert t1.collection_id == coll.id and t1.folder_path == ["B"]
     assert t2.display_order == 0 and t1.display_order == 1
+
+
+@pytest.mark.asyncio
+async def test_move_request_keeps_hidden_siblings_without_duplicate_order() -> None:
+    # Search can hide part of a folder from the client: the DnD payload then
+    # covers only the visible items. Hidden siblings must keep their slots and
+    # the folder must end up renumbered without duplicate display_order.
+    coll = SimpleNamespace(id=uuid.uuid4(), folders=[["F"]])
+    hidden = _tpl_in(coll.id, "hidden", ["F"], 0)
+    v1 = _tpl_in(coll.id, "v1", ["F"], 1)
+    v2 = _tpl_in(coll.id, "v2", ["F"], 2)
+    svc = _service([coll], [hidden, v1, v2])
+
+    # The user sees only v1/v2 and drags v2 above v1.
+    await svc.move_request(v2.id, coll.id, ["F"], [v2.id, v1.id])
+    assert hidden.display_order == 0  # hidden slot preserved
+    assert v2.display_order == 1 and v1.display_order == 2
+    orders = [hidden.display_order, v1.display_order, v2.display_order]
+    assert len(set(orders)) == len(orders), "display_order must stay unique"
 
 
 @pytest.mark.asyncio

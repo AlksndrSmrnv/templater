@@ -1,0 +1,96 @@
+{% macro render_node(node, path) %}
+    {% for folder_name, child in node.folders.items() %}
+    {% set fpath = path + [folder_name] %}
+    <li class="tree-folder" x-data="{ open: true, editing: false, creating: false }">
+        <div class="tree-folder-label">
+            <span class="tree-caret" @click="open = !open" x-text="open ? '▾' : '▸'"></span>
+            <span class="tree-folder-icon"><iconify-icon icon="lucide:folder"></iconify-icon></span>
+            <span class="tree-folder-name" x-show="!editing" @click="open = !open" title="{{ folder_name }}">{{ folder_name }}</span>
+            <form class="tree-inline-form" x-show="editing" x-cloak
+                  hx-post="/templater/filled-templates-htmx/folders/rename"
+                  hx-include=".tree-search"
+                  hx-target="#filled-tree" hx-swap="innerHTML">
+                <input type="hidden" name="path" value="{{ fpath | tojson | forceescape }}">
+                <input class="tree-rename-input" type="text" name="name" value="{{ folder_name }}"
+                       required x-ref="renameInput"
+                       @click.stop @keydown.escape.stop="editing = false">
+                <button type="submit" class="btn small" title="Сохранить">✓</button>
+            </form>
+            <span class="tree-folder-actions">
+                <button type="button" class="tree-act" title="Переименовать"
+                        @click.stop="editing = true; $nextTick(() => $refs.renameInput.focus())"><iconify-icon icon="lucide:pencil"></iconify-icon></button>
+                <button type="button" class="tree-act" title="Новая подпапка"
+                        @click.stop="creating = !creating"><iconify-icon icon="lucide:folder-plus"></iconify-icon></button>
+                <button type="button" class="tree-act danger" title="Удалить папку (только пустую)"
+                        hx-delete="/templater/filled-templates-htmx/folders"
+                        hx-vals="{{ {'path': (fpath | tojson)} | tojson | forceescape }}"
+                        hx-include=".tree-search"
+                        hx-confirm="Удалить папку «{{ folder_name }}»?"
+                        hx-target="#filled-tree" hx-swap="innerHTML"><iconify-icon icon="lucide:trash-2"></iconify-icon></button>
+            </span>
+        </div>
+        <form class="tree-inline-form tree-subfolder-form" x-show="creating" x-cloak
+              hx-post="/templater/filled-templates-htmx/folders"
+              hx-include=".tree-search"
+              hx-target="#filled-tree" hx-swap="innerHTML">
+            <input type="hidden" name="parent" value="{{ fpath | tojson | forceescape }}">
+            <input type="text" name="name" placeholder="Имя подпапки" required @click.stop>
+            <button type="submit" class="btn small" title="Создать">✓</button>
+        </form>
+        <ul class="tree-list" x-show="open"
+            data-folder-path="{{ fpath | tojson | forceescape }}">
+            {{ render_node(child, fpath) }}
+        </ul>
+    </li>
+    {% endfor %}
+    {% for f in node.templates %}
+    <li class="tree-item"
+        data-id="{{ f.id }}"
+        :class="{ active: selected === '{{ f.id }}' }"
+        @click="selected = '{{ f.id }}'"
+        hx-get="/templater/filled-templates-htmx/{{ f.id }}/panel"
+        hx-target="#filled-panel"
+        hx-swap="innerHTML">
+        <span class="tree-drag-handle" title="Перетащите шаблон" @click.stop><iconify-icon icon="lucide:grip-vertical"></iconify-icon></span>
+        <span class="tree-method method-{{ (f.http_method_snapshot or '')|lower }}">{{ f.http_method_snapshot or '·' }}</span>
+        <span class="tree-name" title="{{ f.name }}">{{ f.name }}</span>
+        {% if f.project_name_snapshot %}<span class="project-badge" title="Проект: {{ f.project_name_snapshot }}"><span class="project-dot" style="background: {{ f.project_color_snapshot or '#9E9E9E' }}"></span>{{ f.project_name_snapshot }}</span>{% endif %}
+        {% if f.unresolved %}<span class="tree-flag" title="Есть незаполненные плейсхолдеры"><iconify-icon icon="lucide:triangle-alert"></iconify-icon></span>{% endif %}
+    </li>
+    {% endfor %}
+{% endmacro %}
+
+<div class="tree-collection" x-data="{ open: true, creating: false }">
+    <div class="tree-collection-head">
+        <div class="tree-collection-title" @click="open = !open">
+            <span class="tree-caret" x-text="open ? '▾' : '▸'"></span>
+            <span class="tree-collection-icon"><iconify-icon icon="lucide:folder"></iconify-icon></span>
+            <span class="tree-collection-name">Папки</span>
+            <span class="tree-count">{{ count }}</span>
+        </div>
+        <div class="tree-collection-actions">
+            <button class="btn small" title="Новая папка в корне"
+                    @click.stop="creating = !creating"><iconify-icon icon="lucide:folder-plus"></iconify-icon></button>
+        </div>
+    </div>
+    <form class="tree-inline-form" x-show="creating" x-cloak
+          hx-post="/templater/filled-templates-htmx/folders"
+          hx-include=".tree-search"
+          hx-target="#filled-tree" hx-swap="innerHTML">
+        <input type="hidden" name="parent" value="[]">
+        <input type="text" name="name" placeholder="Имя папки" required>
+        <button type="submit" class="btn small" title="Создать">✓</button>
+    </form>
+    <ul class="tree-list tree-root" x-show="open" data-folder-path="[]">
+        {{ render_node(tree, []) }}
+    </ul>
+</div>
+
+{% if not tree.folders and not tree.templates %}
+<p class="muted tree-empty">
+    {% if search %}Ничего не найдено.{% else %}Пока нет заполненных шаблонов. Откройте шаблон, заполните его и сохраните сюда.{% endif %}
+</p>
+{% endif %}
+{% if truncated %}
+<p class="muted tree-empty">Показаны первые {{ list_limit }} — уточните поиск.</p>
+{% endif %}

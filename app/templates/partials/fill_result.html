@@ -11,6 +11,7 @@
     <form hx-post="/templater/templates-htmx/{{ template.id }}/fill/save"
           hx-target="#save-feedback"
           hx-swap="innerHTML"
+          hx-include="#filled-folder-select"
           style="margin:0;">
         {% for key, value in fill_values.items() %}
             {% if value %}

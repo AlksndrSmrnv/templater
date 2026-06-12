@@ -217,7 +217,7 @@
     </div>
 
     <form class="form-actions"
-          style="margin-top:14px;"
+          style="margin-top:14px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;"
           hx-post="/templater/templates-htmx/{{ template.id }}/fill/render"
           hx-target="#fill-result"
           hx-swap="innerHTML">
@@ -233,6 +233,18 @@
             <input type="hidden" name="account_owner_card_id" :value="state.accountOwner.cardId">
         {% endif %}
         <button class="btn primary" type="submit">Заполнить</button>
+        {# Destination folder for the saved filled template. Lives in the
+           static part of the page (NOT inside #fill-result) so it survives
+           result re-renders; the save form pulls it in via hx-include. #}
+        <label class="fill-folder-label muted" for="filled-folder-select" style="display:flex; align-items:center; gap:8px; margin-left:auto;">
+            Сохранить в папку:
+            <select id="filled-folder-select" name="folder_path" class="import-project-select" style="max-width:360px;" title="Папка на странице «Заполненные шаблоны»">
+                <option value="[]" selected>Корень</option>
+                {% for value, label in folder_options | default([]) %}
+                <option value="{{ value }}" title="{{ label }}">{{ label }}</option>
+                {% endfor %}
+            </select>
+        </label>
     </form>
 
     <div id="fill-result">

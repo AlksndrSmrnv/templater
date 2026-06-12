@@ -2,7 +2,7 @@
 {% block title %}{{ ft.name }} — Template Maker{% endblock %}
 {% block content %}
 <div class="page-header">
-    <h1><iconify-icon icon="lucide:package"></iconify-icon> {{ ft.name }}</h1>
+    <h1 title="{{ ft.name }}"><iconify-icon icon="lucide:package"></iconify-icon> {{ ft.name }}</h1>
     <div class="actions">
         <a class="btn" href="/templater/filled-templates"><iconify-icon icon="lucide:arrow-left"></iconify-icon> К списку</a>
         {% if ft.message_template_id %}
@@ -17,80 +17,5 @@
 </div>
 {% include "partials/saved_banner.html" %}
 
-<div x-data="{
-    /*
-     * Copy the *original* filled body from /raw, NOT textContent of the
-     * highlighted <pre>: render_filled_html() re-serializes JSON/XML for
-     * display, which would drop original whitespace, XML declarations and
-     * comments. The /raw endpoint serves the exact stored filled_content.
-     */
-    copy() {
-        fetch('/templater/filled-templates/{{ ft.id }}/raw')
-            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-            .then(t => navigator.clipboard.writeText(t))
-            .then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Скопировано' } })))
-            .catch(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Не удалось скопировать', type: 'error' } })));
-    }
-}">
-
-    <section style="margin-top:14px;">
-        <h3>Параметры подстановки</h3>
-        <table class="data-table">
-            <thead><tr><th>Роль</th><th>Сущность</th></tr></thead>
-            <tbody>
-                <tr>
-                    <td>Шаблон</td>
-                    <td>
-                        {% if ft.message_template_id %}
-                            <a href="/templater/templates?template={{ ft.message_template_id }}">{{ ft.template_name_snapshot or '—' }}</a>
-                        {% else %}
-                            <span class="muted">{{ ft.template_name_snapshot or '—' }} (удалён)</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                <tr>
-                    <td>Проект</td>
-                    <td>
-                        {% if ft.project_name_snapshot | default('') %}
-                            <span class="project-badge"><span class="project-dot" style="background: {{ ft.project_color_snapshot or '#9E9E9E' }}"></span>{{ ft.project_name_snapshot }}</span>
-                        {% else %}
-                            <span class="muted">—</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% for role, title, label in role_rows %}
-                    <tr>
-                        <td>{{ title }}</td>
-                        <td>
-                            {% set cid = role_client_ids.get(role) %}
-                            {% if cid and cid in alive_client_ids %}
-                                <a href="/templater/clients/{{ cid }}">{{ label or '—' }}</a>
-                            {% elif cid %}
-                                <span class="muted">{{ label or '—' }} (удалён)</span>
-                            {% else %}
-                                <span class="muted">{{ label or '—' }}</span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                {% endfor %}
-                <tr>
-                    <td>Создан</td>
-                    <td>{{ ft.created_at.strftime('%d.%m.%Y %H:%M:%S') if ft.created_at else '' }}</td>
-                </tr>
-            </tbody>
-        </table>
-    </section>
-
-    {% with unresolved = ft.unresolved %}
-        {% include "partials/unresolved_notice.html" %}
-    {% endwith %}
-
-    <div class="form-actions" style="margin-top:18px;">
-        <button class="btn primary" type="button" @click="copy()"><iconify-icon icon="lucide:clipboard-copy"></iconify-icon> Копировать</button>
-    </div>
-
-    <h3 style="margin-top:18px;">Результат</h3>
-    <pre class="template-code">{{ rendered_html | safe }}</pre>
-
-</div>
+{% include "partials/filled_panel.html" %}
 {% endblock %}

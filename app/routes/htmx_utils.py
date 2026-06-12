@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 from fastapi import Request
@@ -19,6 +20,36 @@ def form_str(form: FormData, key: str) -> str:
 
 def form_bool(form: FormData, key: str) -> bool:
     return form_str(form, key).lower() in {"1", "true", "yes", "on"}
+
+
+def parse_json_path(raw: str) -> list[str]:
+    """Decode a folder path sent as a JSON array of segments (empty/absent ⇒ root)."""
+
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return []
+    if not isinstance(value, list):
+        return []
+    return [str(seg).strip() for seg in value if str(seg).strip()]
+
+
+def parse_uuid_list(raw: str) -> list[uuid.UUID]:
+    """Decode a comma-separated UUID list (drag-and-drop ``order`` payloads)."""
+
+    out: list[uuid.UUID] = []
+    for item in (raw or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            out.append(uuid.UUID(item))
+        except ValueError:
+            continue
+    return out
 
 
 def read_entity_attributes(form: FormData, schema: list[AttributeDefinition]) -> dict[str, Any]:

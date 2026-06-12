@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from types import SimpleNamespace
@@ -73,9 +74,18 @@ def install_page_fill_fakes(monkeypatch: pytest.MonkeyPatch, template: Any) -> N
     async def fake_list_all(self: object) -> list[object]:
         return []
 
+    async def fake_list_folder_paths(self: object) -> list[list[str]]:
+        return [["Проект"], ["Проект", "Релиз"]]
+
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
     monkeypatch.setattr(templates_reg.ClientService, "list_all", fake_list_all)
     monkeypatch.setattr(templates_reg, "_fill_labels", fake_fill_labels)
+    # page_fill feeds the «Сохранить в папку» selector from the filled-templates
+    # service; patch the method so the fake session never reaches the DB.
+    monkeypatch.setattr(
+        "app.services.filled_templates.FilledTemplateService.list_folder_paths",
+        fake_list_folder_paths,
+    )
 
 
 def test_entity_form_uses_htmx_update_without_static_js() -> None:
@@ -291,28 +301,113 @@ def test_unresolved_notice_empty_renders_nothing() -> None:
     assert html.strip() == ""
 
 
-def test_filled_templates_table_copy_fetch_uses_templater_prefix() -> None:
+def _filled_item(**overrides: object) -> SimpleNamespace:
+    base: dict[str, object] = {
+        "id": "3db678b1-1111-2222-3333-444444444444",
+        "name": "Filled",
+        "unresolved": [],
+        "message_template_id": None,
+        "template_name_snapshot": None,
+        "format": "json",
+        "role_labels_snapshot": {},
+        "created_at": None,
+        "folder_path": [],
+        "display_order": 0,
+        "http_method_snapshot": "POST",
+        "url_snapshot": "https://api.example.com/v1/transfer",
+        "project_name_snapshot": "",
+        "project_color_snapshot": "",
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _filled_tree_context(items: list[SimpleNamespace]) -> dict[str, object]:
+    from app.services.collections import build_folder_tree
+
+    return {
+        "tree": build_folder_tree(cast(Any, items), extra_folders=[["Проект", "Релиз"]]),
+        "count": len(items),
+        "search": "",
+        "list_limit": 200,
+        "truncated": False,
+    }
+
+
+def test_filled_tree_uses_templater_prefix_and_dnd_metadata() -> None:
+    item = _filled_item(
+        folder_path=["Проект"],
+        created_at=datetime(2026, 6, 11, 12, 0),
+    )
+    html = render_template("partials/filled_tree.html", _filled_tree_context([item]))
+
+    # All htmx endpoints carry the /templater prefix.
+    assert 'hx-post="/templater/filled-templates-htmx/folders"' in html
+    assert 'hx-post="/templater/filled-templates-htmx/folders/rename"' in html
+    assert 'hx-delete="/templater/filled-templates-htmx/folders"' in html
+    assert (
+        'hx-get="/templater/filled-templates-htmx/3db678b1-1111-2222-3333-444444444444/panel"'
+        in html
+    )
+    # Drag-and-drop metadata: item id and JSON folder paths on every list.
+    assert 'data-id="3db678b1-1111-2222-3333-444444444444"' in html
+    assert 'data-folder-path="[]"' in html
+    assert "data-folder-path=" in html
+    # Long names stay readable: folder and item names carry title tooltips.
+    assert 'class="tree-name" title="Filled"' in html
+    assert 'title="Проект"' in html
+    # Explicit empty folders are seeded into the tree.
+    assert "Релиз" in html
+    # Every folder operation carries the current search filter along so the
+    # refreshed tree keeps the user's filter (rename, create x2, delete).
+    assert html.count('hx-include=".tree-search"') >= 4
+
+
+def test_filled_panel_copy_fetch_uses_templater_prefix() -> None:
     html = render_template(
-        "partials/filled_templates_table.html",
+        "partials/filled_panel.html",
         {
-            "filled_templates": [
-                SimpleNamespace(
-                    id="3db678b1-1111-2222-3333-444444444444",
-                    name="Filled",
-                    unresolved=[],
-                    message_template_id=None,
-                    template_name_snapshot=None,
-                    format="json",
-                    role_labels_snapshot={},
-                    created_at=None,
-                )
-            ],
-            "truncated": False,
+            "ft": _filled_item(),
+            "rendered_html": "{}",
+            "role_rows": [],
+            "role_client_ids": {},
+            "alive_client_ids": set(),
+            "standalone": False,
         },
     )
 
     assert "fetch('/templater/filled-templates/3db678b1-1111-2222-3333-444444444444/raw')" in html
     assert "fetch('/filled-templates/" not in html
+    # Panel-mode delete returns the empty-state and refreshes the tree.
+    assert (
+        'hx-delete="/templater/filled-templates-htmx/3db678b1-1111-2222-3333-444444444444?panel=1"'
+        in html
+    )
+    # Execution snapshot (future "send request") is surfaced.
+    assert "https://api.example.com/v1/transfer" in html
+
+
+def test_filled_workspace_wires_tree_and_panel() -> None:
+    html = render_template(
+        "filled_templates/workspace.html",
+        {
+            "open_filled_id": "",
+            **_filled_tree_context([]),
+            "search": "перевод",
+        },
+    )
+
+    tree = start_tag_by_id(html, "div", "filled-tree")
+    assert tree.get("hx-get") == "/templater/filled-templates-htmx/tree"
+    assert tree.get("hx-trigger") == "refresh-filled-tree from:body"
+    assert start_tag_by_id(html, "section", "filled-panel")
+    assert "filled-templates-htmx/move" in html
+    # The search box restores the active filter after a full page load …
+    search_inputs = [t for t in start_tags(html, "input") if t.get("name") == "search"]
+    assert len(search_inputs) == 1
+    assert search_inputs[0].get("value") == "перевод"
+    # … and drag-and-drop sends it along with the move request.
+    assert "search: searchInput ? searchInput.value : ''" in html
 
 
 def test_entity_list_has_table_meta_and_detail_drawer() -> None:
