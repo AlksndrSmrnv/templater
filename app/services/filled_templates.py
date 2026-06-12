@@ -41,21 +41,17 @@ _ROLES: tuple[str, ...] = ("sender", "receiver", "accountOwner")
 FILLED_ROOT_FOLDERS_KEY = "filled_root_folders"
 
 
-def _all_folder_paths(
-    explicit_folders: list[list[str]],
-    items: list[FilledTemplate],
-) -> set[tuple[str, ...]]:
-    """Every folder path that exists, including intermediate prefixes — both
-    explicit (the app setting) and the ones implied by item ``folder_path``s."""
+def _expand_prefixes(paths: list[list[str]]) -> set[tuple[str, ...]]:
+    """Every folder path implied by ``paths``, including intermediate
+    prefixes — e.g. ``["A", "B"]`` contributes both ``("A",)`` and
+    ``("A", "B")``."""
 
-    paths: set[tuple[str, ...]] = set()
-    sources: list[list[str]] = list(explicit_folders or [])
-    sources.extend((item.folder_path or []) for item in items)
-    for raw in sources:
+    out: set[tuple[str, ...]] = set()
+    for raw in paths:
         segments = _norm_path(raw)
         for i in range(1, len(segments) + 1):
-            paths.add(tuple(segments[:i]))
-    return paths
+            out.add(tuple(segments[:i]))
+    return out
 
 
 def _truncate(text: str, *, limit: int = NAME_MAX_LEN) -> str:
@@ -170,18 +166,14 @@ class FilledTemplateService:
         await self.repo.delete(item)
 
     # ---- folder tree (mirrors CollectionService, single root namespace) ----
+    #
+    # Folder checks work on lightweight ``folder_path`` projections instead of
+    # full ORM rows: existence/emptiness needs paths only, and rename loads
+    # complete rows solely for the descendants it actually re-prefixes — so
+    # the operations stay cheap as the table grows.
 
-    async def _folder_context(self) -> tuple[list[list[str]], list[FilledTemplate]]:
-        """Explicit folder list (app setting) plus *all* filled templates.
-
-        ``limit=None`` is essential: with the default page cap a rename would
-        re-prefix only the newest rows and a delete could mistake a folder
-        holding older rows for an empty one.
-        """
-
-        folders = list(await self.settings.get(FILLED_ROOT_FOLDERS_KEY) or [])
-        items = await self.repo.list_all(limit=None)
-        return folders, items
+    async def _explicit_folders(self) -> list[list[str]]:
+        return list(await self.settings.get(FILLED_ROOT_FOLDERS_KEY) or [])
 
     async def _save_folders(self, folders: list[list[str]]) -> None:
         await self.settings.set(FILLED_ROOT_FOLDERS_KEY, folders)
@@ -209,13 +201,13 @@ class FilledTemplateService:
     async def create_folder(self, parent_path: list[str], name: str) -> list[str]:
         """Add an (initially empty) folder under ``parent_path``."""
 
-        folders, items = await self._folder_context()
+        folders = await self._explicit_folders()
         parent = _norm_path(parent_path)
         clean_name = name.strip()
         if not clean_name:
             raise ValidationFailed("Имя папки не может быть пустым")
         new_path = [*parent, clean_name]
-        existing = _all_folder_paths(folders, items)
+        existing = _expand_prefixes([*folders, *await self.repo.list_folder_paths()])
         if parent and tuple(parent) not in existing:
             raise ValidationFailed("Родительская папка не найдена")
         if tuple(new_path) in existing:
@@ -227,7 +219,8 @@ class FilledTemplateService:
         """Rename the folder at ``path``, re-prefixing every descendant folder
         path on both filled templates and the explicit folder list."""
 
-        folders, items = await self._folder_context()
+        folders = await self._explicit_folders()
+        pairs = await self.repo.list_ids_with_paths()
         old_path = _norm_path(path)
         if not old_path:
             raise ValidationFailed("Не указана папка для переименования")
@@ -236,7 +229,7 @@ class FilledTemplateService:
             raise ValidationFailed("Имя папки не может быть пустым")
         new_path = [*old_path[:-1], clean_name]
 
-        all_paths = _all_folder_paths(folders, items)
+        all_paths = _expand_prefixes([*folders, *[fp for _, fp in pairs]])
         # Validate the folder exists *before* the no-op short-circuit, otherwise
         # renaming a missing folder to its own name would falsely report success.
         if tuple(old_path) not in all_paths:
@@ -249,10 +242,13 @@ class FilledTemplateService:
         if tuple(new_path) in others:
             raise ValidationFailed("Папка с таким именем уже существует")
 
-        for item in items:
+        # Load full rows only for the descendants that actually move.
+        descendant_ids = [
+            row_id for row_id, fp in pairs if _starts_with(_norm_path(fp), old_path)
+        ]
+        for item in await self.repo.get_many(descendant_ids):
             fp = _norm_path(item.folder_path)
-            if _starts_with(fp, old_path):
-                item.folder_path = [*new_path, *fp[len(old_path):]]
+            item.folder_path = [*new_path, *fp[len(old_path):]]
 
         updated_folders: list[list[str]] = []
         for raw in folders:
@@ -268,14 +264,15 @@ class FilledTemplateService:
         """Delete an empty folder. Refuses if any filled template or sub-folder
         lives under it — the caller must move/remove the contents first."""
 
-        folders, items = await self._folder_context()
+        folders = await self._explicit_folders()
+        item_paths = await self.repo.list_folder_paths()
         target = _norm_path(path)
         if not target:
             raise ValidationFailed("Не указана папка для удаления")
-        if tuple(target) not in _all_folder_paths(folders, items):
+        if tuple(target) not in _expand_prefixes([*folders, *item_paths]):
             raise ValidationFailed("Папка не найдена")
         has_items = any(
-            _starts_with(_norm_path(item.folder_path), target) for item in items
+            _starts_with(_norm_path(fp), target) for fp in item_paths
         )
         has_children = any(
             len(p := _norm_path(raw)) > len(target) and _starts_with(p, target)
@@ -311,11 +308,9 @@ class FilledTemplateService:
         target_folder = _norm_path(target_folder_path)
         item.folder_path = target_folder
 
-        siblings = [
-            row
-            for row in await self.repo.list_all(limit=None)
-            if _norm_path(row.folder_path) == target_folder
-        ]
+        # Only the target folder's rows are loaded; the pending folder change
+        # above is autoflushed before the query, so the moved item is included.
+        siblings = await self.repo.list_by_folder(target_folder)
         full = sorted(siblings, key=lambda row: (row.display_order, row.created_at))
         by_id = {row.id: row for row in full}
         payload: list[uuid.UUID] = []
@@ -335,8 +330,9 @@ class FilledTemplateService:
     async def list_folder_paths(self) -> list[list[str]]:
         """Sorted unique folder paths — feeds the «Сохранить в папку» selector."""
 
-        folders, items = await self._folder_context()
-        return [list(p) for p in sorted(_all_folder_paths(folders, items))]
+        folders = await self._explicit_folders()
+        implied = await self.repo.list_folder_paths()
+        return [list(p) for p in sorted(_expand_prefixes([*folders, *implied]))]
 
     async def save_from_fill(
         self,
@@ -354,13 +350,17 @@ class FilledTemplateService:
         name = build_auto_name(template.name, role_labels, moment)
         # getattr-safe: test doubles may not carry the project relationship.
         project = getattr(template, "project", None)
+        target_folder = _norm_path(folder_path)
         item = FilledTemplate(
             name=name,
             format=template.format,
             filled_content=rendered,
             changed_locations=list(changed or []),
             unresolved=list(unresolved or []),
-            folder_path=_norm_path(folder_path),
+            folder_path=target_folder,
+            # Append after the folder's manually ordered siblings — a default
+            # of 0 would jump the new row to the top of a sorted folder.
+            display_order=await self.repo.next_display_order(target_folder),
             # HTTP request snapshot for the future "send request" feature —
             # copied now so it survives source-template edits and deletes.
             # getattr-safe like ``project`` above.

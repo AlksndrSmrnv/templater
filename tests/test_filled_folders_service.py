@@ -37,11 +37,34 @@ class _FakeFilledRepo:
         if term:
             rows = [i for i in rows if term in i.name.lower()]
         # ``rows[:None]`` returns everything — mirrors the real repo where
-        # ``limit=None`` disables the cap (essential for folder operations).
+        # ``limit=None`` disables the cap.
         return list(rows[:limit])
 
     async def get(self, filled_id: uuid.UUID) -> SimpleNamespace | None:
         return next((i for i in self.items if i.id == filled_id), None)
+
+    async def get_many(self, ids):  # type: ignore[no-untyped-def]
+        wanted = set(ids)
+        return [i for i in self.items if i.id in wanted]
+
+    # Lightweight projections — mirror the real repo, which selects paths
+    # (not full rows) so folder checks scale with the table size.
+    async def list_folder_paths(self) -> list[list[str]]:
+        return [list(i.folder_path or []) for i in self.items]
+
+    async def list_ids_with_paths(self) -> list[tuple[uuid.UUID, list[str]]]:
+        return [(i.id, list(i.folder_path or [])) for i in self.items]
+
+    async def list_by_folder(self, folder_path: list[str]) -> list[SimpleNamespace]:
+        return [i for i in self.items if list(i.folder_path or []) == list(folder_path)]
+
+    async def next_display_order(self, folder_path: list[str]) -> int:
+        orders = [
+            i.display_order
+            for i in self.items
+            if list(i.folder_path or []) == list(folder_path)
+        ]
+        return (max(orders) + 1) if orders else 0
 
 
 class _FakeSettingsRepo:
@@ -232,7 +255,8 @@ async def test_move_filled_keeps_hidden_siblings_without_duplicate_order() -> No
 @pytest.mark.asyncio
 async def test_folder_ops_see_items_beyond_default_page() -> None:
     # 200 newer root items push the lone folder item past the default page —
-    # folder ops must still see it (they list with limit=None).
+    # folder ops must still see it (they read unbounded path projections,
+    # not the capped tree listing).
     newer = [_item(f"new-{i}", [], i) for i in range(200)]
     old_inside = _item("old", ["Папка"], 0)
     settings = _FakeSettingsRepo({FILLED_ROOT_FOLDERS_KEY: [["Папка"]]})

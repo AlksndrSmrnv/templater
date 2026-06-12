@@ -399,15 +399,16 @@ def test_repository_list_all_defers_heavy_columns_and_limits() -> None:
 
     repo = FilledTemplateRepository(session=cast(Any, None))
     # Build the same query list_all would issue. We mirror its construction
-    # rather than calling it (calling it would need a real AsyncSession).
+    # rather than calling it (calling it would need a real AsyncSession),
+    # reusing the repo's own defer list so the mirror can't drift from it.
     from sqlalchemy import or_, select
-    from sqlalchemy.orm import defer
 
     from app.db.models import FilledTemplate as FT
+    from app.repositories.filled_template import _LIST_DEFERS
 
     stmt = (
         select(FT)
-        .options(defer(FT.filled_content), defer(FT.changed_locations))
+        .options(*_LIST_DEFERS)
         .order_by(FT.created_at.desc())
         .limit(DEFAULT_LIST_LIMIT)
     )
@@ -419,6 +420,7 @@ def test_repository_list_all_defers_heavy_columns_and_limits() -> None:
     sql = str(compiled).lower()
     assert "filled_content" not in sql, "filled_content must be deferred"
     assert "changed_locations" not in sql, "changed_locations must be deferred"
+    assert "headers_snapshot" not in sql, "headers_snapshot must be deferred"
     assert "limit" in sql
 
     # Confirm a search-mode query keeps both invariants.
@@ -428,6 +430,21 @@ def test_repository_list_all_defers_heavy_columns_and_limits() -> None:
     sql_search = str(stmt_search.compile(compile_kwargs={"literal_binds": True})).lower()
     assert "filled_content" not in sql_search
     assert "limit" in sql_search
+
+    # list_by_template (the «связанные заполненные шаблоны» panel) renders
+    # only name/date links — it must defer the same heavy columns.
+    stmt_by_template = (
+        select(FT)
+        .options(*_LIST_DEFERS)
+        .where(FT.message_template_id.is_not(None))
+        .order_by(FT.created_at.desc())
+        .limit(DEFAULT_LIST_LIMIT)
+    )
+    sql_by_template = str(
+        stmt_by_template.compile(compile_kwargs={"literal_binds": True})
+    ).lower()
+    assert "filled_content" not in sql_by_template
+    assert "headers_snapshot" not in sql_by_template
 
 
 # ---------------------------------------------------------------------------
@@ -439,14 +456,21 @@ from app.services.filled_templates import FilledTemplateService  # noqa: E402
 
 
 class _SnapshotSession:
-    def __init__(self) -> None:
+    def __init__(self, *, max_display_order: int = -1) -> None:
         self.added: list[Any] = []
+        # What the ``next_display_order`` aggregate "finds" in the target
+        # folder; -1 mirrors an empty folder (COALESCE(MAX(...), -1)).
+        self._max_display_order = max_display_order
 
     def add(self, obj: Any) -> None:
         self.added.append(obj)
 
     async def flush(self) -> None:
         return None
+
+    async def execute(self, stmt: Any) -> Any:
+        value = self._max_display_order
+        return SimpleNamespace(scalar_one=lambda: value)
 
 
 @pytest.mark.asyncio
@@ -520,6 +544,26 @@ async def test_save_from_fill_snapshots_http_request_and_folder() -> None:
     assert saved.headers_snapshot == [
         {"key": "RqUID", "value": "{{rqUID}}", "mode": "dynamic"}
     ]
+    assert saved.display_order == 0  # first row in an empty folder
+
+
+@pytest.mark.asyncio
+async def test_save_from_fill_appends_after_ordered_siblings() -> None:
+    # A folder whose siblings were manually ordered up to 4: the new row must
+    # land *after* them (display_order=5), not at 0 where it would jump to the
+    # top and collide with the existing first item.
+    session = _SnapshotSession(max_display_order=4)
+    template = SimpleNamespace(id=uuid.uuid4(), name="A2A", format="json")
+    saved = await FilledTemplateService(cast(Any, session)).save_from_fill(
+        template=cast(Any, template),
+        fill_request=TemplateFillRequest(),
+        rendered="{}",
+        changed=[],
+        unresolved=[],
+        folder_path=["Проект"],
+        now=_now(),
+    )
+    assert saved.display_order == 5
 
 
 @pytest.mark.asyncio
@@ -538,3 +582,4 @@ async def test_save_from_fill_defaults_when_http_fields_and_folder_absent() -> N
     assert saved.http_method_snapshot == ""
     assert saved.url_snapshot == ""
     assert saved.headers_snapshot == []
+    assert saved.display_order == 0
