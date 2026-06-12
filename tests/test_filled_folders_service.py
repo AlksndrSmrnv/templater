@@ -29,19 +29,19 @@ class _FakeFilledRepo:
     def __init__(self, items: list[SimpleNamespace]) -> None:
         self.items = items
 
-    async def list_all(self, *, search: str = "", limit: int = 200) -> list[SimpleNamespace]:
+    async def list_all(
+        self, *, search: str = "", limit: int | None = 200
+    ) -> list[SimpleNamespace]:
         term = search.strip().lower()
         rows = self.items
         if term:
             rows = [i for i in rows if term in i.name.lower()]
+        # ``rows[:None]`` returns everything — mirrors the real repo where
+        # ``limit=None`` disables the cap (essential for folder operations).
         return list(rows[:limit])
 
     async def get(self, filled_id: uuid.UUID) -> SimpleNamespace | None:
         return next((i for i in self.items if i.id == filled_id), None)
-
-    async def get_many(self, ids):  # type: ignore[no-untyped-def]
-        wanted = set(ids)
-        return [i for i in self.items if i.id in wanted]
 
 
 class _FakeSettingsRepo:
@@ -209,6 +209,40 @@ async def test_move_filled_ignores_non_sibling_ids_in_order() -> None:
     await svc.move_filled(t1.id, ["A"], [t1.id, elsewhere.id])
     assert t1.display_order == 0
     assert elsewhere.display_order == 7  # untouched
+
+
+@pytest.mark.asyncio
+async def test_move_filled_keeps_hidden_siblings_without_duplicate_order() -> None:
+    # Search/truncation can hide part of a folder from the client: the DnD
+    # payload then covers only the visible items. Hidden siblings must keep
+    # their slots and the folder must end up renumbered without duplicates.
+    hidden = _item("hidden", ["F"], 0)
+    v1 = _item("v1", ["F"], 1)
+    v2 = _item("v2", ["F"], 2)
+    svc = _service([hidden, v1, v2])
+
+    # The user sees only v1/v2 and drags v2 above v1.
+    await svc.move_filled(v2.id, ["F"], [v2.id, v1.id])
+    assert hidden.display_order == 0  # hidden slot preserved
+    assert v2.display_order == 1 and v1.display_order == 2
+    orders = [hidden.display_order, v1.display_order, v2.display_order]
+    assert len(set(orders)) == len(orders), "display_order must stay unique"
+
+
+@pytest.mark.asyncio
+async def test_folder_ops_see_items_beyond_default_page() -> None:
+    # 200 newer root items push the lone folder item past the default page —
+    # folder ops must still see it (they list with limit=None).
+    newer = [_item(f"new-{i}", [], i) for i in range(200)]
+    old_inside = _item("old", ["Папка"], 0)
+    settings = _FakeSettingsRepo({FILLED_ROOT_FOLDERS_KEY: [["Папка"]]})
+    svc = _service([*newer, old_inside], settings=settings)
+
+    with pytest.raises(ValidationFailed):
+        await svc.delete_folder(["Папка"])  # NOT empty: holds the 201st item
+
+    await svc.rename_folder(["Папка"], "Папка v2")
+    assert old_inside.folder_path == ["Папка v2"]  # 201st item re-prefixed
 
 
 @pytest.mark.asyncio

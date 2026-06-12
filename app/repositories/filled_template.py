@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +24,7 @@ class FilledTemplateRepository:
         self,
         *,
         search: str = "",
-        limit: int = DEFAULT_LIST_LIMIT,
+        limit: int | None = DEFAULT_LIST_LIMIT,
     ) -> list[FilledTemplate]:
         """Return up to ``limit`` rows with heavy text columns deferred.
 
@@ -35,6 +34,11 @@ class FilledTemplateRepository:
         returned row would trigger an extra SELECT. Templates rendering this
         list MUST NOT read those attributes — use ``get()`` for the detail
         page instead.
+
+        ``limit=None`` disables the cap — folder operations (rename/delete/
+        move) must see *every* row, otherwise a rename would re-prefix only
+        the newest page and a delete could mistake a non-empty folder for an
+        empty one.
         """
 
         stmt = (
@@ -45,8 +49,9 @@ class FilledTemplateRepository:
                 defer(FilledTemplate.headers_snapshot),
             )
             .order_by(FilledTemplate.created_at.desc())
-            .limit(limit)
         )
+        if limit is not None:
+            stmt = stmt.limit(limit)
         term = search.strip()
         if term:
             like = f"%{term}%"
@@ -82,22 +87,6 @@ class FilledTemplateRepository:
 
     async def get(self, filled_id: uuid.UUID) -> FilledTemplate | None:
         return await self.session.get(FilledTemplate, filled_id)
-
-    async def get_many(self, ids: Sequence[uuid.UUID]) -> list[FilledTemplate]:
-        """Rows by id (heavy columns deferred) — used by move/renumber."""
-
-        if not ids:
-            return []
-        stmt = (
-            select(FilledTemplate)
-            .options(
-                defer(FilledTemplate.filled_content),
-                defer(FilledTemplate.changed_locations),
-                defer(FilledTemplate.headers_snapshot),
-            )
-            .where(FilledTemplate.id.in_(ids))
-        )
-        return list((await self.session.execute(stmt)).scalars().all())
 
     async def add(self, item: FilledTemplate) -> FilledTemplate:
         self.session.add(item)

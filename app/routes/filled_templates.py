@@ -190,6 +190,9 @@ async def htmx_create_folder(
     form = await request.form()
     parent = parse_json_path(form_str(form, "parent"))
     name = form_str(form, "name")
+    # The current search filter rides along (hx-include=".tree-search") so the
+    # refreshed tree keeps showing what the user was looking at.
+    search = form_str(form, "search")
     try:
         await FilledTemplateService(session).create_folder(parent, name)
         await commit_or_409(session)
@@ -199,12 +202,14 @@ async def htmx_create_folder(
             request,
             templates,
             session,
+            search=search,
             headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
         )
     return await _tree_response(
         request,
         templates,
         session,
+        search=search,
         headers={"HX-Trigger": toast_header(f"Папка «{name.strip()}» создана")},
     )
 
@@ -218,6 +223,7 @@ async def htmx_rename_folder(
     form = await request.form()
     path = parse_json_path(form_str(form, "path"))
     name = form_str(form, "name")
+    search = form_str(form, "search")
     try:
         await FilledTemplateService(session).rename_folder(path, name)
         await commit_or_409(session)
@@ -227,12 +233,14 @@ async def htmx_rename_folder(
             request,
             templates,
             session,
+            search=search,
             headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
         )
     return await _tree_response(
         request,
         templates,
         session,
+        search=search,
         headers={"HX-Trigger": toast_header("Папка переименована")},
     )
 
@@ -243,12 +251,15 @@ async def htmx_delete_folder(
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
 ) -> Response:
-    # htmx 2.x encodes DELETE params (hx-vals) in the URL query string (config
-    # ``methodsThatUseUrlParams`` defaults to ['get','delete']); fall back to
-    # the form body for safety.
+    # htmx 2.x encodes DELETE params (hx-vals and included inputs) in the URL
+    # query string (config ``methodsThatUseUrlParams`` defaults to
+    # ['get','delete']); fall back to the form body for safety.
     raw = request.query_params.get("path", "")
+    search = request.query_params.get("search", "")
     if not raw:
-        raw = form_str(await request.form(), "path")
+        form = await request.form()
+        raw = form_str(form, "path")
+        search = search or form_str(form, "search")
     path = parse_json_path(raw)
     try:
         await FilledTemplateService(session).delete_folder(path)
@@ -259,12 +270,14 @@ async def htmx_delete_folder(
             request,
             templates,
             session,
+            search=search,
             headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
         )
     return await _tree_response(
         request,
         templates,
         session,
+        search=search,
         headers={"HX-Trigger": toast_header("Папка удалена")},
     )
 
@@ -276,6 +289,7 @@ async def htmx_move(
     session: AsyncSession = SessionDep,
 ) -> Response:
     form = await request.form()
+    search = form_str(form, "search")
     try:
         filled_id = uuid.UUID(form_str(form, "filled_id"))
     except ValueError:
@@ -283,6 +297,7 @@ async def htmx_move(
             request,
             templates,
             session,
+            search=search,
             headers={"HX-Trigger": toast_header("Некорректный запрос", toast_type="error")},
         )
     folder = parse_json_path(form_str(form, "folder"))
@@ -296,9 +311,10 @@ async def htmx_move(
             request,
             templates,
             session,
+            search=search,
             headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
         )
-    return await _tree_response(request, templates, session)
+    return await _tree_response(request, templates, session, search=search)
 
 
 @router.get("/filled-templates-htmx/{filled_id}/panel")

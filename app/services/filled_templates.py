@@ -172,10 +172,15 @@ class FilledTemplateService:
     # ---- folder tree (mirrors CollectionService, single root namespace) ----
 
     async def _folder_context(self) -> tuple[list[list[str]], list[FilledTemplate]]:
-        """Explicit folder list (app setting) plus all filled templates."""
+        """Explicit folder list (app setting) plus *all* filled templates.
+
+        ``limit=None`` is essential: with the default page cap a rename would
+        re-prefix only the newest rows and a delete could mistake a folder
+        holding older rows for an empty one.
+        """
 
         folders = list(await self.settings.get(FILLED_ROOT_FOLDERS_KEY) or [])
-        items = await self.repo.list_all()
+        items = await self.repo.list_all(limit=None)
         return folders, items
 
     async def _save_folders(self, folders: list[list[str]]) -> None:
@@ -291,27 +296,40 @@ class FilledTemplateService:
         order: list[uuid.UUID],
     ) -> None:
         """Move a filled template into ``target_folder_path`` and renumber
-        ``display_order`` for the target folder's siblings according to
-        ``order``. Handles intra-folder reorder and moves between folders."""
+        ``display_order`` across the target folder's siblings.
+
+        ``order`` carries the ids the client currently *sees* — the tree may
+        be filtered by search or truncated, so it can be a subset of the
+        folder. Visible items are re-sequenced in payload order across the
+        slots they currently occupy; hidden siblings keep their positions.
+        The whole folder is renumbered 0..n-1, so a partial payload can never
+        produce duplicate ``display_order`` values. Ids that don't belong to
+        the folder (crafted or stale payloads) are ignored.
+        """
 
         item = await self.get(filled_id)
         target_folder = _norm_path(target_folder_path)
         item.folder_path = target_folder
 
-        # Renumber only across rows that actually live in the target folder
-        # (after the move) — a crafted or stale ``order`` payload must not
-        # reshuffle unrelated rows elsewhere.
-        if order:
-            siblings = {row.id: row for row in await self.repo.get_many(order)}
-            position = 0
-            for sibling_id in order:
-                sibling = siblings.get(sibling_id)
-                if sibling is None:
-                    continue
-                if _norm_path(sibling.folder_path) != target_folder:
-                    continue
-                sibling.display_order = position
-                position += 1
+        siblings = [
+            row
+            for row in await self.repo.list_all(limit=None)
+            if _norm_path(row.folder_path) == target_folder
+        ]
+        full = sorted(siblings, key=lambda row: (row.display_order, row.created_at))
+        by_id = {row.id: row for row in full}
+        payload: list[uuid.UUID] = []
+        payload_ids: set[uuid.UUID] = set()
+        for raw_id in order:
+            if raw_id in by_id and raw_id not in payload_ids:
+                payload.append(raw_id)
+                payload_ids.add(raw_id)
+        payload_iter = iter(payload)
+        resequenced = (
+            by_id[next(payload_iter)] if row.id in payload_ids else row for row in full
+        )
+        for position, row in enumerate(resequenced):
+            row.display_order = position
         await self.session.flush()
 
     async def list_folder_paths(self) -> list[list[str]]:

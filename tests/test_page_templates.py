@@ -358,6 +358,9 @@ def test_filled_tree_uses_templater_prefix_and_dnd_metadata() -> None:
     assert 'title="Проект"' in html
     # Explicit empty folders are seeded into the tree.
     assert "Релиз" in html
+    # Every folder operation carries the current search filter along so the
+    # refreshed tree keeps the user's filter (rename, create x2, delete).
+    assert html.count('hx-include=".tree-search"') >= 4
 
 
 def test_filled_panel_copy_fetch_uses_templater_prefix() -> None:
@@ -390,6 +393,7 @@ def test_filled_workspace_wires_tree_and_panel() -> None:
         {
             "open_filled_id": "",
             **_filled_tree_context([]),
+            "search": "перевод",
         },
     )
 
@@ -398,6 +402,12 @@ def test_filled_workspace_wires_tree_and_panel() -> None:
     assert tree.get("hx-trigger") == "refresh-filled-tree from:body"
     assert start_tag_by_id(html, "section", "filled-panel")
     assert "filled-templates-htmx/move" in html
+    # The search box restores the active filter after a full page load …
+    search_inputs = [t for t in start_tags(html, "input") if t.get("name") == "search"]
+    assert len(search_inputs) == 1
+    assert search_inputs[0].get("value") == "перевод"
+    # … and drag-and-drop sends it along with the move request.
+    assert "search: searchInput ? searchInput.value : ''" in html
 
 
 def test_entity_list_has_table_meta_and_detail_drawer() -> None:

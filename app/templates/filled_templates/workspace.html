@@ -11,6 +11,7 @@
             <input class="tree-search"
                    type="search"
                    name="search"
+                   value="{{ search | default('') }}"
                    placeholder="Поиск по имени / шаблону…"
                    hx-get="/templater/filled-templates-htmx/tree"
                    hx-target="#filled-tree"
@@ -92,11 +93,15 @@
                         const order = Array.from(
                             target.querySelectorAll(':scope > li.tree-item')
                         ).map((li) => li.dataset.id).filter(Boolean);
+                        const searchInput = document.querySelector('.tree-search');
                         htmx.ajax('POST', '/templater/filled-templates-htmx/move', {
                             values: {
                                 filled_id: id,
                                 folder: target.dataset.folderPath || '[]',
                                 order: order.join(','),
+                                // Keep the current filter so the refreshed
+                                // tree shows what the user was looking at.
+                                search: searchInput ? searchInput.value : '',
                             },
                             target: '#filled-tree',
                             swap: 'innerHTML',
