@@ -327,17 +327,24 @@ _CARDS = [{"id": "K1", "account": "A1", "description": "карта"}]
 @pytest.mark.asyncio
 async def test_pick_transfer_template_returns_short_id() -> None:
     service = LLMService(FakeClient('{"template": "T1"}'))
-    assert await service.pick_transfer_template(request="x", templates=_TEMPLATES) == "T1"
+    chosen, debug = await service.pick_transfer_template(request="x", templates=_TEMPLATES)
+    assert chosen == "T1"
+    # The prompt/response are surfaced for the assistant's debug panel.
+    assert set(debug) == {"system_prompt", "user_prompt", "response_text"}
+    assert debug["response_text"] == '{"template": "T1"}'
 
 
 @pytest.mark.asyncio
 async def test_pick_transfer_template_handles_fence_and_null() -> None:
     fenced = LLMService(FakeClient('```json\n{"template": "T1"}\n```'))
-    assert await fenced.pick_transfer_template(request="x", templates=_TEMPLATES) == "T1"
+    chosen, _ = await fenced.pick_transfer_template(request="x", templates=_TEMPLATES)
+    assert chosen == "T1"
     none = LLMService(FakeClient('{"template": null}'))
-    assert await none.pick_transfer_template(request="x", templates=_TEMPLATES) is None
+    chosen, _ = await none.pick_transfer_template(request="x", templates=_TEMPLATES)
+    assert chosen is None
     garbage = LLMService(FakeClient("извините, не знаю"))
-    assert await garbage.pick_transfer_template(request="x", templates=_TEMPLATES) is None
+    chosen, _ = await garbage.pick_transfer_template(request="x", templates=_TEMPLATES)
+    assert chosen is None
 
 
 @pytest.mark.asyncio
@@ -347,7 +354,7 @@ async def test_pick_transfer_participants_normalizes_roles() -> None:
         ' "receiver": {"client": "C2"}}'
     )
     service = LLMService(FakeClient(text))
-    picks = await service.pick_transfer_participants(
+    picks, debug = await service.pick_transfer_participants(
         request="x", clients=_CLIENTS, accounts=_ACCOUNTS, cards=_CARDS,
         need_account_owner=False,
     )
@@ -355,6 +362,8 @@ async def test_pick_transfer_participants_normalizes_roles() -> None:
         "sender": {"client": "C1", "account": "A1", "card": None},
         "receiver": {"client": "C2", "account": None, "card": None},
     }
+    assert set(debug) == {"system_prompt", "user_prompt", "response_text"}
+    assert debug["response_text"] == text
 
 
 @pytest.mark.asyncio
@@ -362,7 +371,7 @@ async def test_pick_transfer_participants_drops_roles_without_client() -> None:
     # A role with no usable client short-id is dropped entirely.
     text = '{"sender": {"client": "C1"}, "receiver": {"account": "A9"}}'
     service = LLMService(FakeClient(text))
-    picks = await service.pick_transfer_participants(
+    picks, _ = await service.pick_transfer_participants(
         request="x", clients=_CLIENTS, accounts=_ACCOUNTS, cards=_CARDS,
         need_account_owner=False,
     )
@@ -372,7 +381,7 @@ async def test_pick_transfer_participants_drops_roles_without_client() -> None:
 @pytest.mark.asyncio
 async def test_pick_transfer_participants_tolerates_garbage() -> None:
     service = LLMService(FakeClient("не JSON вовсе"))
-    picks = await service.pick_transfer_participants(
+    picks, _ = await service.pick_transfer_participants(
         request="x", clients=_CLIENTS, accounts=_ACCOUNTS, cards=_CARDS,
         need_account_owner=True,
     )

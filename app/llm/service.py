@@ -158,27 +158,35 @@ class LLMService:
         *,
         request: str,
         templates: list[dict[str, str]],
-    ) -> str | None:
+    ) -> tuple[str | None, dict[str, str]]:
         """Ask the LLM to pick ONE template short-id for the transfer request.
 
-        Returns the chosen id (e.g. ``"T2"``) or ``None`` when the model declines
-        / returns garbage. Reuses the robust :meth:`_parse_json` recovery so a
-        fenced / prose-wrapped answer still resolves.
+        Returns ``(chosen, debug)`` where ``chosen`` is the picked id (e.g.
+        ``"T2"``) or ``None`` when the model declines / returns garbage, and
+        ``debug`` holds the prompt/response so the assistant can surface it.
+        Reuses the robust :meth:`_parse_json` recovery so a fenced / prose-wrapped
+        answer still resolves.
         """
 
         system_prompt, user_prompt = self.prompts.build_transfer_template_pick(
             request=request, templates=templates
         )
         response: ChatResponse = await self.client.chat(system_prompt, user_prompt)
+        debug = {
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "response_text": response.text,
+        }
         parsed = self._parse_json(response.text)
         if not isinstance(parsed, dict):
             log.warning(
                 "LLM pick_transfer_template returned non-dict. response_text[:200]=%r",
                 response.text[:200],
             )
-            return None
+            return None, debug
         chosen = parsed.get("template")
-        return chosen if isinstance(chosen, str) and chosen else None
+        chosen = chosen if isinstance(chosen, str) and chosen else None
+        return chosen, debug
 
     async def pick_transfer_participants(
         self,
@@ -188,12 +196,13 @@ class LLMService:
         accounts: list[dict[str, str]],
         cards: list[dict[str, str]],
         need_account_owner: bool,
-    ) -> dict[str, dict[str, str | None]]:
+    ) -> tuple[dict[str, dict[str, str | None]], dict[str, str]]:
         """Ask the LLM to pick participants (client/account/card per role).
 
-        Returns ``{role: {"client": "C1", "account": "A2"|None, "card": None}}``
-        for each role the model filled with a usable client. Roles without a
-        client are dropped.
+        Returns ``(picks, debug)`` where ``picks`` is
+        ``{role: {"client": "C1", "account": "A2"|None, "card": None}}`` for each
+        role the model filled with a usable client (roles without a client are
+        dropped), and ``debug`` holds the prompt/response for the panel.
         """
 
         system_prompt, user_prompt = self.prompts.build_transfer_participants(
@@ -204,13 +213,18 @@ class LLMService:
             need_account_owner=need_account_owner,
         )
         response: ChatResponse = await self.client.chat(system_prompt, user_prompt)
+        debug = {
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "response_text": response.text,
+        }
         parsed = self._parse_json(response.text)
         if not isinstance(parsed, dict):
             log.warning(
                 "LLM pick_transfer_participants returned non-dict. response_text[:200]=%r",
                 response.text[:200],
             )
-        return self._normalize_participants(parsed)
+        return self._normalize_participants(parsed), debug
 
     @staticmethod
     def _normalize_participants(parsed: Any) -> dict[str, dict[str, str | None]]:

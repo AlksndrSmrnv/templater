@@ -98,3 +98,14 @@ def test_fill_kwargs_maps_roles_to_fill_keys() -> None:
     # Untouched roles default to None across all nine keys.
     assert kwargs["receiver_client_id"] is None
     assert kwargs["account_owner_client_id"] is None
+
+
+def test_merge_debug_labels_both_llm_calls() -> None:
+    template = {"system_prompt": "ts", "user_prompt": "tu", "response_text": "tr"}
+    participants = {"system_prompt": "ps", "user_prompt": "pu", "response_text": "pr"}
+    merged = TransferAssistant._merge_debug(template=template, participants=participants)
+    assert set(merged) == {"system_prompt", "user_prompt", "response_text"}
+    # Each key carries both calls under their labelled sections.
+    assert merged["system_prompt"] == "### Подбор шаблона\nts\n\n### Подбор участников\nps"
+    assert "### Подбор шаблона\ntr" in merged["response_text"]
+    assert "### Подбор участников\npr" in merged["response_text"]
