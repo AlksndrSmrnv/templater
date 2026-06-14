@@ -123,7 +123,7 @@ class TransferAssistant:
             }
             for short_id, tpl in template_ids.items()
         ]
-        chosen_id = await llm_service.pick_transfer_template(
+        chosen_id, template_debug = await llm_service.pick_transfer_template(
             request=prompt, templates=catalog
         )
         template = template_ids.get(chosen_id) if chosen_id else None
@@ -172,7 +172,7 @@ class TransferAssistant:
         ]
 
         need_account_owner = template_has_account_owner(template)
-        picks = await llm_service.pick_transfer_participants(
+        picks, participants_debug = await llm_service.pick_transfer_participants(
             request=prompt,
             clients=clients_catalog,
             accounts=accounts_catalog,
@@ -206,6 +206,26 @@ class TransferAssistant:
             "rendered_html": rendered_html,
             "unresolved": unresolved,
             "fill_qs": urlencode({k: str(v) for k, v in fill_kwargs.items() if v}),
+            "llm_debug": self._merge_debug(
+                template=template_debug, participants=participants_debug
+            ),
+        }
+
+    @staticmethod
+    def _merge_debug(
+        *, template: dict[str, str], participants: dict[str, str]
+    ) -> dict[str, str]:
+        """Combine the two LLM calls (template pick, participants pick) into the
+        flat 3-key shape the debug panel renders, with a labelled section per
+        call — mirroring :meth:`app.llm.service.LLMService._merge_debug`."""
+
+        keys = ("system_prompt", "user_prompt", "response_text")
+        return {
+            key: (
+                f"### Подбор шаблона\n{template.get(key, '')}\n\n"
+                f"### Подбор участников\n{participants.get(key, '')}"
+            )
+            for key in keys
         }
 
     def _resolve_picks(

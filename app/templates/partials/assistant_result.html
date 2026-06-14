@@ -32,4 +32,18 @@
 
     <h4>Готовое сообщение</h4>
     <pre class="template-code">{{ rendered_html | safe }}</pre>
+
+    {% if llm_debug %}
+        <div style="margin-top:10px;" x-data="{ open: false }">
+            <button class="btn" type="button" @click="open = !open" x-text="open ? 'Скрыть запрос и ответ LLM' : 'Показать запрос и ответ LLM'"></button>
+            <div class="llm-debug-panel" style="margin-top:8px;" x-show="open" x-cloak>
+                <h4 style="margin:0 0 4px;">System prompt</h4>
+                <pre class="template-code" style="white-space:pre-wrap;">{{ llm_debug.get("system_prompt", "") }}</pre>
+                <h4 style="margin:8px 0 4px;">User prompt</h4>
+                <pre class="template-code" style="white-space:pre-wrap;">{{ llm_debug.get("user_prompt", "") }}</pre>
+                <h4 style="margin:8px 0 4px;">Ответ LLM</h4>
+                <pre class="template-code" style="white-space:pre-wrap;">{{ llm_debug.get("response_text", "") }}</pre>
+            </div>
+        </div>
+    {% endif %}
 </div>
