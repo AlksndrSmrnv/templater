@@ -11,6 +11,10 @@
 <div x-data="{
     stage: 'edit',
     showFormErrors: true,
+    presets: {{ header_presets | default([]) | tojson | forceescape }},
+    projectId: '',
+    presetId: '',
+    filteredPresets() { return this.presets.filter(p => p.project_id === this.projectId); },
     detectFormat(text) {
         return (text || '').trim().startsWith('<') ? 'xml' : 'json';
     },
@@ -41,7 +45,7 @@
         {% endif %}
         <div class="form-section">
             <label>Проект <span class="required-mark">*</span>
-                <select name="project_id" required>
+                <select name="project_id" required x-model="projectId" @change="presetId = ''">
                     <option value="" disabled selected>— выберите проект —</option>
                     {% for p in projects | default([]) %}
                     <option value="{{ p.id }}">{{ p.name }}</option>
@@ -49,6 +53,18 @@
                 </select>
             </label>
         </div>
+        <div class="form-section" x-show="filteredPresets().length > 0" x-cloak>
+            <label>Пресет (URL + заголовки)
+                <select x-model="presetId">
+                    <option value="">— не подставлять —</option>
+                    <template x-for="preset in filteredPresets()" :key="preset.id">
+                        <option :value="preset.id" x-text="preset.name"></option>
+                    </template>
+                </select>
+            </label>
+            <p class="muted" style="margin:4px 0 0;">URL и заголовки из пресета подставятся в шаблон при сохранении.</p>
+        </div>
+        <input type="hidden" name="preset_id" :value="presetId">
         <div class="form-section">
             <label>Имя <span class="required-mark">*</span>
                 <input type="text" name="name" required>

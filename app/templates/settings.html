@@ -89,6 +89,24 @@
 </div>
 
 <div class="settings-section">
+    <h2><iconify-icon icon="lucide:list-checks"></iconify-icon> Стандартные заголовки</h2>
+    <p class="muted">Пресет — это стандартный URL и набор HTTP-заголовков с меткой проекта. На шаблоне можно выбрать подходящий пресет (по проекту), и его URL с заголовками подставятся в шаблон. Значение заголовка может быть константой или динамикой вида <code>{{ '{{rquid}}' }}</code> (подставится при отправке).</p>
+    <div class="table-wrap">
+        <table class="data-table" id="header-presets-table">
+            <thead><tr>
+                <th>Пресет</th><th>Проект</th><th>URL</th><th class="no-sort">Заголовки</th>
+            </tr></thead>
+            <tbody id="header-presets-body"
+                   hx-get="/templater/settings-htmx/header-presets/table"
+                   hx-trigger="refresh-header-presets from:body"
+                   hx-swap="innerHTML">
+                {% include "partials/header_presets_table.html" %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="settings-section">
     <h2><iconify-icon icon="lucide:message-square-text"></iconify-icon> Промпты LLM</h2>
     <p class="muted">
         Системные инструкции, которые отправляются модели. Изменения сохраняются в БД и

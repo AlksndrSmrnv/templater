@@ -268,6 +268,9 @@ def test_every_mutating_settings_route_is_gated() -> None:
         ("/settings-htmx/projects", "POST"),
         ("/settings-htmx/projects/{project_id}", "PUT"),
         ("/settings-htmx/projects/{project_id}", "DELETE"),
+        ("/settings-htmx/header-presets", "POST"),
+        ("/settings-htmx/header-presets/{preset_id}", "PUT"),
+        ("/settings-htmx/header-presets/{preset_id}", "DELETE"),
         ("/settings-htmx/import_policy", "PUT"),
         ("/settings-htmx/prompts/{key}", "PUT"),
     }
@@ -282,6 +285,7 @@ def test_every_mutating_settings_route_is_gated() -> None:
         "/settings",
         "/settings-htmx/attributes/table",
         "/settings-htmx/projects/table",
+        "/settings-htmx/header-presets/table",
         "/settings-htmx/unlock",
         "/settings-htmx/lock",
     }
