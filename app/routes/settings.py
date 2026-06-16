@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -33,8 +34,10 @@ from app.schemas.attribute import (
     AttributeDefinitionUpdate,
     AttributeReorder,
 )
+from app.schemas.header_preset import HeaderPresetCreate, HeaderPresetUpdate
 from app.schemas.project import ProjectCreate, ProjectUpdate
 from app.services.attribute_schema import AttributeSchemaService
+from app.services.header_presets import HeaderPresetService
 from app.services.projects import ProjectService
 from app.utils.edit_mode import (
     COOKIE_NAME,
@@ -125,6 +128,7 @@ async def page_settings(
             "selected_entity_type": "",
             "default_policy": default_policy,
             "projects": await ProjectService(session).list_all(),
+            "header_presets": await HeaderPresetService(session).list_all(),
             "prompts": prompts,
             "edit_mode": is_edit_mode(request),
             "unlock_available": bool(s.settings_edit_key),
@@ -418,6 +422,121 @@ async def htmx_project_delete(
     return Response(
         status_code=204,
         headers={"HX-Trigger": toast_header("Проект удалён", refresh_projects=True)},
+    )
+
+
+async def _header_presets_context(request: Request, session: AsyncSession) -> dict[str, Any]:
+    return {
+        "header_presets": await HeaderPresetService(session).list_all(),
+        "projects": await ProjectService(session).list_all(),
+        "edit_mode": is_edit_mode(request),
+    }
+
+
+@router.get("/settings-htmx/header-presets/table")
+async def htmx_header_presets_table(
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    return templates.TemplateResponse(
+        request,
+        "partials/header_presets_table.html",
+        await _header_presets_context(request, session),
+    )
+
+
+# Like the project forms, the preset forms submit with hx-swap="none", so
+# failures must surface as toasts on status 200 (htmx ignores HX-Trigger on 4xx).
+_PRESET_FORM_ERROR = "Проверьте поля пресета: название, проект и заголовки"
+
+
+def _preset_error_response(message: str) -> Response:
+    return Response(
+        status_code=200,
+        headers={"HX-Trigger": toast_header(message, toast_type="error")},
+    )
+
+
+def _preset_headers_from_form(form: Any) -> list[dict[str, Any]]:
+    """Read the editor's hidden ``headers`` field (JSON array of {key,value})."""
+
+    raw = form_str(form, "headers").strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Некорректный JSON заголовков") from exc
+    if not isinstance(parsed, list):
+        raise ValueError("Заголовки должны быть списком")
+    return parsed
+
+
+@edit_router.post("/settings-htmx/header-presets")
+async def htmx_header_preset_create(
+    request: Request,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    form = await request.form()
+    svc = HeaderPresetService(session)
+    try:
+        data = HeaderPresetCreate(
+            name=form_str(form, "name"),
+            project_id=form_str(form, "project_id"),
+            url=form_str(form, "url"),
+            headers=_preset_headers_from_form(form),
+        )
+        await commit_and_refresh(session, await svc.create(data))
+    except (ValidationError, ValueError):
+        return _preset_error_response(_PRESET_FORM_ERROR)
+    except DomainError as exc:
+        return _preset_error_response(exc.message)
+    return Response(
+        status_code=204,
+        headers={"HX-Trigger": toast_header("Пресет сохранён", refresh_header_presets=True)},
+    )
+
+
+@edit_router.put("/settings-htmx/header-presets/{preset_id}")
+async def htmx_header_preset_update(
+    preset_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    form = await request.form()
+    svc = HeaderPresetService(session)
+    try:
+        data = HeaderPresetUpdate(
+            name=form_str(form, "name"),
+            project_id=form_str(form, "project_id"),
+            url=form_str(form, "url"),
+            headers=_preset_headers_from_form(form),
+        )
+        await commit_and_refresh(session, await svc.update(preset_id, data))
+    except (ValidationError, ValueError):
+        return _preset_error_response(_PRESET_FORM_ERROR)
+    except DomainError as exc:
+        return _preset_error_response(exc.message)
+    return Response(
+        status_code=204,
+        headers={"HX-Trigger": toast_header("Пресет сохранён", refresh_header_presets=True)},
+    )
+
+
+@edit_router.delete("/settings-htmx/header-presets/{preset_id}")
+async def htmx_header_preset_delete(
+    preset_id: uuid.UUID, session: AsyncSession = SessionDep
+) -> Response:
+    svc = HeaderPresetService(session)
+    try:
+        await svc.delete(preset_id)
+    except DomainError as exc:
+        return _preset_error_response(exc.message)
+    await commit_or_409(session, message="Не удалось удалить пресет")
+    return Response(
+        status_code=204,
+        headers={"HX-Trigger": toast_header("Пресет удалён", refresh_header_presets=True)},
     )
 
 

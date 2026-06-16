@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.runner import llm_service
 from app.repositories.filled_template import FilledTemplateRepository
+from app.repositories.header_preset import HeaderPresetRepository
 from app.repositories.project import ProjectRepository
 from app.routes.deps import SessionDep, TemplatesDep
 from app.routes.entities_htmx import entity_label
@@ -31,6 +32,7 @@ from app.schemas.template import TemplateCreate, TemplateFillRequest, TemplateUp
 from app.services.collections import CollectionService
 from app.services.dynamic_fields import dynamic_token_catalog
 from app.services.entities import AccountService, CardService, ClientService
+from app.services.header_presets import HeaderPresetService
 from app.services.placeholders import PlaceholderFiller
 from app.services.template_render import render_filled_html, render_template_html
 from app.services.templates import (
@@ -187,6 +189,10 @@ async def _template_panel_context(session: AsyncSession, template: Any) -> dict[
     context["filled_links"] = await FilledTemplateRepository(session).list_by_template(template.id)
     # All projects for the reassign select in the panel header.
     context["projects"] = await ProjectRepository(session).list_all()
+    # Presets matching this template's project, for the "apply preset" picker.
+    context["header_presets"] = await HeaderPresetRepository(session).list_by_project(
+        template.project_id
+    )
     # Show the LLM prompts/response captured at the last analysis (incl. bulk
     # collection processing) so it can be inspected from the collections menu.
     context["llm_debug"] = getattr(template, "llm_debug", None)
@@ -427,6 +433,12 @@ async def page_new(
             "preset_folder_path": folder_path,
             "preset_folder_label": " / ".join(folder_path),
             "projects": await ProjectRepository(session).list_all(),
+            # All presets (minimal shape) so the form can filter them client-side
+            # by the chosen project.
+            "header_presets": [
+                {"id": str(p.id), "name": p.name, "project_id": str(p.project_id)}
+                for p in await HeaderPresetService(session).list_all()
+            ],
         },
     )
 
@@ -654,6 +666,8 @@ async def htmx_preview(
     try:
         data = await _template_preview_from_form(request)
         context = await preview_template(data, session)
+        # Carry the chosen preset through the review stage so create can apply it.
+        context["preset_id"] = form_str(await request.form(), "preset_id").strip()
     except ValidationError as exc:
         return validation_errors_response(
             request,
@@ -710,6 +724,16 @@ async def htmx_create(
         # proof the panel simply offers full «Обработать LLM», as before.
         if _is_parsable(template) and verify_processed(data.content, client_meta, llm_proof):
             template.llm_meta["import_status"] = "processed"
+        # Apply the chosen header preset (URL + headers), if any. Best-effort: a
+        # preset deleted between preview and create is skipped, not fatal.
+        preset_raw = form_str(await request.form(), "preset_id").strip()
+        if preset_raw:
+            try:
+                preset = await HeaderPresetRepository(session).get(uuid.UUID(preset_raw))
+            except ValueError:
+                preset = None
+            if preset is not None:
+                HeaderPresetService.apply_to_template(template, preset)
         template = await commit_and_refresh(session, template)
     except ValidationError as exc:
         return validation_errors_response(
@@ -800,6 +824,48 @@ async def htmx_set_project(
         # refresh-tree re-renders the sidebar so the tree badge matches the
         # template's new project immediately.
         headers={"HX-Trigger": toast_header("Проект изменён", refresh_tree=True)},
+    )
+
+
+@router.post("/templates-htmx/{template_id}/apply-preset")
+async def htmx_apply_preset(
+    template_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    """Apply a header preset (URL + headers) to a template and re-render it."""
+
+    form = await request.form()
+    raw = form_str(form, "preset_id").strip()
+    try:
+        preset_id = uuid.UUID(raw)
+    except ValueError:
+        return form_errors_response(
+            request, templates, "Выберите пресет", status_code=200,
+            headers={"HX-Retarget": "#panel-errors", "HX-Reswap": "innerHTML"},
+        )
+    svc = TemplateService(session)
+    preset_svc = HeaderPresetService(session)
+    try:
+        template = await svc.get(template_id)
+        preset = await preset_svc.get(preset_id)
+        HeaderPresetService.apply_to_template(template, preset)
+        template = await commit_and_refresh(session, template)
+    except DomainError as exc:
+        return form_errors_response(
+            request,
+            templates,
+            exc.message,
+            details=exc.details,
+            status_code=200,
+            headers={"HX-Retarget": "#panel-errors", "HX-Reswap": "innerHTML"},
+        )
+    return templates.TemplateResponse(
+        request,
+        "partials/template_panel.html",
+        await _template_panel_context(session, template),
+        headers={"HX-Trigger": toast_header("Пресет применён")},
     )
 
 

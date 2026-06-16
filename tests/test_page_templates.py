@@ -1288,3 +1288,161 @@ def test_workspace_tree_listens_for_refresh_tree_event() -> None:
     # The refresh must carry the current search value, or it would silently
     # drop an active filter while the search box still shows the query.
     assert trees[0].get("hx-include") == ".tree-search"
+
+
+def test_header_presets_table_read_mode_lists_presets() -> None:
+    preset = SimpleNamespace(
+        id="p1",
+        name="A2A перевод",
+        url="https://host/a2a",
+        project_id="proj-a",
+        project=SimpleNamespace(name="Альфа", color="#112233"),
+        headers=[{"key": "RqUID", "value": "{{rquid}}", "mode": "dynamic"}],
+    )
+    html = render_template(
+        "partials/header_presets_table.html",
+        {"header_presets": [preset], "projects": [], "edit_mode": False},
+    )
+    assert "A2A перевод" in html
+    assert "https://host/a2a" in html
+    assert "Альфа" in html
+    # Read mode shows no editor form.
+    assert "preset-form" not in html
+
+
+def test_header_presets_table_edit_mode_escapes_headers_json_in_x_data() -> None:
+    preset = SimpleNamespace(
+        id="p1",
+        name="A2A",
+        url="https://host/a2a",
+        project_id="proj-a",
+        project=SimpleNamespace(name="Альфа", color="#112233"),
+        headers=[{"key": "RqUID", "value": "{{rquid}}", "mode": "dynamic"}],
+    )
+    projects = [SimpleNamespace(id="proj-a", name="Альфа")]
+    html = render_template(
+        "partials/header_presets_table.html",
+        {"header_presets": [preset], "projects": projects, "edit_mode": True},
+    )
+    # The dynamic placeholder survives verbatim and the JSON is HTML-escaped so it
+    # is safe inside the double-quoted x-data attribute.
+    assert "{{rquid}}" in html
+    assert "&#34;key&#34;: &#34;RqUID&#34;" in html
+    # Edit + create editors and the delete control are present.
+    assert 'hx-put="/templater/settings-htmx/header-presets/p1"' in html
+    assert 'hx-post="/templater/settings-htmx/header-presets"' in html
+    assert 'hx-delete="/templater/settings-htmx/header-presets/p1"' in html
+
+
+def test_template_panel_shows_apply_preset_picker_when_presets_present() -> None:
+    template = SimpleNamespace(
+        id="t1",
+        name="T",
+        http_method="POST",
+        url="",
+        headers=[],
+        description="",
+        content="",
+        format="json",
+        llm_meta={},
+        project=SimpleNamespace(id="proj-a", name="Альфа", color="#112233"),
+    )
+    presets = [SimpleNamespace(id="p1", name="A2A")]
+    html = render_template(
+        "partials/template_panel.html",
+        {
+            "template": template,
+            "parsable": False,
+            "projects": [],
+            "header_presets": presets,
+            "filled_links": [],
+            "headers": [],
+        },
+    )
+    assert 'hx-post="/templater/templates-htmx/t1/apply-preset"' in html
+    assert 'name="preset_id"' in html
+    assert "A2A" in html
+
+
+def test_filled_panel_renders_headers_snapshot() -> None:
+    ft = SimpleNamespace(
+        id="f1",
+        name="Filled",
+        message_template_id=None,
+        template_name_snapshot=None,
+        created_at=None,
+        unresolved=[],
+        url_snapshot="https://host",
+        http_method_snapshot="POST",
+        headers_snapshot=[
+            {"key": "RqUID", "value": "{{rquid}}", "mode": "dynamic", "disabled": False},
+            {"key": "Content-Type", "value": "application/json", "mode": "literal", "disabled": False},
+        ],
+    )
+    html = render_template(
+        "partials/filled_panel.html",
+        {
+            "ft": ft,
+            "standalone": True,
+            "rendered_html": "{}",
+            "role_rows": [],
+            "role_client_ids": {},
+            "alive_client_ids": set(),
+        },
+    )
+    assert "Заголовки" in html
+    assert "RqUID" in html
+    assert "{{rquid}}" in html
+    assert "динамический" in html
+    assert "application/json" in html
+
+
+def test_upload_form_includes_preset_picker_and_hidden_field() -> None:
+    html = render_template(
+        "templates_reg/upload.html",
+        {
+            "active": "templates",
+            "projects": [SimpleNamespace(id="proj-a", name="Альфа")],
+            "header_presets": [
+                {"id": "p1", "name": "A2A", "project_id": "proj-a"},
+            ],
+        },
+    )
+    assert 'name="preset_id"' in html
+    assert "filteredPresets()" in html
+    # Presets seeded as JSON for client-side filtering by selected project.
+    assert "&#34;project_id&#34;: &#34;proj-a&#34;" in html
+
+
+def test_settings_page_lists_header_presets_on_initial_load() -> None:
+    # The presets tbody only auto-refreshes on the refresh-header-presets event,
+    # which never fires on page open — so the first render must already carry the
+    # presets from the page context (regression: empty "Нет пресетов" on load).
+    preset = SimpleNamespace(
+        id="p1",
+        name="A2A перевод",
+        url="https://host/a2a",
+        project_id="proj-a",
+        project=SimpleNamespace(name="Альфа", color="#112233"),
+        headers=[{"key": "RqUID", "value": "{{rquid}}", "mode": "dynamic"}],
+    )
+    html = render_template(
+        "settings.html",
+        {
+            "active": "settings",
+            "llm_active": False,
+            "llm_model": "m",
+            "entity_types": [],
+            "attributes": [],
+            "usage_counts": {},
+            "selected_entity_type": "",
+            "default_policy": "skip",
+            "projects": [],
+            "header_presets": [preset],
+            "prompts": [],
+            "edit_mode": False,
+            "unlock_available": False,
+        },
+    )
+    assert "A2A перевод" in html
+    assert "Нет пресетов" not in html

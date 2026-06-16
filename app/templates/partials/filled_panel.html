@@ -49,6 +49,25 @@
     <div class="panel-url"><span class="panel-url-method">{{ ft.http_method_snapshot or '' }}</span> <code>{{ ft.url_snapshot }}</code></div>
     {% endif %}
 
+    {% if ft.headers_snapshot %}
+    <section style="margin-top:14px;">
+        <h3>Заголовки</h3>
+        <table class="headers-table">
+            <tbody>
+                {% for h in ft.headers_snapshot %}
+                <tr class="{% if h.get('mode') == 'dynamic' %}header-dynamic{% endif %}{% if h.get('disabled') %} header-disabled{% endif %}">
+                    <td class="header-key">{{ h.get('key') }}</td>
+                    <td class="header-value">
+                        <code>{{ h.get('value') }}</code>
+                        {% if h.get('mode') == 'dynamic' %}<span class="tag">динамический</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+    {% endif %}
+
     <section style="margin-top:14px;">
         <h3>Параметры подстановки</h3>
         <table class="data-table">

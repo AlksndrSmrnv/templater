@@ -21,6 +21,19 @@
                 </select>
             </form>
             {% endif %}
+            {% if header_presets | default([]) %}
+            <form class="apply-preset"
+                  hx-post="/templater/templates-htmx/{{ template.id }}/apply-preset"
+                  hx-target="#template-panel"
+                  hx-swap="innerHTML">
+                <select name="preset_id" title="Применить пресет: подставит URL и заголовки" onchange="this.form.requestSubmit()">
+                    <option value="" disabled selected>— применить пресет —</option>
+                    {% for preset in header_presets %}
+                    <option value="{{ preset.id }}">{{ preset.name }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            {% endif %}
         </div>
         {% set processed = (template.llm_meta or {}).get('import_status') == 'processed' %}
         <div class="panel-actions">

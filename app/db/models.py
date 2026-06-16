@@ -157,6 +157,44 @@ class Project(Base):
     updated_at: Mapped[datetime] = _updated_at()
 
 
+class HeaderPreset(Base):
+    """A reusable endpoint preset: a standard URL + set of HTTP headers.
+
+    Tagged with exactly one :class:`Project` (the same label used on templates)
+    so the template UI can offer only the presets matching a template's project.
+    Applying a preset *copies* its ``url`` and ``headers`` onto the template —
+    there is no live link, so a preset can be edited or deleted freely without
+    touching templates that already used it. Each ``headers`` entry follows the
+    shared header shape ``{"key","value","mode","original","disabled"}``; a value
+    containing ``{{…}}`` (e.g. ``{{rquid}}``) is stored with ``mode="dynamic"``
+    and resolved at send time (not yet implemented).
+    """
+
+    __tablename__ = "header_presets"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_header_presets_project_name"),
+        Index("ix_header_presets_project_id", "project_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # HTTP headers: list of {"key","value","mode","original","disabled"}.
+    headers: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    # Lightweight config keyed to a project — CASCADE so deleting a project (only
+    # possible once no templates reference it) cleans up its presets too.
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # ``selectin`` so the project badge renders in Jinja without an explicit
+    # eager-load (async lazy access would raise MissingGreenlet).
+    project: Mapped[Project] = relationship(lazy="selectin")
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
 class Collection(Base):
     """An imported request collection (Postman v2.1, later Insomnia, …).
 

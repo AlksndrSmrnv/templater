@@ -12,6 +12,7 @@
     <input type="hidden" name="collection_id" value="{{ preset_collection_id | default('') }}">
     <input type="hidden" name="folder_path" value="{{ (preset_folder_path | default([])) | tojson | forceescape }}">
     <input type="hidden" name="project_id" value="{{ preset_project_id | default('') }}">
+    <input type="hidden" name="preset_id" value="{{ preset_id | default('') }}">
 
     {% set proj = preset_project | default(none) %}
     {% if proj %}
