@@ -208,19 +208,31 @@ async def test_delete_removes_preset() -> None:
 
 
 def test_apply_to_template_copies_url_and_headers_independently() -> None:
+    pid = uuid.uuid4()
     preset = HeaderPreset(
         name="Std",
         url="https://host",
         headers=[{"key": "RqUID", "value": "{{rquid}}", "mode": "dynamic", "original": "{{rquid}}", "disabled": False}],
-        project_id=uuid.uuid4(),
+        project_id=pid,
     )
-    template = MessageTemplate()
+    template = MessageTemplate(project_id=pid)
     HeaderPresetService.apply_to_template(template, preset)
     assert template.url == "https://host"
     assert template.headers == preset.headers
     # Deep copy: mutating the template must not touch the preset.
     template.headers[0]["value"] = "changed"
     assert preset.headers[0]["value"] == "{{rquid}}"
+
+
+def test_apply_to_template_rejects_preset_from_other_project() -> None:
+    # Enforces the project tag even for a crafted request — the picker is
+    # UI-filtered, but the server must refuse a mismatched preset too.
+    preset = HeaderPreset(name="Std", url="https://host", headers=[], project_id=uuid.uuid4())
+    template = MessageTemplate(project_id=uuid.uuid4())
+    with pytest.raises(ValidationFailed):
+        HeaderPresetService.apply_to_template(template, preset)
+    # Nothing copied across.
+    assert template.url != "https://host"
 
 
 def test_create_schema_requires_project_id() -> None:

@@ -138,9 +138,16 @@ class HeaderPresetService:
     def apply_to_template(template: MessageTemplate, preset: HeaderPreset) -> None:
         """Copy a preset's URL + headers onto a template (replace, not merge).
 
-        Deep-copies the header dicts so later edits to the preset don't mutate the
-        template's stored JSONB. The HTTP method is left untouched.
+        Enforces the project tag: a preset may only be applied to a template of
+        the *same* project. The picker is already filtered by project in the UI,
+        but this is the single choke point both flows (panel apply + create from
+        upload) go through, so a crafted request with a mismatched preset is
+        rejected here too. Deep-copies the header dicts so later edits to the
+        preset don't mutate the template's stored JSONB. The HTTP method is left
+        untouched.
         """
 
+        if preset.project_id != template.project_id:
+            raise ValidationFailed("Пресет относится к другому проекту")
         template.url = preset.url or ""
         template.headers = copy.deepcopy(preset.headers or [])

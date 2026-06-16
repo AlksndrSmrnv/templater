@@ -1412,3 +1412,37 @@ def test_upload_form_includes_preset_picker_and_hidden_field() -> None:
     assert "filteredPresets()" in html
     # Presets seeded as JSON for client-side filtering by selected project.
     assert "&#34;project_id&#34;: &#34;proj-a&#34;" in html
+
+
+def test_settings_page_lists_header_presets_on_initial_load() -> None:
+    # The presets tbody only auto-refreshes on the refresh-header-presets event,
+    # which never fires on page open — so the first render must already carry the
+    # presets from the page context (regression: empty "Нет пресетов" on load).
+    preset = SimpleNamespace(
+        id="p1",
+        name="A2A перевод",
+        url="https://host/a2a",
+        project_id="proj-a",
+        project=SimpleNamespace(name="Альфа", color="#112233"),
+        headers=[{"key": "RqUID", "value": "{{rquid}}", "mode": "dynamic"}],
+    )
+    html = render_template(
+        "settings.html",
+        {
+            "active": "settings",
+            "llm_active": False,
+            "llm_model": "m",
+            "entity_types": [],
+            "attributes": [],
+            "usage_counts": {},
+            "selected_entity_type": "",
+            "default_policy": "skip",
+            "projects": [],
+            "header_presets": [preset],
+            "prompts": [],
+            "edit_mode": False,
+            "unlock_available": False,
+        },
+    )
+    assert "A2A перевод" in html
+    assert "Нет пресетов" not in html

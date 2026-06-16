@@ -128,6 +128,7 @@ async def page_settings(
             "selected_entity_type": "",
             "default_policy": default_policy,
             "projects": await ProjectService(session).list_all(),
+            "header_presets": await HeaderPresetService(session).list_all(),
             "prompts": prompts,
             "edit_mode": is_edit_mode(request),
             "unlock_available": bool(s.settings_edit_key),
