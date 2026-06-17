@@ -537,6 +537,22 @@ class ExportImportService:
                     # so validation is deferred until we know we'll create/overwrite.
                     if existing_entity is not None and conflict(kind, raw):
                         continue
+                    # Reaching here with an existing row means overwrite. Refuse
+                    # to mutate a row the importer can't see — otherwise a
+                    # UUID-only file could edit hidden client/account/card data
+                    # without unlocking its group. (``session.get`` above is
+                    # unrestricted; the repo ``get`` applies the visibility filter.)
+                    if existing_entity is not None and allowed_group_ids is not None:
+                        repo: Any = {
+                            "clients": self.clients,
+                            "accounts": self.accounts,
+                            "cards": self.cards,
+                        }[kind]
+                        if await repo.get(eid, visible_group_ids=allowed_group_ids) is None:
+                            errors.append(
+                                f"{kind} {eid_str}: запись принадлежит недоступной группе — изменение запрещено"
+                            )
+                            continue
 
                     validated_attrs, err = await _validated_entity_attrs(et, kind, eid_str, raw)
                     if err or validated_attrs is None:
@@ -573,11 +589,18 @@ class ExportImportService:
                     # the DB, or created earlier in this same import. A dangling
                     # FK would otherwise only surface as an FK error on the final
                     # commit and roll back the whole import instead of this row.
+                    # Parent lookups are visibility-filtered too: a new account/
+                    # card must not be attachable to a hidden client/account the
+                    # importer can only reference by UUID. Parents created earlier
+                    # in this same import (``imported_new_ids``) short-circuit the
+                    # check — they were just created with an allowed/public group.
                     if new_client_id is not None:
                         client_id_str = str(new_client_id)
                         if (
                             client_id_str not in imported_new_ids["clients"]
-                            and await self.clients.get(new_client_id) is None
+                            and await self.clients.get(
+                                new_client_id, visible_group_ids=allowed_group_ids
+                            ) is None
                         ):
                             errors.append(f"accounts {eid_str}: клиент {client_id_str} не найден")
                             continue
@@ -585,7 +608,9 @@ class ExportImportService:
                         account_id_str = str(new_account_id)
                         if (
                             account_id_str not in imported_new_ids["accounts"]
-                            and await self.accounts.get(new_account_id) is None
+                            and await self.accounts.get(
+                                new_account_id, visible_group_ids=allowed_group_ids
+                            ) is None
                         ):
                             errors.append(f"cards {eid_str}: счёт {account_id_str} не найден")
                             continue

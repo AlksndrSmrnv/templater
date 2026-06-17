@@ -534,7 +534,24 @@ async def test_import_without_permission_skips_existing_rows_without_error() -> 
 
 # ---------- Access-group export/import gating ----------
 
-from app.db.models import AccessGroup, Client  # noqa: E402
+from app.db.models import AccessGroup, Account, Client  # noqa: E402
+
+
+class _VisibilityClientRepo:
+    """Models ``ClientRepository.get``'s visibility filter for service-level
+    tests: a row is returned only when public or in the unlocked set."""
+
+    def __init__(self, rows: dict[Any, Any]) -> None:
+        self.rows = rows
+
+    async def get(self, eid: Any, *, visible_group_ids: Any = None) -> Any:
+        row = self.rows.get(eid)
+        if row is None:
+            return None
+        if visible_group_ids is None:
+            return row
+        gid = getattr(row, "group_id", None)
+        return row if (gid is None or gid in visible_group_ids) else None
 
 
 class _FakeExportRepo:
@@ -696,3 +713,62 @@ async def test_overwrite_never_exposes_a_private_client() -> None:
     assert summary.errors == []
     assert summary.updated["clients"] == 1
     assert existing.group_id == private_group  # protection preserved
+
+
+@pytest.mark.asyncio
+async def test_import_overwrite_refused_for_hidden_existing_client() -> None:
+    # A UUID-only file must not be able to mutate a client whose group the
+    # importer hasn't unlocked.
+    cid = uuid.uuid4()
+    existing = SimpleNamespace(
+        id=cid, description="secret", tags=[], attributes={}, group_id=uuid.uuid4()
+    )
+    session = _RoundTripSession()
+    session.store[(Client, cid)] = existing
+    svc = ExportImportService(cast(Any, session))
+    svc.clients = cast(Any, _VisibilityClientRepo({cid: existing}))
+    package = {"version": 3, "clients": [{"id": str(cid), "description": "HACKED"}]}
+    summary = await svc.import_package(package, policy="overwrite", allowed_group_ids=set())
+
+    assert summary.updated["clients"] == 0
+    assert any("недоступной группе" in e for e in summary.errors)
+    assert existing.description == "secret"  # untouched
+
+
+@pytest.mark.asyncio
+async def test_import_overwrite_allowed_for_unlocked_existing_client() -> None:
+    cid = uuid.uuid4()
+    g = uuid.uuid4()
+    existing = SimpleNamespace(id=cid, description="old", tags=[], attributes={}, group_id=g)
+    session = _RoundTripSession()
+    session.store[(Client, cid)] = existing
+    svc = ExportImportService(cast(Any, session))
+    svc.clients = cast(Any, _VisibilityClientRepo({cid: existing}))
+    package = {"version": 3, "clients": [{"id": str(cid), "description": "updated"}]}
+    summary = await svc.import_package(package, policy="overwrite", allowed_group_ids={g})
+
+    assert summary.errors == []
+    assert summary.updated["clients"] == 1
+    assert existing.description == "updated"
+
+
+@pytest.mark.asyncio
+async def test_import_new_account_cannot_attach_to_hidden_client() -> None:
+    # Creating an account whose parent client is hidden (only referenced by UUID)
+    # must be refused, not silently attached.
+    aid = uuid.uuid4()
+    hidden_client = uuid.uuid4()
+    session = _RoundTripSession()
+    svc = ExportImportService(cast(Any, session))
+    svc.clients = cast(
+        Any,
+        _VisibilityClientRepo(
+            {hidden_client: SimpleNamespace(id=hidden_client, group_id=uuid.uuid4())}
+        ),
+    )
+    package = {"version": 3, "accounts": [{"id": str(aid), "client_id": str(hidden_client)}]}
+    summary = await svc.import_package(package, policy="skip", allowed_group_ids=set())
+
+    assert summary.created["accounts"] == 0
+    assert any("не найден" in e for e in summary.errors)
+    assert [o for o in session.added if isinstance(o, Account)] == []

@@ -359,8 +359,12 @@ class FilledTemplateService:
         """Resolve ``(group_id, name, color)`` for a fill across *all* its roles.
 
         A saved snapshot is a single artifact with one ``group_id``, so it can
-        only safely represent one access group. We collect the distinct private
-        groups of every role's client (sender / receiver / accountOwner):
+        only safely represent one access group. We resolve the *owning client* of
+        every referenced entity — a client directly, an account via its client, a
+        card via its account's client — so a private account/card protects the
+        snapshot even when the request carries no explicit ``*_client_id`` (a
+        crafted save could otherwise persist private data as public). Then over
+        the distinct private groups of those clients:
 
         - none → public (``None``);
         - exactly one → that group (name/color snapshotted for the badge);
@@ -371,23 +375,44 @@ class FilledTemplateService:
         getattr-safe so test doubles without the ``group`` relationship work.
         """
 
-        client_ids = list(
-            dict.fromkeys(
-                cid
-                for cid in (
-                    fill_request.sender_client_id,
-                    fill_request.receiver_client_id,
-                    fill_request.account_owner_client_id,
-                )
-                if cid is not None
-            )
-        )
+        clients_repo = ClientRepository(self.session)
+        accounts_repo = AccountRepository(self.session)
+        cards_repo = CardRepository(self.session)
+
+        client_ids: set[uuid.UUID] = set()
+        for cid in (
+            fill_request.sender_client_id,
+            fill_request.receiver_client_id,
+            fill_request.account_owner_client_id,
+        ):
+            if cid is not None:
+                client_ids.add(cid)
+        for aid in (
+            fill_request.sender_account_id,
+            fill_request.receiver_account_id,
+            fill_request.account_owner_account_id,
+        ):
+            if aid is not None:
+                account = await accounts_repo.get(aid)
+                if account is not None:
+                    client_ids.add(account.client_id)
+        for kid in (
+            fill_request.sender_card_id,
+            fill_request.receiver_card_id,
+            fill_request.account_owner_card_id,
+        ):
+            if kid is not None:
+                card = await cards_repo.get(kid)
+                if card is not None:
+                    account = await accounts_repo.get(card.account_id)
+                    if account is not None:
+                        client_ids.add(account.client_id)
+
         if not client_ids:
             return None, "", ""
-        repo = ClientRepository(self.session)
         groups: dict[uuid.UUID, Any] = {}  # group_id → group row (for name/color)
         for cid in client_ids:
-            client = await repo.get(cid)
+            client = await clients_repo.get(cid)
             if client is None:
                 continue
             gid = getattr(client, "group_id", None)

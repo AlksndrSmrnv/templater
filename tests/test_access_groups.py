@@ -320,3 +320,27 @@ async def test_fill_group_allows_same_group_across_roles() -> None:
         TemplateFillRequest(sender_client_id=sender.id, receiver_client_id=receiver.id)
     )
     assert gid == group_id
+
+
+@pytest.mark.asyncio
+async def test_fill_group_derives_from_account_when_client_id_absent() -> None:
+    # A crafted save passing only *_account_id (no *_client_id) must still inherit
+    # the account's owning client's group — not silently fall back to public.
+    group_id = uuid.uuid4()
+    client = _grouped_client(group_id)
+    account = SimpleNamespace(id=uuid.uuid4(), client_id=client.id)
+    svc = _fill_service([client, account])
+    gid, name, color = await svc._fill_group(TemplateFillRequest(sender_account_id=account.id))
+    assert gid == group_id
+    assert name and color
+
+
+@pytest.mark.asyncio
+async def test_fill_group_derives_from_card_via_account_to_client() -> None:
+    group_id = uuid.uuid4()
+    client = _grouped_client(group_id)
+    account = SimpleNamespace(id=uuid.uuid4(), client_id=client.id)
+    card = SimpleNamespace(id=uuid.uuid4(), account_id=account.id)
+    svc = _fill_service([client, account, card])
+    gid, _name, _color = await svc._fill_group(TemplateFillRequest(receiver_card_id=card.id))
+    assert gid == group_id
