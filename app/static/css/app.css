@@ -23,6 +23,8 @@
     --radius: 14px;
     --radius-sm: 10px;
     --radius-pill: 9999px;
+    /* Custom <select> chevron (muted, replaces native OS arrow) */
+    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23737373' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
     /* Shadows → border-first; no elevation */
     --shadow-sm: none;
     --shadow: 0 0 0 1px var(--border);
@@ -169,12 +171,17 @@ h3 { font-size: var(--fs-lg); line-height: 1.3; font-weight: 600; letter-spacing
 .filters { display: flex; gap: 12px; margin: 14px 0; align-items: center; }
 .filters-inline { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .filters label { display: flex; gap: 6px; align-items: center; font-size: var(--fs-base); color: var(--muted); }
-.filters input[type="search"], .filters input[type="text"], .filters select {
-    padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); min-width: 240px;
+.filters input[type="search"], .filters input[type="text"], .filters input[type="password"], .filters select,
+.filters-inline input[type="search"], .filters-inline input[type="text"], .filters-inline input[type="password"], .filters-inline select {
+    padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
     font-size: var(--fs-base); color: var(--text); background: var(--surface); font-family: inherit;
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.filters input[type="search"]:focus, .filters input[type="text"]:focus, .filters select:focus {
+.filters input[type="search"], .filters input[type="text"], .filters input[type="password"], .filters select {
+    min-width: 240px;
+}
+.filters input[type="search"]:focus, .filters input[type="text"]:focus, .filters input[type="password"]:focus, .filters select:focus,
+.filters-inline input[type="search"]:focus, .filters-inline input[type="text"]:focus, .filters-inline input[type="password"]:focus, .filters-inline select:focus {
     outline: none; border-color: var(--text);
     box-shadow: 0 0 0 1px var(--text);
 }
@@ -393,7 +400,7 @@ h3 { font-size: var(--fs-lg); line-height: 1.3; font-weight: 600; letter-spacing
 .form label { display: block; font-size: var(--fs-sm); color: var(--muted); margin-bottom: 6px; }
 .form input[type="text"], .form input[type="number"], .form input[type="date"],
 .form input[type="datetime-local"], .form input[type="email"], .form input[type="search"],
-.form select, .form textarea {
+.form input[type="password"], .form select, .form textarea {
     width: 100%; padding: 9px 12px;
     border: 1px solid var(--border); border-radius: var(--radius-sm);
     font-size: var(--fs-base); color: var(--text); background: var(--surface); font-family: inherit;
@@ -401,7 +408,7 @@ h3 { font-size: var(--fs-lg); line-height: 1.3; font-weight: 600; letter-spacing
 }
 .form input[type="text"]:focus, .form input[type="number"]:focus, .form input[type="date"]:focus,
 .form input[type="datetime-local"]:focus, .form input[type="email"]:focus, .form input[type="search"]:focus,
-.form select:focus, .form textarea:focus {
+.form input[type="password"]:focus, .form select:focus, .form textarea:focus {
     outline: none; border-color: var(--text);
     box-shadow: 0 0 0 1px var(--text);
 }
@@ -746,7 +753,13 @@ h3 { font-size: var(--fs-lg); line-height: 1.3; font-weight: 600; letter-spacing
 .import-zone form { margin: 0; }
 .import-hint { font-size: var(--fs-xs); margin-top: 6px; }
 
-.tree-search { width: 100%; margin-top: 10px; box-sizing: border-box; }
+.tree-search {
+    width: 100%; margin-top: 10px; box-sizing: border-box;
+    padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-size: var(--fs-base); color: var(--text); background: var(--surface); font-family: inherit;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.tree-search:focus { outline: none; border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
 
 .collections-tree { padding: 8px; overflow: auto; flex: 1; }
 .tree-list { list-style: none; margin: 0; padding-left: 16px; }
@@ -829,7 +842,15 @@ h3 { font-size: var(--fs-lg); line-height: 1.3; font-weight: 600; letter-spacing
 .preset-card-url { min-width: 0; overflow-wrap: anywhere; }
 .preset-empty { text-align: center; padding: 24px; }
 .preset-field { display: flex; flex-direction: column; gap: 4px; }
-.preset-field input, .preset-field select { width: 100%; }
+.preset-field input, .preset-field select {
+    width: 100%; padding: 9px 12px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-size: var(--fs-base); color: var(--text); background: var(--surface); font-family: inherit;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.preset-field input:focus, .preset-field select:focus {
+    outline: none; border-color: var(--text); box-shadow: 0 0 0 1px var(--text);
+}
 .preset-field-label { font-size: var(--fs-sm); color: var(--muted); font-weight: 600; }
 .preset-field-main input { font-size: var(--fs-lg); font-weight: 600; }
 .preset-edit-block {
@@ -1011,3 +1032,72 @@ li.tree-item.sortable-chosen { background: var(--surface-2); }
 .group-unlock-btn:hover { background: var(--surface-2); }
 .group-modal h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; }
 .group-modal { padding: 20px; }
+
+/* ---------- Form controls: dropdowns, color & file inputs ----------
+   Replace native OS chrome with the flat, rounded look of the design system so
+   no field feels foreign. Placed last so the chevron/padding overrides win over
+   the container rules (`.form`, `.filters`, `.preset-field`, …) that set the
+   `background`/`padding` shorthands earlier in the file. */
+
+/* Every <select>: drop the native arrow, draw our own monochrome chevron. */
+select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: var(--select-chevron);
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+}
+/* Pointer only when interactive — disabled selects shouldn't look clickable. */
+select:not(:disabled) { cursor: pointer; }
+select:disabled { cursor: not-allowed; }
+/* Full-size selects — reserve room on the right for the chevron and re-assert
+   the image (container rules use the `background` shorthand, wiping it). */
+.form select, .filters select, .filters-inline select, .preset-field select {
+    padding-right: 36px;
+    background-image: var(--select-chevron);
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+}
+/* Compact selects (panel header / import / reassign) — tighter chevron. */
+.import-project-select, .project-reassign select, .apply-preset select {
+    padding-right: 24px;
+    background-image: var(--select-chevron);
+    background-repeat: no-repeat;
+    background-position: right 7px center;
+    background-size: 13px;
+}
+
+/* Color picker — round the control and its inner swatch. */
+input[type="color"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 44px; height: 38px; padding: 4px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--surface); cursor: pointer;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input[type="color"]:focus { outline: none; border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+input[type="color"]::-webkit-color-swatch { border: none; border-radius: 6px; }
+input[type="color"]::-moz-color-swatch { border: none; border-radius: 6px; }
+
+/* File picker — give the native button the same rounded chip as .btn. */
+input[type="file"] { font: inherit; font-size: var(--fs-sm); color: var(--muted); }
+/* Kept as two separate rules: a browser that can't parse one pseudo-element
+   selector would otherwise drop the whole grouped declaration. */
+input[type="file"]::file-selector-button {
+    margin-right: 10px; padding: 8px 14px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--surface); color: var(--text); font: inherit; font-weight: 500;
+    cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease;
+}
+input[type="file"]::-webkit-file-upload-button {
+    margin-right: 10px; padding: 8px 14px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--surface); color: var(--text); font: inherit; font-weight: 500;
+    cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease;
+}
+input[type="file"]::file-selector-button:hover { background: var(--surface-2); }
+input[type="file"]::-webkit-file-upload-button:hover { background: var(--surface-2); }
