@@ -162,6 +162,28 @@ def test_empty_mode_raw_body_is_parsed() -> None:
     assert req.content == '{"a": 1}'
 
 
+def test_missing_mode_raw_body_is_parsed() -> None:
+    # ``body.mode`` may be omitted entirely while the payload lives in ``raw``.
+    pc = parse_postman_collection(
+        {
+            "info": {"name": "S", "schema": "v2.1.0"},
+            "item": [
+                {
+                    "name": "MissingMode",
+                    "request": {
+                        "method": "POST",
+                        "body": {"raw": '{"a": 1}'},
+                    },
+                }
+            ],
+        }
+    )
+    req = pc.requests[0]
+    assert req.fmt == "json"
+    assert req.parsable is True
+    assert req.content == '{"a": 1}'
+
+
 def test_explicit_non_raw_mode_is_skipped() -> None:
     # A stale ``raw`` alongside an explicit non-raw mode must not be imported.
     pc = parse_postman_collection(
