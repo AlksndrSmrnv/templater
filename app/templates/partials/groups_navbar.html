@@ -1,0 +1,40 @@
+{% set unlocked = unlocked | default([]) %}
+{% if any_groups | default(false) %}
+<span class="nav-groups-inner" x-data="{ open: false }">
+    {% if unlocked %}
+        {% for g in unlocked %}
+            <span class="group-badge" title="Группа разблокирована">
+                <span class="group-dot" style="background: {{ g.color }}"></span>{{ g.name }}
+                <button class="group-lock"
+                        type="button"
+                        title="Заблокировать «{{ g.name }}»"
+                        hx-post="/templater/groups-htmx/lock/{{ g.id }}"
+                        hx-swap="none">&times;</button>
+            </span>
+        {% endfor %}
+        <button class="group-unlock-btn" type="button" @click="open = true" title="Разблокировать ещё одну группу">
+            <iconify-icon icon="lucide:plus"></iconify-icon>
+        </button>
+    {% else %}
+        <button class="group-unlock-btn" type="button" @click="open = true">
+            <iconify-icon icon="lucide:lock"></iconify-icon> Разблокировать данные
+        </button>
+    {% endif %}
+
+    <div class="modal-backdrop"
+         x-show="open"
+         x-cloak
+         @keydown.escape.window="open = false">
+        <div class="modal-panel group-modal" @click.outside="open = false">
+            <h3><iconify-icon icon="lucide:key-round"></iconify-icon> Разблокировать группу</h3>
+            <p class="muted">Введите пароль группы, чтобы увидеть её тестовые данные и заполненные ими шаблоны. Обычные шаблоны видны всем без пароля.</p>
+            <form class="filters-inline"
+                  hx-post="/templater/groups-htmx/unlock"
+                  hx-swap="none">
+                <input type="password" name="password" placeholder="Пароль группы" autocomplete="off" x-ref="pw" x-init="$nextTick(() => {})">
+                <button class="btn primary" type="submit">Войти</button>
+            </form>
+        </div>
+    </div>
+</span>
+{% endif %}

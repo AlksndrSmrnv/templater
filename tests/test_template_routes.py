@@ -454,7 +454,7 @@ async def test_granular_reprocess_persists_and_renders_panel(
     async def fake_commit(session: object, item: Any) -> Any:
         return item
 
-    async def fake_panel_context(session: object, tpl: Any) -> dict[str, Any]:
+    async def fake_panel_context(session: object, tpl: Any, request: Any = None) -> dict[str, Any]:
         return {"template": tpl}
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
@@ -565,7 +565,7 @@ async def test_htmx_update_rejects_non_object_llm_meta() -> None:
 
 @pytest.mark.asyncio
 async def test_htmx_fill_render_reports_unparsable_body(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def boom(session: object, template_id: uuid.UUID, data: object) -> Any:
+    async def boom(session: object, template_id: uuid.UUID, data: object, *, visible_group_ids: object = None) -> Any:
         raise ValidationFailed("Шаблон не парсится как JSON")
 
     monkeypatch.setattr(templates_reg, "_render_fill", boom)
@@ -728,7 +728,7 @@ async def test_htmx_set_project_refreshes_tree_and_panel(
     async def fake_commit(session: object, item: Any) -> Any:
         return item
 
-    async def fake_panel_context(session: object, template: Any) -> dict[str, Any]:
+    async def fake_panel_context(session: object, template: Any, request: Any = None) -> dict[str, Any]:
         return {"template": template}
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
@@ -797,7 +797,7 @@ async def test_htmx_edit_content_success_renders_panel_with_toast(
         calls.append(("commit_and_refresh", item))
         return item
 
-    async def fake_panel_context(session: object, tpl: Any) -> dict[str, Any]:
+    async def fake_panel_context(session: object, tpl: Any, request: Any = None) -> dict[str, Any]:
         return {"template": tpl}
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)

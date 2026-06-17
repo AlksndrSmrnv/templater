@@ -151,18 +151,28 @@ class FilledTemplateService:
         self.settings = SettingsRepository(session)
 
     async def list_all(
-        self, *, search: str = "", limit: int = DEFAULT_LIST_LIMIT
+        self,
+        *,
+        search: str = "",
+        limit: int = DEFAULT_LIST_LIMIT,
+        visible_group_ids: set[uuid.UUID] | None = None,
     ) -> list[FilledTemplate]:
-        return await self.repo.list_all(search=search, limit=limit)
+        return await self.repo.list_all(
+            search=search, limit=limit, visible_group_ids=visible_group_ids
+        )
 
-    async def get(self, filled_id: uuid.UUID) -> FilledTemplate:
-        item = await self.repo.get(filled_id)
+    async def get(
+        self, filled_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> FilledTemplate:
+        item = await self.repo.get(filled_id, visible_group_ids=visible_group_ids)
         if item is None:
             raise NotFoundError("Заполненный шаблон не найден")
         return item
 
-    async def delete(self, filled_id: uuid.UUID) -> None:
-        item = await self.get(filled_id)
+    async def delete(
+        self, filled_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> None:
+        item = await self.get(filled_id, visible_group_ids=visible_group_ids)
         await self.repo.delete(item)
 
     # ---- folder tree (mirrors CollectionService, single root namespace) ----
@@ -179,15 +189,19 @@ class FilledTemplateService:
         await self.settings.set(FILLED_ROOT_FOLDERS_KEY, folders)
         await self.session.flush()
 
-    async def build_tree(self, *, search: str = "") -> dict[str, Any]:
+    async def build_tree(
+        self, *, search: str = "", visible_group_ids: set[uuid.UUID] | None = None
+    ) -> dict[str, Any]:
         """Build the left-panel tree of folders and filled templates.
 
         While searching, explicit empty folders are not seeded so the tree
         collapses to actual matches — same behaviour as the collections tree.
+        Only filled templates the caller may see (public + unlocked groups) are
+        placed in the tree; folders themselves are a shared namespace.
         """
 
         query = search.strip()
-        items = await self.repo.list_all(search=query)
+        items = await self.repo.list_all(search=query, visible_group_ids=visible_group_ids)
         explicit = list(await self.settings.get(FILLED_ROOT_FOLDERS_KEY) or [])
         tree = build_folder_tree(items, extra_folders=None if query else explicit)
         return {
@@ -291,6 +305,8 @@ class FilledTemplateService:
         filled_id: uuid.UUID,
         target_folder_path: list[str],
         order: list[uuid.UUID],
+        *,
+        visible_group_ids: set[uuid.UUID] | None = None,
     ) -> None:
         """Move a filled template into ``target_folder_path`` and renumber
         ``display_order`` across the target folder's siblings.
@@ -304,7 +320,7 @@ class FilledTemplateService:
         the folder (crafted or stale payloads) are ignored.
         """
 
-        item = await self.get(filled_id)
+        item = await self.get(filled_id, visible_group_ids=visible_group_ids)
         target_folder = _norm_path(target_folder_path)
         item.folder_path = target_folder
         # The session runs with autoflush=False (app/db/session.py) — flush
@@ -337,6 +353,24 @@ class FilledTemplateService:
         implied = await self.repo.list_folder_paths()
         return [list(p) for p in sorted(_expand_prefixes([*folders, *implied]))]
 
+    async def _fill_group(
+        self, fill_request: TemplateFillRequest
+    ) -> tuple[uuid.UUID | None, str, str]:
+        """Resolve ``(group_id, name, color)`` for a fill from its sender client.
+
+        A fill with no sender client, or a public sender, is public (``None``).
+        getattr-safe so test doubles without the ``group`` relationship work.
+        """
+
+        sender_id = fill_request.sender_client_id
+        if sender_id is None:
+            return None, "", ""
+        sender = await ClientRepository(self.session).get(sender_id)
+        if sender is None or getattr(sender, "group_id", None) is None:
+            return None, "", ""
+        group = getattr(sender, "group", None)
+        return sender.group_id, getattr(group, "name", "") or "", getattr(group, "color", "") or ""
+
     async def save_from_fill(
         self,
         *,
@@ -353,6 +387,10 @@ class FilledTemplateService:
         name = build_auto_name(template.name, role_labels, moment)
         # getattr-safe: test doubles may not carry the project relationship.
         project = getattr(template, "project", None)
+        # The filled snapshot inherits the sender client's access group (so a
+        # private fill stays hidden from everyone outside that group); name and
+        # color are snapshotted so the badge survives the group being deleted.
+        group_id, group_name, group_color = await self._fill_group(fill_request)
         target_folder = _norm_path(folder_path)
         item = FilledTemplate(
             name=name,
@@ -370,6 +408,9 @@ class FilledTemplateService:
             http_method_snapshot=(getattr(template, "http_method", "") or "")[:16],
             url_snapshot=getattr(template, "url", "") or "",
             headers_snapshot=list(getattr(template, "headers", []) or []),
+            group_id=group_id,
+            group_name_snapshot=_truncate(group_name, limit=255),
+            group_color_snapshot=group_color,
             message_template_id=template.id,
             template_name_snapshot=_truncate(template.name or "", limit=255),
             project_name_snapshot=_truncate(getattr(project, "name", "") or "", limit=255),

@@ -18,7 +18,7 @@ from app.llm.runner import llm_service
 from app.repositories.filled_template import FilledTemplateRepository
 from app.repositories.header_preset import HeaderPresetRepository
 from app.repositories.project import ProjectRepository
-from app.routes.deps import SessionDep, TemplatesDep
+from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.entities_htmx import entity_label
 from app.routes.htmx_utils import (
     form_errors_response,
@@ -42,6 +42,7 @@ from app.services.templates import (
     template_has_account_owner,
 )
 from app.utils import walker
+from app.utils.access_groups import unlocked_group_ids
 from app.utils.errors import DomainError, LLMResponseError, LLMUnavailable, ValidationFailed
 from app.utils.signing import sign_processed, verify_processed
 
@@ -182,11 +183,17 @@ async def _template_code_context(session: AsyncSession, template: Any) -> dict[s
     }
 
 
-async def _template_panel_context(session: AsyncSession, template: Any) -> dict[str, Any]:
+async def _template_panel_context(
+    session: AsyncSession, template: Any, request: Request
+) -> dict[str, Any]:
     context = await _template_code_context(session, template)
     context["headers"] = template.headers or []
     context["has_account_owner"] = template_has_account_owner(template)
-    context["filled_links"] = await FilledTemplateRepository(session).list_by_template(template.id)
+    # The template itself is public, but its related filled snapshots may be
+    # private — filter the link list to the caller's unlocked groups.
+    context["filled_links"] = await FilledTemplateRepository(session).list_by_template(
+        template.id, visible_group_ids=unlocked_group_ids(request)
+    )
     # All projects for the reassign select in the panel header.
     context["projects"] = await ProjectRepository(session).list_all()
     # Presets matching this template's project, for the "apply preset" picker.
@@ -285,15 +292,47 @@ async def _template_preview_from_form(request: Request) -> TemplateCreate:
     )
 
 
-async def _fill_labels(session: AsyncSession) -> dict[str, dict[str, str]]:
-    clients = await ClientService(session).list_all()
-    accounts = await AccountService(session).list_all()
-    cards = await CardService(session).list_all()
+async def _fill_labels(
+    session: AsyncSession, *, visible_group_ids: set[uuid.UUID] | None = None
+) -> dict[str, dict[str, str]]:
+    clients = await ClientService(session).list_all(visible_group_ids=visible_group_ids)
+    accounts = await AccountService(session).list_all(visible_group_ids=visible_group_ids)
+    cards = await CardService(session).list_all(visible_group_ids=visible_group_ids)
     return {
         "client": {str(item.id): entity_label("client", item) for item in clients},
         "account": {str(item.id): entity_label("account", item) for item in accounts},
         "card": {str(item.id): entity_label("card", item) for item in cards},
     }
+
+
+async def _assert_fill_visible(
+    session: AsyncSession,
+    data: TemplateFillRequest,
+    visible_group_ids: set[uuid.UUID] | None,
+) -> None:
+    """Reject a fill referencing entities the caller cannot see.
+
+    The pickers are already filtered, but a hand-crafted POST could name a
+    private client/account/card; without this check its attribute values would
+    leak into the rendered output. ``visible_group_ids=None`` skips the check
+    (internal callers)."""
+
+    if visible_group_ids is None:
+        return
+    checks = (
+        (ClientService, (data.sender_client_id, data.receiver_client_id, data.account_owner_client_id)),
+        (AccountService, (data.sender_account_id, data.receiver_account_id, data.account_owner_account_id)),
+        (CardService, (data.sender_card_id, data.receiver_card_id, data.account_owner_card_id)),
+    )
+    for service_cls, ids in checks:
+        wanted = {i for i in ids if i is not None}
+        if not wanted:
+            continue
+        rows = await service_cls(session).get_many(
+            list(wanted), visible_group_ids=visible_group_ids
+        )
+        if wanted - {row.id for row in rows}:
+            raise ValidationFailed("Выбраны недоступные записи — разблокируйте нужную группу паролем")
 
 
 def _client_matches(client: Any, query: str) -> bool:
@@ -354,8 +393,11 @@ async def _render_fill(
     session: AsyncSession,
     template_id: uuid.UUID,
     data: TemplateFillRequest,
+    *,
+    visible_group_ids: set[uuid.UUID] | None = None,
 ) -> tuple[Any, str, str, list[str], list[str]]:
     template = await TemplateService(session).get(template_id)
+    await _assert_fill_visible(session, data, visible_group_ids)
     rendered, unresolved, changed = await PlaceholderFiller(session).fill_template(
         template,
         sender_client_id=data.sender_client_id,
@@ -460,11 +502,12 @@ async def page_fill(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     from app.services.filled_templates import FilledTemplateService
 
     template = await TemplateService(session).get(template_id)
-    clients = await ClientService(session).list_all()
+    clients = await ClientService(session).list_all(visible_group_ids=group_ids)
     # Existing folders of the «Заполненные шаблоны» tree feed the «Сохранить в
     # папку» selector: (JSON-encoded path, human-readable label) pairs.
     folder_paths = await FilledTemplateService(session).list_folder_paths()
@@ -475,7 +518,7 @@ async def page_fill(
             "active": "templates",
             "template": template,
             "clients": clients,
-            "labels": await _fill_labels(session),
+            "labels": await _fill_labels(session, visible_group_ids=group_ids),
             "has_account_owner": template_has_account_owner(template),
             "folder_options": [
                 (json.dumps(p, ensure_ascii=False), " / ".join(p)) for p in folder_paths
@@ -538,7 +581,7 @@ async def htmx_panel(
     return templates.TemplateResponse(
         request,
         "partials/template_panel.html",
-        await _template_panel_context(session, template),
+        await _template_panel_context(session, template, request),
     )
 
 
@@ -591,7 +634,7 @@ async def _reprocess_panel(
     return templates.TemplateResponse(
         request,
         "partials/template_panel.html",
-        await _template_panel_context(session, template),
+        await _template_panel_context(session, template, request),
         headers={"HX-Trigger": toast_header(toast)},
     )
 
@@ -820,7 +863,7 @@ async def htmx_set_project(
     return templates.TemplateResponse(
         request,
         "partials/template_panel.html",
-        await _template_panel_context(session, template),
+        await _template_panel_context(session, template, request),
         # refresh-tree re-renders the sidebar so the tree badge matches the
         # template's new project immediately.
         headers={"HX-Trigger": toast_header("Проект изменён", refresh_tree=True)},
@@ -864,7 +907,7 @@ async def htmx_apply_preset(
     return templates.TemplateResponse(
         request,
         "partials/template_panel.html",
-        await _template_panel_context(session, template),
+        await _template_panel_context(session, template, request),
         headers={"HX-Trigger": toast_header("Пресет применён")},
     )
 
@@ -913,7 +956,7 @@ async def htmx_edit_content(
     return templates.TemplateResponse(
         request,
         "partials/template_panel.html",
-        await _template_panel_context(session, template),
+        await _template_panel_context(session, template, request),
         headers={"HX-Trigger": toast_header("Тело шаблона обновлено — запустите обработку LLM заново")},
     )
 
@@ -940,16 +983,21 @@ async def htmx_fill_clients(
     q: str = "",
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     try:
         _check_fill_role(role)
     except DomainError as exc:
         return _invalid_fill_role_response(request, templates, exc)
-    clients = [client for client in await ClientService(session).list_all() if _client_matches(client, q)]
+    clients = [
+        client
+        for client in await ClientService(session).list_all(visible_group_ids=group_ids)
+        if _client_matches(client, q)
+    ]
     return templates.TemplateResponse(
         request,
         "partials/fill_clients_list.html",
-        {"role": role, "clients": clients, "labels": await _fill_labels(session)},
+        {"role": role, "clients": clients, "labels": await _fill_labels(session, visible_group_ids=group_ids)},
     )
 
 
@@ -961,12 +1009,17 @@ async def htmx_fill_accounts(
     client_id: uuid.UUID | None = None,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     try:
         _check_fill_role(role)
     except DomainError as exc:
         return _invalid_fill_role_response(request, templates, exc)
-    accounts = await AccountService(session).list_all(client_id=client_id) if client_id else []
+    accounts = (
+        await AccountService(session).list_all(client_id=client_id, visible_group_ids=group_ids)
+        if client_id
+        else []
+    )
     return templates.TemplateResponse(
         request,
         "partials/fill_accounts_list.html",
@@ -974,7 +1027,7 @@ async def htmx_fill_accounts(
             "role": role,
             "client_id": client_id,
             "accounts": accounts,
-            "labels": await _fill_labels(session),
+            "labels": await _fill_labels(session, visible_group_ids=group_ids),
         },
     )
 
@@ -987,12 +1040,17 @@ async def htmx_fill_cards(
     client_id: uuid.UUID | None = None,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     try:
         _check_fill_role(role)
     except DomainError as exc:
         return _invalid_fill_role_response(request, templates, exc)
-    cards = await CardService(session).list_all(client_id=client_id) if client_id else []
+    cards = (
+        await CardService(session).list_all(client_id=client_id, visible_group_ids=group_ids)
+        if client_id
+        else []
+    )
     return templates.TemplateResponse(
         request,
         "partials/fill_cards_list.html",
@@ -1000,7 +1058,7 @@ async def htmx_fill_cards(
             "role": role,
             "client_id": client_id,
             "cards": cards,
-            "labels": await _fill_labels(session),
+            "labels": await _fill_labels(session, visible_group_ids=group_ids),
         },
     )
 
@@ -1011,11 +1069,12 @@ async def htmx_fill_render(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     try:
         data, raw_values = await _fill_request_from_form(request)
         template, rendered, rendered_html, unresolved, changed = await _render_fill(
-            session, template_id, data
+            session, template_id, data, visible_group_ids=group_ids
         )
     except ValueError:
         return form_errors_response(request, templates, "Проверьте выбранные записи")
@@ -1049,9 +1108,12 @@ async def htmx_fill_download(
     template_id: uuid.UUID,
     request: Request,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> StreamingResponse:
     data, _ = await _fill_request_from_form(request)
-    template, rendered, _, _, _ = await _render_fill(session, template_id, data)
+    template, rendered, _, _, _ = await _render_fill(
+        session, template_id, data, visible_group_ids=group_ids
+    )
     payload = rendered.encode("utf-8")
     ext = "xml" if template.format == "xml" else "json"
 
@@ -1071,6 +1133,7 @@ async def htmx_fill_save(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     """Persist the snapshot the user just reviewed in the result panel.
 
@@ -1091,11 +1154,20 @@ async def htmx_fill_save(
     form = await request.form()
     try:
         data, _raw = await _fill_request_from_form(request)
+        await _assert_fill_visible(session, data, group_ids)
     except ValueError:
         return form_errors_response(
             request,
             templates,
             "Проверьте выбранные записи",
+            status_code=200,
+            headers=FILL_SAVE_ERROR_HEADERS,
+        )
+    except DomainError as exc:
+        return form_errors_response(
+            request,
+            templates,
+            exc.message,
             status_code=200,
             headers=FILL_SAVE_ERROR_HEADERS,
         )

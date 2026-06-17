@@ -29,7 +29,12 @@
                        @click.stop
                        aria-label="Выбрать запись">
             </td>
-            <td class="col-description"><span class="description-text">{{ row.description }}</span></td>
+            <td class="col-description">
+                <span class="description-text">{{ row.description }}</span>
+                {% if entity_type == "client" and row.group %}
+                    <span class="group-badge group-badge--sm" title="Группа доступа: {{ row.group.name }}"><span class="group-dot" style="background: {{ row.group.color }}"></span>{{ row.group.name }}</span>
+                {% endif %}
+            </td>
             {% for field in fields %}
                 {% set raw = (row.attributes or {}).get(field.name) %}
                 <td>

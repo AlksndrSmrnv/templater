@@ -19,6 +19,7 @@ from app.db.models import (
     Collection,
     MessageTemplate,
 )
+from app.repositories.access_group import AccessGroupRepository
 from app.repositories.attribute import AttributeDefinitionRepository
 from app.repositories.entity import (
     AccountRepository,
@@ -184,14 +185,25 @@ class ExportImportService:
         self.accounts = AccountRepository(session)
         self.cards = CardRepository(session)
         self.templates = TemplateRepository(session)
+        self.groups = AccessGroupRepository(session)
 
-    async def export(self, req: ExportRequest) -> ExportPackage:
-        # gather: cards -> their accounts -> their clients
-        card_objs = await self.cards.get_many(req.cards)
+    async def export(
+        self, req: ExportRequest, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> ExportPackage:
+        # gather: cards -> their accounts -> their clients. Every fetch is
+        # filtered to ``visible_group_ids`` (public + unlocked) so a crafted
+        # request can't pull private data by id. Accounts/cards inherit their
+        # client's group, so a card visible here always resolves to a visible
+        # account and client — the closure never widens past what's allowed.
+        card_objs = await self.cards.get_many(req.cards, visible_group_ids=visible_group_ids)
         account_ids = set(req.accounts) | {c.account_id for c in card_objs}
-        account_objs = await self.accounts.get_many(list(account_ids))
+        account_objs = await self.accounts.get_many(
+            list(account_ids), visible_group_ids=visible_group_ids
+        )
         client_ids = set(req.clients) | {a.client_id for a in account_objs}
-        client_objs = await self.clients.get_many(list(client_ids))
+        client_objs = await self.clients.get_many(
+            list(client_ids), visible_group_ids=visible_group_ids
+        )
 
         all_defs = await self.attrs.list_all()
         templates = await self.templates.get_many(req.templates)
@@ -475,6 +487,22 @@ class ExportImportService:
         for warm_model, ids in warm_ids.items():
             if ids:
                 await self.session.execute(select(warm_model).where(warm_model.id.in_(ids)))
+
+        # Re-associate an imported client with a same-named access group on this
+        # instance (by name — the export never carries the password). When no
+        # such group exists the client lands public; groups are never created on
+        # import, since they require a password we don't have.
+        group_ids_by_name: dict[str, uuid.UUID | None] = {}
+
+        async def resolve_group_id(raw_name: Any) -> uuid.UUID | None:
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                return None
+            name = raw_name.strip()
+            if name not in group_ids_by_name:
+                existing_group = await self.groups.get_by_name(name)
+                group_ids_by_name[name] = existing_group.id if existing_group is not None else None
+            return group_ids_by_name[name]
+
         for kind, model_raw, et in (
             ("clients", Client, "client"),
             ("accounts", Account, "account"),
@@ -554,6 +582,12 @@ class ExportImportService:
                             errors.append(f"cards {eid_str}: счёт {account_id_str} не найден")
                             continue
 
+                    # Group membership lives only on the client (accounts/cards
+                    # inherit). Resolved by name against this instance's groups.
+                    new_group_id = (
+                        await resolve_group_id(raw.get("group_name")) if kind == "clients" else None
+                    )
+
                     if existing_entity is None:
                         kwargs = {
                             "id": eid,
@@ -565,6 +599,8 @@ class ExportImportService:
                             kwargs["client_id"] = new_client_id
                         if kind == "cards":
                             kwargs["account_id"] = new_account_id
+                        if kind == "clients":
+                            kwargs["group_id"] = new_group_id
                         self.session.add(model(**kwargs))
                         created[kind] += 1
                         if kind in imported_new_ids:
@@ -580,6 +616,13 @@ class ExportImportService:
                             existing_entity.client_id = new_client_id
                         if new_account_id is not None:
                             existing_entity.account_id = new_account_id
+                        # Overwrite never *reduces* protection: only re-associate
+                        # when the name resolves to a real group here. An absent /
+                        # unknown group leaves the existing membership untouched,
+                        # so restoring an old or group-less backup can't silently
+                        # make a private client public.
+                        if kind == "clients" and new_group_id is not None:
+                            existing_entity.group_id = new_group_id
                         updated[kind] += 1
                 except Exception as exc:
                     errors.append(f"{kind} {_safe_label(raw, 'id')}: {exc}")
@@ -906,11 +949,17 @@ class ExportImportService:
 
     @staticmethod
     def _dump_client(c: Client) -> dict[str, Any]:
+        # Access group is carried by name/color only — never the password hash.
+        # On import it re-associates the client with a same-named group on the
+        # destination, or leaves it public when none exists.
+        group = getattr(c, "group", None)
         return {
             "id": str(c.id),
             "description": c.description,
             "tags": list(c.tags or []),
             "attributes": c.attributes,
+            "group_name": getattr(group, "name", None),
+            "group_color": getattr(group, "color", None),
         }
 
     @staticmethod

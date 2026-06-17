@@ -172,7 +172,7 @@ def _client_with_fake_session() -> TestClient:
 def test_htmx_delete_with_relations_shows_error_toast(monkeypatch: pytest.MonkeyPatch) -> None:
     message = "К клиенту привязано счетов: 2. Удалите их сначала."
 
-    async def failing_delete(self: Any, client_id: Any) -> None:
+    async def failing_delete(self: Any, client_id: Any, *, visible_group_ids: Any = None) -> None:
         raise IntegrityViolation(message, details={"dependent_accounts": 2})
 
     monkeypatch.setattr(entities.ClientService, "delete", failing_delete)
@@ -192,7 +192,7 @@ def test_htmx_delete_with_relations_shows_error_toast(monkeypatch: pytest.Monkey
 
 
 def test_htmx_delete_success_shows_done_toast(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def ok_delete(self: Any, client_id: Any) -> None:
+    async def ok_delete(self: Any, client_id: Any, *, visible_group_ids: Any = None) -> None:
         return None
 
     monkeypatch.setattr(entities.ClientService, "delete", ok_delete)

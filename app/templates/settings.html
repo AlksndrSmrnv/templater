@@ -89,6 +89,24 @@
 </div>
 
 <div class="settings-section">
+    <h2><iconify-icon icon="lucide:shield-half"></iconify-icon> Группы доступа</h2>
+    <p class="muted">Группа — это защищённый паролем набор тестовых данных. Тестовые данные и заполненные шаблоны можно привязать к группе: их увидит только тот, кто введёт её пароль (кнопка «Разблокировать данные» в шапке). Обычные шаблоны с динамическими параметрами видны всем без пароля. Данные без группы тоже публичны. Удалить группу можно, только когда к ней не привязаны данные.</p>
+    <div class="table-wrap">
+        <table class="data-table" id="groups-table">
+            <thead><tr>
+                <th>Группа</th><th>Цвет / пароль</th><th class="no-sort"></th><th class="no-sort"></th>
+            </tr></thead>
+            <tbody id="groups-body"
+                   hx-get="/templater/settings-htmx/groups/table"
+                   hx-trigger="refresh-groups from:body"
+                   hx-swap="innerHTML">
+                {% include "partials/groups_table.html" %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="settings-section">
     <h2><iconify-icon icon="lucide:list-checks"></iconify-icon> Стандартные заголовки</h2>
     <p class="muted">Пресет — это стандартный URL и набор HTTP-заголовков с меткой проекта. На шаблоне можно выбрать подходящий пресет (по проекту), и его URL с заголовками подставятся в шаблон. Значение заголовка может быть константой или динамикой вида <code>{{ '{{rquid}}' }}</code> (подставится при отправке).</p>
     <div class="table-wrap">

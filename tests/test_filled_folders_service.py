@@ -47,7 +47,7 @@ class _FakeFilledRepo:
         }
 
     async def list_all(
-        self, *, search: str = "", limit: int | None = 200
+        self, *, search: str = "", limit: int | None = 200, visible_group_ids=None
     ) -> list[SimpleNamespace]:
         term = search.strip().lower()
         rows = self.items
@@ -57,7 +57,7 @@ class _FakeFilledRepo:
         # ``limit=None`` disables the cap.
         return list(rows[:limit])
 
-    async def get(self, filled_id: uuid.UUID) -> SimpleNamespace | None:
+    async def get(self, filled_id: uuid.UUID, *, visible_group_ids=None) -> SimpleNamespace | None:
         return next((i for i in self.items if i.id == filled_id), None)
 
     async def get_many(self, ids):  # type: ignore[no-untyped-def]

@@ -9,7 +9,7 @@ from sqlalchemy import Text, func, or_, select
 from sqlalchemy import cast as sa_cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Account, Card, Client, MessageTemplate
+from app.db.models import Account, Card, Client, FilledTemplate, MessageTemplate
 
 # Real columns (not JSONB attributes) the entity list may sort on.
 _REAL_SORT_COLUMNS = frozenset({"description", "created_at", "updated_at"})
@@ -28,6 +28,38 @@ def _like_escape(text: str) -> str:
         .replace("%", f"{_LIKE_ESCAPE}%")
         .replace("_", f"{_LIKE_ESCAPE}_")
     )
+
+
+def group_visibility_condition(
+    model: Any, visible_group_ids: set[uuid.UUID] | None
+) -> Any:
+    """WHERE condition restricting rows to those an unlocked-group set may see:
+    public rows (``group_id IS NULL``) plus rows in an unlocked group.
+
+    Group membership lives only on :class:`Client`; accounts and cards inherit
+    their parent client's group via a correlated ``EXISTS`` (relationship
+    ``.has()``), so there is a single source of truth and nothing to keep in
+    sync. ``visible_group_ids=None`` means "no restriction" (internal/admin
+    callers); a set — possibly empty — restricts to public + that set.
+    """
+
+    if visible_group_ids is None:
+        return None
+    # Models with their own ``group_id`` column (Client, FilledTemplate): public
+    # rows plus rows in an unlocked group.
+    if model is Client or model is FilledTemplate:
+        column = model.group_id
+        cond: Any = column.is_(None)
+        if visible_group_ids:
+            cond = or_(cond, column.in_(visible_group_ids))
+        return cond
+    if model is Account:
+        return Account.client.has(group_visibility_condition(Client, visible_group_ids))
+    if model is Card:
+        return Card.account.has(
+            Account.client.has(group_visibility_condition(Client, visible_group_ids))
+        )
+    return None
 
 
 def _entity_filter_conditions(
@@ -97,13 +129,19 @@ async def _query_entity_page(
     attr_names: set[str],
     limit: int,
     offset: int,
+    extra_conditions: list[Any] | None = None,
 ) -> tuple[list[Any], int]:
     """Return ``(page_rows, total_matching)`` for the entity list, doing search,
-    filtering, sorting and pagination in SQL (bounded result set, no Python sweep)."""
+    filtering, sorting and pagination in SQL (bounded result set, no Python sweep).
+
+    ``extra_conditions`` are ANDed in alongside the search/filter predicates —
+    used to enforce access-group visibility."""
 
     conditions = _entity_filter_conditions(
         model, search=search, filters=filters, attr_names=attr_names
     )
+    if extra_conditions:
+        conditions.extend(extra_conditions)
     count_stmt = select(func.count()).select_from(model)
     page_stmt = select(model)
     if conditions:
@@ -121,8 +159,13 @@ class ClientRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_all(self) -> list[Client]:
+    async def list_all(
+        self, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> list[Client]:
         stmt = select(Client).order_by(Client.created_at.desc())
+        cond = group_visibility_condition(Client, visible_group_ids)
+        if cond is not None:
+            stmt = stmt.where(cond)
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def list_page(
@@ -135,19 +178,34 @@ class ClientRepository:
         attr_names: set[str],
         limit: int,
         offset: int,
+        visible_group_ids: set[uuid.UUID] | None = None,
     ) -> tuple[list[Client], int]:
+        cond = group_visibility_condition(Client, visible_group_ids)
         return await _query_entity_page(
             self.session, Client, search=search, filters=filters, sort=sort,
             direction=direction, attr_names=attr_names, limit=limit, offset=offset,
+            extra_conditions=[cond] if cond is not None else None,
         )
 
-    async def get(self, client_id: uuid.UUID) -> Client | None:
-        return await self.session.get(Client, client_id)
+    async def get(
+        self, client_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> Client | None:
+        if visible_group_ids is None:
+            return await self.session.get(Client, client_id)
+        stmt = select(Client).where(
+            Client.id == client_id, group_visibility_condition(Client, visible_group_ids)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
-    async def get_many(self, ids: Sequence[uuid.UUID]) -> list[Client]:
+    async def get_many(
+        self, ids: Sequence[uuid.UUID], *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> list[Client]:
         if not ids:
             return []
         stmt = select(Client).where(Client.id.in_(ids))
+        cond = group_visibility_condition(Client, visible_group_ids)
+        if cond is not None:
+            stmt = stmt.where(cond)
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def count_accounts(self, client_id: uuid.UUID) -> int:
@@ -167,10 +225,18 @@ class AccountRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_all(self, *, client_id: uuid.UUID | None = None) -> list[Account]:
+    async def list_all(
+        self,
+        *,
+        client_id: uuid.UUID | None = None,
+        visible_group_ids: set[uuid.UUID] | None = None,
+    ) -> list[Account]:
         stmt = select(Account).order_by(Account.created_at.desc())
         if client_id is not None:
             stmt = stmt.where(Account.client_id == client_id)
+        cond = group_visibility_condition(Account, visible_group_ids)
+        if cond is not None:
+            stmt = stmt.where(cond)
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def list_page(
@@ -183,19 +249,34 @@ class AccountRepository:
         attr_names: set[str],
         limit: int,
         offset: int,
+        visible_group_ids: set[uuid.UUID] | None = None,
     ) -> tuple[list[Account], int]:
+        cond = group_visibility_condition(Account, visible_group_ids)
         return await _query_entity_page(
             self.session, Account, search=search, filters=filters, sort=sort,
             direction=direction, attr_names=attr_names, limit=limit, offset=offset,
+            extra_conditions=[cond] if cond is not None else None,
         )
 
-    async def get(self, account_id: uuid.UUID) -> Account | None:
-        return await self.session.get(Account, account_id)
+    async def get(
+        self, account_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> Account | None:
+        if visible_group_ids is None:
+            return await self.session.get(Account, account_id)
+        stmt = select(Account).where(
+            Account.id == account_id, group_visibility_condition(Account, visible_group_ids)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
-    async def get_many(self, ids: Sequence[uuid.UUID]) -> list[Account]:
+    async def get_many(
+        self, ids: Sequence[uuid.UUID], *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> list[Account]:
         if not ids:
             return []
         stmt = select(Account).where(Account.id.in_(ids))
+        cond = group_visibility_condition(Account, visible_group_ids)
+        if cond is not None:
+            stmt = stmt.where(cond)
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def list_for_client_ids(self, client_ids: Sequence[uuid.UUID]) -> list[Account]:
@@ -230,12 +311,16 @@ class CardRepository:
         *,
         account_id: uuid.UUID | None = None,
         client_id: uuid.UUID | None = None,
+        visible_group_ids: set[uuid.UUID] | None = None,
     ) -> list[Card]:
         stmt = select(Card).order_by(Card.created_at.desc())
         if client_id is not None:
             stmt = stmt.join(Account, Card.account_id == Account.id).where(Account.client_id == client_id)
         if account_id is not None:
             stmt = stmt.where(Card.account_id == account_id)
+        cond = group_visibility_condition(Card, visible_group_ids)
+        if cond is not None:
+            stmt = stmt.where(cond)
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def list_page(
@@ -248,19 +333,34 @@ class CardRepository:
         attr_names: set[str],
         limit: int,
         offset: int,
+        visible_group_ids: set[uuid.UUID] | None = None,
     ) -> tuple[list[Card], int]:
+        cond = group_visibility_condition(Card, visible_group_ids)
         return await _query_entity_page(
             self.session, Card, search=search, filters=filters, sort=sort,
             direction=direction, attr_names=attr_names, limit=limit, offset=offset,
+            extra_conditions=[cond] if cond is not None else None,
         )
 
-    async def get(self, card_id: uuid.UUID) -> Card | None:
-        return await self.session.get(Card, card_id)
+    async def get(
+        self, card_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> Card | None:
+        if visible_group_ids is None:
+            return await self.session.get(Card, card_id)
+        stmt = select(Card).where(
+            Card.id == card_id, group_visibility_condition(Card, visible_group_ids)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
-    async def get_many(self, ids: Sequence[uuid.UUID]) -> list[Card]:
+    async def get_many(
+        self, ids: Sequence[uuid.UUID], *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> list[Card]:
         if not ids:
             return []
         stmt = select(Card).where(Card.id.in_(ids))
+        cond = group_visibility_condition(Card, visible_group_ids)
+        if cond is not None:
+            stmt = stmt.where(cond)
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def list_for_account_ids(self, account_ids: Sequence[uuid.UUID]) -> list[Card]:

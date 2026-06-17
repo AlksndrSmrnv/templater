@@ -64,6 +64,10 @@
             <span class="nav-icon"><iconify-icon icon="lucide:settings"></iconify-icon></span><span class="nav-label">Настройки</span>
         </a>
     </nav>
+    <span class="nav-groups"
+          hx-get="/templater/groups-htmx/status"
+          hx-trigger="load"
+          hx-swap="innerHTML"></span>
 </header>
 <main class="content">
     {% block content %}{% endblock %}
