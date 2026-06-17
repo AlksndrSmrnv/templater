@@ -138,6 +138,51 @@ def test_invalid_top_level_raises() -> None:
         parse_postman_collection({"item": []})  # no info
 
 
+def test_empty_mode_raw_body_is_parsed() -> None:
+    # Not-quite-Postman exports may leave ``body.mode`` empty while the payload
+    # still lives in ``raw``. The body must still be imported and parsed.
+    pc = parse_postman_collection(
+        {
+            "info": {"name": "S", "schema": "v2.1.0"},
+            "item": [
+                {
+                    "name": "EmptyMode",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {"mode": "", "raw": '{"a": 1}'},
+                    },
+                }
+            ],
+        }
+    )
+    req = pc.requests[0]
+    assert req.fmt == "json"
+    assert req.parsable is True
+    assert req.content == '{"a": 1}'
+
+
+def test_explicit_non_raw_mode_is_skipped() -> None:
+    # A stale ``raw`` alongside an explicit non-raw mode must not be imported.
+    pc = parse_postman_collection(
+        {
+            "info": {"name": "S", "schema": "v2.1.0"},
+            "item": [
+                {
+                    "name": "Urlencoded",
+                    "request": {
+                        "method": "POST",
+                        "body": {"mode": "urlencoded", "raw": '{"a": 1}'},
+                    },
+                }
+            ],
+        }
+    )
+    req = pc.requests[0]
+    assert req.parsable is False
+    assert req.content == ""
+
+
 def test_unparsable_raw_body_kept_verbatim() -> None:
     pc = parse_postman_collection(
         {
