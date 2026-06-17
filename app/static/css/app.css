@@ -815,6 +815,22 @@ h3 { font-size: var(--fs-lg); line-height: 1.3; font-weight: 600; letter-spacing
 }
 
 /* Header-preset editor (settings) + apply-preset picker (template panel). */
+.preset-list { display: flex; flex-direction: column; gap: 12px; }
+.preset-card {
+    padding: 12px 14px; border: 1px solid var(--border);
+    border-radius: var(--radius-sm); background: var(--surface);
+    display: flex; flex-direction: column; gap: 6px;
+}
+.preset-card-name { font-size: var(--fs-lg); font-weight: 600; }
+.preset-card-meta {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    font-size: var(--fs-sm);
+}
+.preset-empty { text-align: center; padding: 24px; }
+.preset-field { display: flex; flex-direction: column; gap: 4px; }
+.preset-field input, .preset-field select { width: 100%; }
+.preset-field-label { font-size: var(--fs-sm); color: var(--muted); font-weight: 600; }
+.preset-field-main input { font-size: var(--fs-lg); font-weight: 600; }
 .preset-edit-block {
     display: flex; flex-direction: column; gap: 10px;
     padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
