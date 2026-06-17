@@ -1047,8 +1047,10 @@ select {
     background-repeat: no-repeat;
     background-position: right 12px center;
     background-size: 16px;
-    cursor: pointer;
 }
+/* Pointer only when interactive — disabled selects shouldn't look clickable. */
+select:not(:disabled) { cursor: pointer; }
+select:disabled { cursor: not-allowed; }
 /* Full-size selects — reserve room on the right for the chevron and re-assert
    the image (container rules use the `background` shorthand, wiping it). */
 .form select, .filters select, .filters-inline select, .preset-field select {
@@ -1083,7 +1085,14 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: 6px; }
 
 /* File picker — give the native button the same rounded chip as .btn. */
 input[type="file"] { font: inherit; font-size: var(--fs-sm); color: var(--muted); }
-input[type="file"]::file-selector-button,
+/* Kept as two separate rules: a browser that can't parse one pseudo-element
+   selector would otherwise drop the whole grouped declaration. */
+input[type="file"]::file-selector-button {
+    margin-right: 10px; padding: 8px 14px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--surface); color: var(--text); font: inherit; font-weight: 500;
+    cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease;
+}
 input[type="file"]::-webkit-file-upload-button {
     margin-right: 10px; padding: 8px 14px;
     border: 1px solid var(--border); border-radius: var(--radius-sm);
