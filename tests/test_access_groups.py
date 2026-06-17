@@ -19,7 +19,9 @@ from app.db.models import Account, Card, Client, FilledTemplate
 from app.repositories.entity import group_visibility_condition
 from app.routes.deps import get_templates
 from app.schemas.access_group import AccessGroupCreate, AccessGroupUpdate
+from app.schemas.template import TemplateFillRequest
 from app.services.access_groups import AccessGroupService
+from app.services.filled_templates import FilledTemplateService
 from app.utils import access_groups as ag
 from app.utils.errors import IntegrityViolation, ValidationFailed
 from app.utils.password import hash_password, verify_password
@@ -244,3 +246,77 @@ def test_groups_table_shows_password_field_only_in_edit_mode() -> None:
     unlocked = render_template("partials/groups_table.html", {"groups": [g], "edit_mode": True})
     assert 'type="password"' in unlocked
     assert "Добавить группу" in unlocked
+
+
+# --------- filled-template group derivation across all roles ---------
+
+
+class _FakeClientSession:
+    """Session stand-in whose ``get`` resolves clients by id — enough for
+    FilledTemplateService._fill_group (it builds a ClientRepository over it)."""
+
+    def __init__(self, clients: list[Any]) -> None:
+        self._by_id = {c.id: c for c in clients}
+
+    async def get(self, model: Any, ident: Any) -> Any:
+        return self._by_id.get(ident)
+
+
+def _grouped_client(group_id: Any) -> SimpleNamespace:
+    group = (
+        SimpleNamespace(name=f"G-{str(group_id)[:4]}", color="#123456")
+        if group_id is not None
+        else None
+    )
+    return SimpleNamespace(id=uuid.uuid4(), group_id=group_id, group=group)
+
+
+def _fill_service(clients: list[Any]) -> FilledTemplateService:
+    svc = FilledTemplateService.__new__(FilledTemplateService)
+    svc.session = _FakeClientSession(clients)  # type: ignore[attr-defined]
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_fill_group_public_when_no_role_has_a_group() -> None:
+    sender = _grouped_client(None)
+    svc = _fill_service([sender])
+    gid, name, color = await svc._fill_group(TemplateFillRequest(sender_client_id=sender.id))
+    assert (gid, name, color) == (None, "", "")
+
+
+@pytest.mark.asyncio
+async def test_fill_group_derives_from_receiver_when_sender_is_public() -> None:
+    # The old bug: a private receiver with a public/absent sender was saved as
+    # public. The group must come from *any* role, not just the sender.
+    group_id = uuid.uuid4()
+    receiver = _grouped_client(group_id)
+    svc = _fill_service([receiver])
+    gid, name, color = await svc._fill_group(
+        TemplateFillRequest(receiver_client_id=receiver.id)
+    )
+    assert gid == group_id
+    assert name and color  # snapshotted from the receiver's group
+
+
+@pytest.mark.asyncio
+async def test_fill_group_rejects_cross_group_mix() -> None:
+    sender = _grouped_client(uuid.uuid4())
+    receiver = _grouped_client(uuid.uuid4())  # a different group
+    svc = _fill_service([sender, receiver])
+    with pytest.raises(ValidationFailed):
+        await svc._fill_group(
+            TemplateFillRequest(sender_client_id=sender.id, receiver_client_id=receiver.id)
+        )
+
+
+@pytest.mark.asyncio
+async def test_fill_group_allows_same_group_across_roles() -> None:
+    group_id = uuid.uuid4()
+    sender = _grouped_client(group_id)
+    receiver = _grouped_client(group_id)  # same group → fine
+    svc = _fill_service([sender, receiver])
+    gid, _name, _color = await svc._fill_group(
+        TemplateFillRequest(sender_client_id=sender.id, receiver_client_id=receiver.id)
+    )
+    assert gid == group_id

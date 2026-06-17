@@ -169,8 +169,15 @@ def import_service_spy(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object
             *,
             policy: str,
             allow_project_creation: bool = True,
+            allowed_group_ids: object = None,
         ) -> SimpleNamespace:
-            calls.append({"package": package, "allow_project_creation": allow_project_creation})
+            calls.append(
+                {
+                    "package": package,
+                    "allow_project_creation": allow_project_creation,
+                    "allowed_group_ids": allowed_group_ids,
+                }
+            )
             return SimpleNamespace(model_dump=lambda: {})
 
     class FakeSettingsRepo:

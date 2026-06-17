@@ -232,6 +232,7 @@ class ExportImportService:
         *,
         policy: str = "skip",
         allow_project_creation: bool = True,
+        allowed_group_ids: set[uuid.UUID] | None = None,
     ) -> ImportSummary:
         if policy not in ("skip", "overwrite", "fail"):
             policy = "skip"
@@ -489,9 +490,13 @@ class ExportImportService:
                 await self.session.execute(select(warm_model).where(warm_model.id.in_(ids)))
 
         # Re-associate an imported client with a same-named access group on this
-        # instance (by name — the export never carries the password). When no
-        # such group exists the client lands public; groups are never created on
-        # import, since they require a password we don't have.
+        # instance (by name — the export never carries the password). The group
+        # is assigned only when the importer has *unlocked* it (``allowed_group_ids``)
+        # — otherwise an import could hide or move data into a protected group the
+        # user doesn't control. When the group is missing or not unlocked, the
+        # client lands public; groups are never created on import (they need a
+        # password we don't have). ``allowed_group_ids=None`` disables the gate
+        # (internal/admin callers).
         group_ids_by_name: dict[str, uuid.UUID | None] = {}
 
         async def resolve_group_id(raw_name: Any) -> uuid.UUID | None:
@@ -500,7 +505,10 @@ class ExportImportService:
             name = raw_name.strip()
             if name not in group_ids_by_name:
                 existing_group = await self.groups.get_by_name(name)
-                group_ids_by_name[name] = existing_group.id if existing_group is not None else None
+                gid = existing_group.id if existing_group is not None else None
+                if gid is not None and allowed_group_ids is not None and gid not in allowed_group_ids:
+                    gid = None  # group exists but the importer hasn't unlocked it
+                group_ids_by_name[name] = gid
             return group_ids_by_name[name]
 
         for kind, model_raw, et in (

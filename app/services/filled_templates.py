@@ -356,20 +356,53 @@ class FilledTemplateService:
     async def _fill_group(
         self, fill_request: TemplateFillRequest
     ) -> tuple[uuid.UUID | None, str, str]:
-        """Resolve ``(group_id, name, color)`` for a fill from its sender client.
+        """Resolve ``(group_id, name, color)`` for a fill across *all* its roles.
 
-        A fill with no sender client, or a public sender, is public (``None``).
+        A saved snapshot is a single artifact with one ``group_id``, so it can
+        only safely represent one access group. We collect the distinct private
+        groups of every role's client (sender / receiver / accountOwner):
+
+        - none → public (``None``);
+        - exactly one → that group (name/color snapshotted for the badge);
+        - two or more → reject. A single ``group_id`` cannot be hidden from
+          holders of group A while shown to holders of group B, so persisting the
+          mix would leak one group's data to the other.
+
         getattr-safe so test doubles without the ``group`` relationship work.
         """
 
-        sender_id = fill_request.sender_client_id
-        if sender_id is None:
+        client_ids = list(
+            dict.fromkeys(
+                cid
+                for cid in (
+                    fill_request.sender_client_id,
+                    fill_request.receiver_client_id,
+                    fill_request.account_owner_client_id,
+                )
+                if cid is not None
+            )
+        )
+        if not client_ids:
             return None, "", ""
-        sender = await ClientRepository(self.session).get(sender_id)
-        if sender is None or getattr(sender, "group_id", None) is None:
+        repo = ClientRepository(self.session)
+        groups: dict[uuid.UUID, Any] = {}  # group_id → group row (for name/color)
+        for cid in client_ids:
+            client = await repo.get(cid)
+            if client is None:
+                continue
+            gid = getattr(client, "group_id", None)
+            if gid is not None:
+                groups[gid] = getattr(client, "group", None)
+        if not groups:
             return None, "", ""
-        group = getattr(sender, "group", None)
-        return sender.group_id, getattr(group, "name", "") or "", getattr(group, "color", "") or ""
+        if len(groups) > 1:
+            raise ValidationFailed(
+                "Нельзя сохранить заполненный шаблон с данными из разных групп доступа — "
+                "это раскрыло бы данные одной группы держателям другой. Используйте "
+                "данные одной группы (плюс публичные)."
+            )
+        gid, group = next(iter(groups.items()))
+        return gid, getattr(group, "name", "") or "", getattr(group, "color", "") or ""
 
     async def save_from_fill(
         self,
@@ -387,9 +420,9 @@ class FilledTemplateService:
         name = build_auto_name(template.name, role_labels, moment)
         # getattr-safe: test doubles may not carry the project relationship.
         project = getattr(template, "project", None)
-        # The filled snapshot inherits the sender client's access group (so a
-        # private fill stays hidden from everyone outside that group); name and
-        # color are snapshotted so the badge survives the group being deleted.
+        # The snapshot's access group is derived from all involved role clients
+        # (raises on a cross-group mix); name and color are snapshotted so the
+        # badge survives the group being deleted.
         group_id, group_name, group_color = await self._fill_group(fill_request)
         target_folder = _norm_path(folder_path)
         item = FilledTemplate(

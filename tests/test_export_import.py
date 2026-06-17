@@ -650,11 +650,32 @@ async def test_import_client_reassociates_to_existing_same_named_group() -> None
         "clients": [{"id": str(cid), "group_name": "QA"}],
     }
     session = _KnownGroupSession(group)
-    summary = await ExportImportService(cast(Any, session)).import_package(package, policy="skip")
+    # The importer has unlocked QA, so the client may be placed in it.
+    summary = await ExportImportService(cast(Any, session)).import_package(
+        package, policy="skip", allowed_group_ids={group.id}
+    )
 
     assert summary.errors == []
     created = next(o for o in session.added if isinstance(o, Client))
     assert created.group_id == group.id
+
+
+@pytest.mark.asyncio
+async def test_import_does_not_assign_group_the_importer_has_not_unlocked() -> None:
+    # The group "QA" exists on this instance, but the importer never unlocked it,
+    # so an import must not be able to hide/move data into it — the client lands
+    # public instead.
+    cid = uuid.uuid4()
+    group = AccessGroup(id=uuid.uuid4(), name="QA", color="#7E57C2", password_hash="x")
+    package = {"version": 3, "clients": [{"id": str(cid), "group_name": "QA"}]}
+    session = _KnownGroupSession(group)
+    summary = await ExportImportService(cast(Any, session)).import_package(
+        package, policy="skip", allowed_group_ids=set()  # nothing unlocked
+    )
+
+    assert summary.errors == []
+    created = next(o for o in session.added if isinstance(o, Client))
+    assert created.group_id is None
 
 
 @pytest.mark.asyncio

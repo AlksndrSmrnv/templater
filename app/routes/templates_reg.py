@@ -1202,14 +1202,25 @@ async def htmx_fill_save(
         )
 
     template = await TemplateService(session).get(template_id)
-    saved = await FilledTemplateService(session).save_from_fill(
-        template=template,
-        fill_request=data,
-        rendered=filled_content,
-        changed=[str(x) for x in changed_locations],
-        unresolved=[str(x) for x in unresolved],
-        folder_path=parse_json_path(form_str(form, "folder_path")),
-    )
+    try:
+        saved = await FilledTemplateService(session).save_from_fill(
+            template=template,
+            fill_request=data,
+            rendered=filled_content,
+            changed=[str(x) for x in changed_locations],
+            unresolved=[str(x) for x in unresolved],
+            folder_path=parse_json_path(form_str(form, "folder_path")),
+        )
+    except DomainError as exc:
+        # E.g. a cross-group fill — surface it on the save feedback line.
+        return form_errors_response(
+            request,
+            templates,
+            exc.message,
+            details=exc.details,
+            status_code=200,
+            headers=FILL_SAVE_ERROR_HEADERS,
+        )
     saved = await commit_and_refresh(session, saved)
     # Land in the filled-templates workspace with the saved item's panel open
     # and highlighted in its folder.
