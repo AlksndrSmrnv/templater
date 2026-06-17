@@ -156,14 +156,20 @@ def _parse_headers(header: Any) -> list[dict[str, str | bool]]:
 def _parse_body(body: Any) -> tuple[str, str, bool]:
     """Return ``(content, fmt, parsable)`` for a Postman request body.
 
-    Only ``raw`` bodies carry template content. Other modes (urlencoded,
-    formdata, file, graphql) and absent bodies yield empty, non-parsable
-    content — the request is still imported for its headers/URL/method.
+    Only ``raw`` bodies carry template content. An empty or missing ``mode``
+    (seen in not-quite-Postman exports) is treated as raw when ``raw`` is
+    present. Other modes (urlencoded, formdata, file, graphql) and absent
+    bodies yield empty, non-parsable content — the request is still imported
+    for its headers/URL/method.
     """
 
     if not isinstance(body, dict):
         return "", "json", False
-    if body.get("mode") != "raw":
+    # Some non-Postman exports leave ``mode`` empty (or omit it) while still
+    # carrying the payload in ``raw``. Treat empty/missing mode as raw-eligible;
+    # only an explicit non-raw mode (urlencoded/formdata/file/graphql) is skipped.
+    mode = _as_str(body.get("mode")).lower()
+    if mode not in ("", "raw"):
         return "", "json", False
     raw = body.get("raw")
     if not isinstance(raw, str) or not raw.strip():
