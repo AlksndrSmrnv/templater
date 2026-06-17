@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import ssl
+import uuid
 
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
@@ -9,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.runner import llm_service
-from app.routes.deps import SessionDep, TemplatesDep
+from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.htmx_utils import form_errors_response, form_str
 from app.services.transfer_assistant import TransferAssistant
 from app.utils.errors import DomainError, LLMUnavailable
@@ -34,13 +35,14 @@ async def htmx_compose(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     form = await request.form()
     prompt = form_str(form, "prompt")
     assistant = TransferAssistant(session)
     try:
         async with llm_service(session=session) as llm_svc:
-            context = await assistant.compose(prompt, llm_svc)
+            context = await assistant.compose(prompt, llm_svc, visible_group_ids=group_ids)
     except (LLMUnavailable, DomainError) as exc:
         return form_errors_response(
             request,

@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.db.session import shutdown_engine
 from app.routes import (
+    access_groups,
     assistant,
     collections,
     entities_htmx,
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
     app.mount(f"{app_prefix}/static", StaticFiles(directory=settings.static_dir), name="static")
 
     app.include_router(home.router, prefix=app_prefix)
+    app.include_router(access_groups.router, prefix=app_prefix)
     app.include_router(assistant.router, prefix=app_prefix)
     app.include_router(build_entity_pages_router("client", "clients"), prefix=app_prefix)
     app.include_router(build_entity_pages_router("account", "accounts"), prefix=app_prefix)

@@ -102,7 +102,13 @@ class TransferAssistant:
             out.append(tpl)
         return out
 
-    async def compose(self, prompt: str, llm_service: Any) -> dict[str, Any]:
+    async def compose(
+        self,
+        prompt: str,
+        llm_service: Any,
+        *,
+        visible_group_ids: set[uuid.UUID] | None = None,
+    ) -> dict[str, Any]:
         prompt = (prompt or "").strip()
         if not prompt:
             raise ValidationFailed("Введите запрос для подбора перевода")
@@ -134,9 +140,12 @@ class TransferAssistant:
             )
 
         # ---- Call 2: pick participants ----
-        clients = await self.clients.list_all()
-        accounts = await self.accounts.list_all()
-        cards = await self.cards.list_all()
+        # Only data the caller may see is offered to the model — otherwise a
+        # hidden group's test data would be sent to the LLM and rendered back to
+        # someone who never unlocked it.
+        clients = await self.clients.list_all(visible_group_ids=visible_group_ids)
+        accounts = await self.accounts.list_all(visible_group_ids=visible_group_ids)
+        cards = await self.cards.list_all(visible_group_ids=visible_group_ids)
 
         client_ids = {f"C{i}": c for i, c in enumerate(clients, start=1)}
         account_ids = {f"A{i}": a for i, a in enumerate(accounts, start=1)}

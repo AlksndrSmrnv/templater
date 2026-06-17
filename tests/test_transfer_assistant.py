@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
+from typing import Any
+
+import pytest
 
 from app.services.transfer_assistant import TransferAssistant
+from app.utils.errors import ValidationFailed
 
 
 def _client(**attrs):
@@ -109,3 +113,55 @@ def test_merge_debug_labels_both_llm_calls() -> None:
     assert merged["system_prompt"] == "### Подбор шаблона\nts\n\n### Подбор участников\nps"
     assert "### Подбор шаблона\ntr" in merged["response_text"]
     assert "### Подбор участников\npr" in merged["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_compose_filters_participants_by_visible_groups() -> None:
+    """The participant catalogs the LLM sees must be restricted to the caller's
+    unlocked groups — otherwise hidden test data would be sent to the model and
+    rendered back to someone who never unlocked it."""
+
+    captured: dict[str, Any] = {}
+    tpl = SimpleNamespace(
+        id=uuid.uuid4(),
+        format="json",
+        content="{}",
+        description="d",
+        # has_account_owner short-circuits template_has_account_owner before it
+        # inspects the (faked) body — this test only cares about group filtering.
+        llm_meta={"import_status": "processed", "summary": "s", "has_account_owner": True},
+        placeholders=[{"location": "/a", "mode": "literal", "value": "x"}],
+    )
+
+    class _FakeTemplates:
+        async def list_all(self) -> list[Any]:
+            return [tpl]
+
+    class _SpyEntityService:
+        def __init__(self, key: str) -> None:
+            self.key = key
+
+        async def list_all(self, *, visible_group_ids: Any = None) -> list[Any]:
+            captured[self.key] = visible_group_ids
+            return []
+
+    class _FakeLLM:
+        async def pick_transfer_template(self, *, request: str, templates: Any) -> tuple[str, dict]:
+            return "T1", {}
+
+        async def pick_transfer_participants(self, **_: Any) -> tuple[dict, dict]:
+            return {}, {}
+
+    a = TransferAssistant.__new__(TransferAssistant)
+    a.session = object()  # not reached: no participants resolve → raises first
+    a.templates = _FakeTemplates()  # type: ignore[assignment]
+    a.clients = _SpyEntityService("clients")  # type: ignore[assignment]
+    a.accounts = _SpyEntityService("accounts")  # type: ignore[assignment]
+    a.cards = _SpyEntityService("cards")  # type: ignore[assignment]
+
+    groups = {uuid.uuid4()}
+    with pytest.raises(ValidationFailed):  # empty picks → can't resolve participants
+        await a.compose("перевод", _FakeLLM(), visible_group_ids=groups)
+
+    # All three participant catalogs were fetched with the caller's group set.
+    assert captured == {"clients": groups, "accounts": groups, "cards": groups}

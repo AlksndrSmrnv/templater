@@ -285,6 +285,9 @@ async def test_htmx_fill_save_persists_form_snapshot_without_rerender(
         request=cast(Any, _FakeFormRequest(form)),
         templates=cast(Any, _FakeRenderer()),
         session=cast(Any, object()),
+        # None = no group restriction, so the visibility guard is skipped in this
+        # unit test (its concern is the no-rerender snapshot, not access control).
+        group_ids=cast(Any, None),
     )
 
     assert captured["render_calls"] == 0, "save must not re-run _render_fill"

@@ -1,0 +1,52 @@
+{% set rows = groups | default([]) %}
+{% if rows %}
+    {% for g in rows %}
+        <tr data-id="{{ g.id }}">
+            <td>
+                <span class="group-badge"><span class="group-dot" style="background: {{ g.color }}"></span>{{ g.name }}</span>
+            </td>
+            {% if edit_mode %}
+            <td colspan="2">
+                <form class="filters-inline"
+                      hx-put="/templater/settings-htmx/groups/{{ g.id }}"
+                      hx-swap="none">
+                    <input type="text" name="name" value="{{ g.name }}" required maxlength="255">
+                    <input type="color" name="color" value="{{ g.color }}" title="Цвет метки">
+                    <input type="password" name="password" placeholder="Новый пароль (необязательно)" autocomplete="off" maxlength="255">
+                    <button class="btn primary" type="submit">Сохранить</button>
+                </form>
+            </td>
+            <td class="row-actions">
+                <button class="btn danger"
+                        type="button"
+                        hx-delete="/templater/settings-htmx/groups/{{ g.id }}"
+                        hx-swap="none"
+                        hx-confirm="Удалить группу «{{ g.name }}»? Удаление невозможно, пока к группе привязаны данные.">Удалить</button>
+            </td>
+            {% else %}
+            <td><code>{{ g.color }}</code></td>
+            <td></td>
+            <td></td>
+            {% endif %}
+        </tr>
+    {% endfor %}
+{% else %}
+    <tr>
+        <td colspan="4" class="muted" style="text-align:center; padding:24px;">Нет групп</td>
+    </tr>
+{% endif %}
+{% if edit_mode %}
+    <tr>
+        <td colspan="4">
+            <form class="filters-inline"
+                  hx-post="/templater/settings-htmx/groups"
+                  hx-swap="none"
+                  hx-on::after-request="if (event.detail.successful) this.reset()">
+                <input type="text" name="name" placeholder="Название группы" required maxlength="255">
+                <input type="color" name="color" value="#7E57C2" title="Цвет метки">
+                <input type="password" name="password" placeholder="Пароль группы" autocomplete="off" required maxlength="255">
+                <button class="btn primary" type="submit">Добавить группу</button>
+            </form>
+        </td>
+    </tr>
+{% endif %}

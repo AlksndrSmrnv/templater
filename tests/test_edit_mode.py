@@ -169,8 +169,15 @@ def import_service_spy(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object
             *,
             policy: str,
             allow_project_creation: bool = True,
+            allowed_group_ids: object = None,
         ) -> SimpleNamespace:
-            calls.append({"package": package, "allow_project_creation": allow_project_creation})
+            calls.append(
+                {
+                    "package": package,
+                    "allow_project_creation": allow_project_creation,
+                    "allowed_group_ids": allowed_group_ids,
+                }
+            )
             return SimpleNamespace(model_dump=lambda: {})
 
     class FakeSettingsRepo:
@@ -268,6 +275,9 @@ def test_every_mutating_settings_route_is_gated() -> None:
         ("/settings-htmx/projects", "POST"),
         ("/settings-htmx/projects/{project_id}", "PUT"),
         ("/settings-htmx/projects/{project_id}", "DELETE"),
+        ("/settings-htmx/groups", "POST"),
+        ("/settings-htmx/groups/{group_id}", "PUT"),
+        ("/settings-htmx/groups/{group_id}", "DELETE"),
         ("/settings-htmx/header-presets", "POST"),
         ("/settings-htmx/header-presets/{preset_id}", "PUT"),
         ("/settings-htmx/header-presets/{preset_id}", "DELETE"),
@@ -285,6 +295,7 @@ def test_every_mutating_settings_route_is_gated() -> None:
         "/settings",
         "/settings-htmx/attributes/table",
         "/settings-htmx/projects/table",
+        "/settings-htmx/groups/table",
         "/settings-htmx/header-presets/table",
         "/settings-htmx/unlock",
         "/settings-htmx/lock",

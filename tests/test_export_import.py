@@ -530,3 +530,245 @@ async def test_import_without_permission_skips_existing_rows_without_error() -> 
     assert summary.errors == []
     assert summary.skipped["templates"] == 1
     assert [p for p in session.added if isinstance(p, Project)] == []
+
+
+# ---------- Access-group export/import gating ----------
+
+from app.db.models import AccessGroup, Account, Client  # noqa: E402
+
+
+class _VisibilityClientRepo:
+    """Models ``ClientRepository.get``'s visibility filter for service-level
+    tests: a row is returned only when public or in the unlocked set."""
+
+    def __init__(self, rows: dict[Any, Any]) -> None:
+        self.rows = rows
+
+    async def get(self, eid: Any, *, visible_group_ids: Any = None) -> Any:
+        row = self.rows.get(eid)
+        if row is None:
+            return None
+        if visible_group_ids is None:
+            return row
+        gid = getattr(row, "group_id", None)
+        return row if (gid is None or gid in visible_group_ids) else None
+
+
+class _FakeExportRepo:
+    """Models the visibility-filtered ``get_many``: a row is returned only when
+    requested AND public (``group_id is None``) or in an unlocked group. Mirrors
+    the SQL predicate so the service-level filtering can be tested without a DB."""
+
+    def __init__(self, rows: list[Any]) -> None:
+        self.rows = rows
+        self.seen_visible: Any = "unset"
+
+    async def get_many(self, ids: list[Any], *, visible_group_ids: Any = None) -> list[Any]:
+        self.seen_visible = visible_group_ids
+        wanted = set(ids)
+        out = []
+        for r in self.rows:
+            if r.id not in wanted:
+                continue
+            gid = getattr(r, "group_id", None)
+            if visible_group_ids is None or gid is None or gid in visible_group_ids:
+                out.append(r)
+        return out
+
+
+class _FakeAttrRepo:
+    async def list_all(self) -> list[Any]:
+        return []
+
+
+def _client_ns(group_id: Any = None, group: Any = None) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(), description="", tags=[], attributes={},
+        group_id=group_id, group=group,
+    )
+
+
+@pytest.mark.asyncio
+async def test_export_excludes_clients_outside_unlocked_groups() -> None:
+    group_a = uuid.uuid4()
+    group_b = uuid.uuid4()
+    public = _client_ns()
+    in_a = _client_ns(group_id=group_a, group=SimpleNamespace(name="A", color="#111111"))
+    in_b = _client_ns(group_id=group_b, group=SimpleNamespace(name="B", color="#222222"))
+
+    svc = ExportImportService(cast(Any, _RoundTripSession()))
+    svc.clients = cast(Any, _FakeExportRepo([public, in_a, in_b]))
+    svc.accounts = cast(Any, _FakeExportRepo([]))
+    svc.cards = cast(Any, _FakeExportRepo([]))
+    svc.attrs = cast(Any, _FakeAttrRepo())
+
+    from app.schemas.exchange import ExportRequest
+
+    req = ExportRequest(clients=[public.id, in_a.id, in_b.id])
+    package = await svc.export(req, visible_group_ids={group_a})
+
+    exported_ids = {c["id"] for c in package.clients}
+    assert exported_ids == {str(public.id), str(in_a.id)}  # group B is hidden
+    assert str(in_b.id) not in exported_ids
+    # The visibility set was actually threaded to the repository.
+    assert svc.clients.seen_visible == {group_a}
+
+
+def test_dump_client_carries_group_name_and_color_not_hash() -> None:
+    c = _client_ns(group_id=uuid.uuid4(), group=SimpleNamespace(name="QA", color="#7E57C2"))
+    dump = ExportImportService._dump_client(cast(Any, c))
+    assert dump["group_name"] == "QA"
+    assert dump["group_color"] == "#7E57C2"
+    assert "password_hash" not in dump
+    # A public client carries explicit nulls (key present, no group).
+    public = ExportImportService._dump_client(cast(Any, _client_ns()))
+    assert public["group_name"] is None and public["group_color"] is None
+
+
+class _KnownGroupSession(_RoundTripSession):
+    """Round-trip session whose group-by-name lookup resolves to a fixed row."""
+
+    def __init__(self, group: Any) -> None:
+        super().__init__()
+        self._group = group
+
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        group = self._group
+
+        class _Result(_EmptyResult):
+            def scalar_one_or_none(self) -> Any:
+                return group
+
+        return _Result()
+
+
+@pytest.mark.asyncio
+async def test_import_client_is_public_when_group_name_unknown() -> None:
+    cid = uuid.uuid4()
+    package = {
+        "version": 3,
+        "clients": [{"id": str(cid), "group_name": "Несуществующая"}],
+    }
+    session = _RoundTripSession()  # group lookup resolves to None
+    summary = await ExportImportService(cast(Any, session)).import_package(package, policy="skip")
+
+    assert summary.errors == []
+    assert summary.created["clients"] == 1
+    created = next(o for o in session.added if isinstance(o, Client))
+    assert created.group_id is None  # lands public
+
+
+@pytest.mark.asyncio
+async def test_import_client_reassociates_to_existing_same_named_group() -> None:
+    cid = uuid.uuid4()
+    group = AccessGroup(id=uuid.uuid4(), name="QA", color="#7E57C2", password_hash="x")
+    package = {
+        "version": 3,
+        "clients": [{"id": str(cid), "group_name": "QA"}],
+    }
+    session = _KnownGroupSession(group)
+    # The importer has unlocked QA, so the client may be placed in it.
+    summary = await ExportImportService(cast(Any, session)).import_package(
+        package, policy="skip", allowed_group_ids={group.id}
+    )
+
+    assert summary.errors == []
+    created = next(o for o in session.added if isinstance(o, Client))
+    assert created.group_id == group.id
+
+
+@pytest.mark.asyncio
+async def test_import_does_not_assign_group_the_importer_has_not_unlocked() -> None:
+    # The group "QA" exists on this instance, but the importer never unlocked it,
+    # so an import must not be able to hide/move data into it — the client lands
+    # public instead.
+    cid = uuid.uuid4()
+    group = AccessGroup(id=uuid.uuid4(), name="QA", color="#7E57C2", password_hash="x")
+    package = {"version": 3, "clients": [{"id": str(cid), "group_name": "QA"}]}
+    session = _KnownGroupSession(group)
+    summary = await ExportImportService(cast(Any, session)).import_package(
+        package, policy="skip", allowed_group_ids=set()  # nothing unlocked
+    )
+
+    assert summary.errors == []
+    created = next(o for o in session.added if isinstance(o, Client))
+    assert created.group_id is None
+
+
+@pytest.mark.asyncio
+async def test_overwrite_never_exposes_a_private_client() -> None:
+    cid = uuid.uuid4()
+    private_group = uuid.uuid4()
+    existing = SimpleNamespace(
+        id=cid, description="old", tags=[], attributes={}, group_id=private_group
+    )
+    session = _RoundTripSession()  # unknown group → resolve_group_id returns None
+    session.store[(Client, cid)] = existing
+    # File has no resolvable group; overwrite must NOT move the client to public.
+    package = {"version": 3, "clients": [{"id": str(cid), "group_name": None}]}
+    summary = await ExportImportService(cast(Any, session)).import_package(
+        package, policy="overwrite"
+    )
+
+    assert summary.errors == []
+    assert summary.updated["clients"] == 1
+    assert existing.group_id == private_group  # protection preserved
+
+
+@pytest.mark.asyncio
+async def test_import_overwrite_refused_for_hidden_existing_client() -> None:
+    # A UUID-only file must not be able to mutate a client whose group the
+    # importer hasn't unlocked.
+    cid = uuid.uuid4()
+    existing = SimpleNamespace(
+        id=cid, description="secret", tags=[], attributes={}, group_id=uuid.uuid4()
+    )
+    session = _RoundTripSession()
+    session.store[(Client, cid)] = existing
+    svc = ExportImportService(cast(Any, session))
+    svc.clients = cast(Any, _VisibilityClientRepo({cid: existing}))
+    package = {"version": 3, "clients": [{"id": str(cid), "description": "HACKED"}]}
+    summary = await svc.import_package(package, policy="overwrite", allowed_group_ids=set())
+
+    assert summary.updated["clients"] == 0
+    assert any("недоступной группе" in e for e in summary.errors)
+    assert existing.description == "secret"  # untouched
+
+
+@pytest.mark.asyncio
+async def test_import_overwrite_allowed_for_unlocked_existing_client() -> None:
+    cid = uuid.uuid4()
+    g = uuid.uuid4()
+    existing = SimpleNamespace(id=cid, description="old", tags=[], attributes={}, group_id=g)
+    session = _RoundTripSession()
+    session.store[(Client, cid)] = existing
+    svc = ExportImportService(cast(Any, session))
+    svc.clients = cast(Any, _VisibilityClientRepo({cid: existing}))
+    package = {"version": 3, "clients": [{"id": str(cid), "description": "updated"}]}
+    summary = await svc.import_package(package, policy="overwrite", allowed_group_ids={g})
+
+    assert summary.errors == []
+    assert summary.updated["clients"] == 1
+    assert existing.description == "updated"
+
+
+@pytest.mark.asyncio
+async def test_import_new_account_cannot_attach_to_hidden_client() -> None:
+    # Creating an account whose parent client is hidden (only referenced by UUID)
+    # must be refused, not silently attached.
+    aid = uuid.uuid4()
+    hidden_client = uuid.uuid4()
+    session = _RoundTripSession()
+    svc = ExportImportService(cast(Any, session))
+    svc.clients = cast(
+        Any,
+        _VisibilityClientRepo(
+            {hidden_client: SimpleNamespace(id=hidden_client, group_id=uuid.uuid4())}
+        ),
+    )
+    package = {"version": 3, "accounts": [{"id": str(aid), "client_id": str(hidden_client)}]}
+    summary = await svc.import_package(package, policy="skip", allowed_group_ids=set())
+
+    assert summary.created["accounts"] == 0
+    assert any("не найден" in e for e in summary.errors)
+    assert [o for o in session.added if isinstance(o, Account)] == []

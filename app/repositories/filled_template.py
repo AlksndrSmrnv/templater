@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
 from app.db.models import FilledTemplate
+from app.repositories.entity import group_visibility_condition
 
 # Hard cap on rows returned by the list endpoint. The list page only
 # displays name/format/snapshot labels/created_at — it never touches the
@@ -34,6 +35,7 @@ class FilledTemplateRepository:
         *,
         search: str = "",
         limit: int | None = DEFAULT_LIST_LIMIT,
+        visible_group_ids: set[uuid.UUID] | None = None,
     ) -> list[FilledTemplate]:
         """Return up to ``limit`` rows with heavy text columns deferred.
 
@@ -42,6 +44,9 @@ class FilledTemplateRepository:
         by the tree/list views, so they are deferred. Templates rendering
         this list MUST NOT read those attributes — use ``get()`` for the
         detail page instead. ``limit=None`` disables the cap.
+
+        ``visible_group_ids`` filters to public rows plus rows in an unlocked
+        group; ``None`` returns everything (internal callers).
         """
 
         stmt = (
@@ -49,6 +54,9 @@ class FilledTemplateRepository:
             .options(*_LIST_DEFERS)
             .order_by(FilledTemplate.created_at.desc())
         )
+        cond = group_visibility_condition(FilledTemplate, visible_group_ids)
+        if cond is not None:
+            stmt = stmt.where(cond)
         if limit is not None:
             stmt = stmt.limit(limit)
         term = search.strip()
@@ -63,13 +71,18 @@ class FilledTemplateRepository:
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def list_by_template(
-        self, template_id: uuid.UUID, *, limit: int = DEFAULT_LIST_LIMIT
+        self,
+        template_id: uuid.UUID,
+        *,
+        limit: int = DEFAULT_LIST_LIMIT,
+        visible_group_ids: set[uuid.UUID] | None = None,
     ) -> list[FilledTemplate]:
         """Filled snapshots produced from a given template (newest first).
 
         Heavy text columns are deferred — the caller only renders name/date
         links. Used by the template workspace panel to show «связанные
-        заполненные шаблоны».
+        заполненные шаблоны». Filtered to the caller's visible groups so the
+        public template panel never leaks a private fill's label.
         """
 
         stmt = (
@@ -79,6 +92,9 @@ class FilledTemplateRepository:
             .order_by(FilledTemplate.created_at.desc())
             .limit(limit)
         )
+        cond = group_visibility_condition(FilledTemplate, visible_group_ids)
+        if cond is not None:
+            stmt = stmt.where(cond)
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def list_folder_paths(self) -> list[list[str]]:
@@ -126,8 +142,16 @@ class FilledTemplateRepository:
         ).where(FilledTemplate.folder_path == folder_path)
         return int((await self.session.execute(stmt)).scalar_one()) + 1
 
-    async def get(self, filled_id: uuid.UUID) -> FilledTemplate | None:
-        return await self.session.get(FilledTemplate, filled_id)
+    async def get(
+        self, filled_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> FilledTemplate | None:
+        if visible_group_ids is None:
+            return await self.session.get(FilledTemplate, filled_id)
+        stmt = select(FilledTemplate).where(
+            FilledTemplate.id == filled_id,
+            group_visibility_condition(FilledTemplate, visible_group_ids),
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def get_many(self, ids: Sequence[uuid.UUID]) -> list[FilledTemplate]:
         """Rows by id (heavy columns deferred) — folder rename loads only the

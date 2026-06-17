@@ -80,11 +80,25 @@ class AttributeDefinition(Base):
 
 class Client(Base):
     __tablename__ = "clients"
+    __table_args__ = (Index("ix_clients_group_id", "group_id"),)
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
     attributes: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    # Access-group membership. ``NULL`` = public (visible to everyone); a set
+    # value hides the client (and its accounts/cards) behind that group's
+    # password. RESTRICT is a backstop — AccessGroupService refuses to delete a
+    # group while any client references it.
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("access_groups.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    # ``selectin`` so the group badge renders from Jinja without an explicit
+    # eager-load (async lazy access would raise MissingGreenlet) — same pattern
+    # as ``MessageTemplate.project``.
+    group: Mapped[AccessGroup | None] = relationship(lazy="selectin")
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 
@@ -153,6 +167,36 @@ class Project(Base):
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     color: Mapped[str] = mapped_column(String(16), nullable=False, default="#9E9E9E")
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
+class AccessGroup(Base):
+    """A password-protected vault for sensitive test data.
+
+    Plain message templates stay public to everyone; only the *filled-in* data
+    is sensitive. A user "unlocks" a group by entering its password — the server
+    then issues an HMAC-signed cookie carrying the set of unlocked group ids (see
+    ``app/utils/access_groups.py``). Clients (and, transitively, their accounts
+    and cards) and filled templates can be tagged with a group; a ``NULL`` tag
+    means public/visible to everyone.
+
+    There are no user accounts: knowing a group's password *is* membership. The
+    password is stored only as a salted PBKDF2 hash (``app/utils/password.py``).
+    Carries a highlight ``color`` like :class:`Project` so the UI renders an
+    explicit badge. Deletion is refused at the service level while any client or
+    filled template references the group (the RESTRICT FKs are a backstop), so a
+    group can never be removed in a way that silently exposes private data.
+    """
+
+    __tablename__ = "access_groups"
+    __table_args__ = (UniqueConstraint("name", name="uq_access_groups_name"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    color: Mapped[str] = mapped_column(String(16), nullable=False, default="#9E9E9E")
+    # Salted PBKDF2 hash, format ``pbkdf2_sha256$<iters>$<salt_b64>$<hash_b64>``.
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 
@@ -295,6 +339,7 @@ class FilledTemplate(Base):
     __table_args__ = (
         Index("ix_filled_templates_template_id", "message_template_id"),
         Index("ix_filled_templates_created_at", "created_at"),
+        Index("ix_filled_templates_group_id", "group_id"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -315,6 +360,18 @@ class FilledTemplate(Base):
     # is unreachable via the relationship.
     project_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     project_color_snapshot: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+
+    # Access-group membership, derived from the sender client at fill time.
+    # ``NULL`` = public. RESTRICT is a backstop (deletion guarded in the
+    # service). Name/color are snapshotted — like the project badge above — so
+    # the group badge survives the group being deleted.
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("access_groups.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    group_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    group_color_snapshot: Mapped[str] = mapped_column(String(16), nullable=False, default="")
 
     sender_client_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("clients.id", ondelete="SET NULL"), nullable=True

@@ -31,7 +31,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.entity import ClientRepository
-from app.routes.deps import SessionDep, TemplatesDep
+from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.htmx_utils import form_str, parse_json_path, parse_uuid_list, toast_header
 from app.routes.uow import commit_or_409
 from app.services.filled_templates import FilledTemplateService, iter_role_labels
@@ -64,8 +64,11 @@ async def _tree_response(
     *,
     search: str = "",
     headers: dict[str, str] | None = None,
+    visible_group_ids: set[uuid.UUID] | None = None,
 ) -> Response:
-    context = await FilledTemplateService(session).build_tree(search=search)
+    context = await FilledTemplateService(session).build_tree(
+        search=search, visible_group_ids=visible_group_ids
+    )
     return templates.TemplateResponse(
         request,
         "partials/filled_tree.html",
@@ -75,11 +78,14 @@ async def _tree_response(
 
 
 async def _detail_context(
-    session: AsyncSession, filled_id: uuid.UUID
+    session: AsyncSession,
+    filled_id: uuid.UUID,
+    *,
+    visible_group_ids: set[uuid.UUID] | None = None,
 ) -> dict[str, Any]:
     """Context shared by the standalone view page and the workspace panel."""
 
-    item = await FilledTemplateService(session).get(filled_id)
+    item = await FilledTemplateService(session).get(filled_id, visible_group_ids=visible_group_ids)
     rendered_html = render_filled_html(
         item.format, item.filled_content, item.changed_locations or []
     )
@@ -108,6 +114,7 @@ async def page_list(
     open: str = "",
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     # ``open`` (a filled-template id) opens that item's panel on load — used by
     # the post-save redirect. Validate it as a UUID so an attacker-controlled
@@ -119,7 +126,9 @@ async def page_list(
             open_filled_id = str(uuid.UUID(raw_open))
         except ValueError:
             open_filled_id = ""
-    tree_context = await FilledTemplateService(session).build_tree(search=search)
+    tree_context = await FilledTemplateService(session).build_tree(
+        search=search, visible_group_ids=group_ids
+    )
     return templates.TemplateResponse(
         request,
         "filled_templates/workspace.html",
@@ -137,8 +146,9 @@ async def page_view(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
-    context = await _detail_context(session, filled_id)
+    context = await _detail_context(session, filled_id, visible_group_ids=group_ids)
     return templates.TemplateResponse(
         request,
         "filled_templates/view.html",
@@ -151,8 +161,9 @@ async def page_raw(
     filled_id: uuid.UUID,
     download: bool = False,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
-    item = await FilledTemplateService(session).get(filled_id)
+    item = await FilledTemplateService(session).get(filled_id, visible_group_ids=group_ids)
     headers: dict[str, str] = {}
     if download:
         ext = "xml" if item.format == "xml" else "json"
@@ -173,8 +184,11 @@ async def htmx_tree(
     search: str = "",
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
-    return await _tree_response(request, templates, session, search=search)
+    return await _tree_response(
+        request, templates, session, search=search, visible_group_ids=group_ids
+    )
 
 
 # Folder routes MUST be declared before ``/filled-templates-htmx/{filled_id}``:
@@ -186,6 +200,7 @@ async def htmx_create_folder(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     form = await request.form()
     parent = parse_json_path(form_str(form, "parent"))
@@ -204,6 +219,7 @@ async def htmx_create_folder(
             session,
             search=search,
             headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
+            visible_group_ids=group_ids,
         )
     return await _tree_response(
         request,
@@ -211,6 +227,7 @@ async def htmx_create_folder(
         session,
         search=search,
         headers={"HX-Trigger": toast_header(f"Папка «{name.strip()}» создана")},
+        visible_group_ids=group_ids,
     )
 
 
@@ -219,6 +236,7 @@ async def htmx_rename_folder(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     form = await request.form()
     path = parse_json_path(form_str(form, "path"))
@@ -235,6 +253,7 @@ async def htmx_rename_folder(
             session,
             search=search,
             headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
+            visible_group_ids=group_ids,
         )
     return await _tree_response(
         request,
@@ -242,6 +261,7 @@ async def htmx_rename_folder(
         session,
         search=search,
         headers={"HX-Trigger": toast_header("Папка переименована")},
+        visible_group_ids=group_ids,
     )
 
 
@@ -250,6 +270,7 @@ async def htmx_delete_folder(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     # htmx 2.x encodes DELETE params (hx-vals and included inputs) in the URL
     # query string (config ``methodsThatUseUrlParams`` defaults to
@@ -272,6 +293,7 @@ async def htmx_delete_folder(
             session,
             search=search,
             headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
+            visible_group_ids=group_ids,
         )
     return await _tree_response(
         request,
@@ -279,6 +301,7 @@ async def htmx_delete_folder(
         session,
         search=search,
         headers={"HX-Trigger": toast_header("Папка удалена")},
+        visible_group_ids=group_ids,
     )
 
 
@@ -287,6 +310,7 @@ async def htmx_move(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     form = await request.form()
     search = form_str(form, "search")
@@ -299,11 +323,14 @@ async def htmx_move(
             session,
             search=search,
             headers={"HX-Trigger": toast_header("Некорректный запрос", toast_type="error")},
+            visible_group_ids=group_ids,
         )
     folder = parse_json_path(form_str(form, "folder"))
     order = parse_uuid_list(form_str(form, "order"))
     try:
-        await FilledTemplateService(session).move_filled(filled_id, folder, order)
+        await FilledTemplateService(session).move_filled(
+            filled_id, folder, order, visible_group_ids=group_ids
+        )
         await commit_or_409(session)
     except DomainError as exc:
         await session.rollback()
@@ -313,8 +340,11 @@ async def htmx_move(
             session,
             search=search,
             headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
+            visible_group_ids=group_ids,
         )
-    return await _tree_response(request, templates, session, search=search)
+    return await _tree_response(
+        request, templates, session, search=search, visible_group_ids=group_ids
+    )
 
 
 @router.get("/filled-templates-htmx/{filled_id}/panel")
@@ -323,8 +353,9 @@ async def htmx_panel(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
-    context = await _detail_context(session, filled_id)
+    context = await _detail_context(session, filled_id, visible_group_ids=group_ids)
     return templates.TemplateResponse(
         request,
         "partials/filled_panel.html",
@@ -340,8 +371,9 @@ async def htmx_delete(
     panel: bool = False,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
-    await FilledTemplateService(session).delete(filled_id)
+    await FilledTemplateService(session).delete(filled_id, visible_group_ids=group_ids)
     await commit_or_409(session)
     if panel:
         # Deleted from the workspace panel: swap in the empty-state and let the

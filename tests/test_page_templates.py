@@ -68,10 +68,10 @@ def install_page_fill_fakes(monkeypatch: pytest.MonkeyPatch, template: Any) -> N
             assert requested_id == template.id
             return template
 
-    async def fake_fill_labels(session: object) -> dict[str, dict[str, str]]:
+    async def fake_fill_labels(session: object, *, visible_group_ids: object = None) -> dict[str, dict[str, str]]:
         return {"client": {}, "account": {}, "card": {}}
 
-    async def fake_list_all(self: object) -> list[object]:
+    async def fake_list_all(self: object, *, visible_group_ids: object = None) -> list[object]:
         return []
 
     async def fake_list_folder_paths(self: object) -> list[list[str]]:

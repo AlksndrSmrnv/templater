@@ -11,8 +11,8 @@ from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import DATA_ENTITY_TYPES, Account, AttributeDefinition, Card
-from app.routes.deps import SessionDep, TemplatesDep
+from app.db.models import DATA_ENTITY_TYPES, AccessGroup, Account, AttributeDefinition, Card
+from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.htmx_utils import (
     form_errors_response,
     form_str,
@@ -30,6 +30,7 @@ from app.schemas.entity import (
     ClientUpdate,
 )
 from app.schemas.exchange import ExportRequest
+from app.services.access_groups import AccessGroupService
 from app.services.attribute_schema import AttributeSchemaService
 from app.services.entities import AccountService, CardService, ClientService
 from app.services.export_import import ExportImportService
@@ -65,6 +66,17 @@ PAGE_SIZE = 50
 
 def _service(session: AsyncSession, entity_type: str) -> Any:
     return SERVICE_MAP[entity_type](session)
+
+
+async def _unlocked_groups(
+    session: AsyncSession, visible_group_ids: set[uuid.UUID] | None
+) -> list[AccessGroup]:
+    """The unlocked access groups, for the create/edit group selector. Public is
+    always an option in the form; this lists the groups the user may assign to."""
+
+    if not visible_group_ids:
+        return []
+    return [g for g in await AccessGroupService(session).list_all() if g.id in visible_group_ids]
 
 
 def _page_param(request: Request | None) -> int:
@@ -103,8 +115,14 @@ async def _schema(session: AsyncSession, entity_type: str) -> list[AttributeDefi
     return await AttributeSchemaService(session).list_schema(entity_type)
 
 
-async def _get_item(session: AsyncSession, entity_type: str, item_id: uuid.UUID) -> Any:
-    return await _service(session, entity_type).get(item_id)
+async def _get_item(
+    session: AsyncSession,
+    entity_type: str,
+    item_id: uuid.UUID,
+    *,
+    visible_group_ids: set[uuid.UUID] | None = None,
+) -> Any:
+    return await _service(session, entity_type).get(item_id, visible_group_ids=visible_group_ids)
 
 
 async def _relations(
@@ -172,6 +190,7 @@ async def build_entity_list_context(
     search: str = "",
     sort: str = "created_at",
     direction: str = "desc",
+    visible_group_ids: set[uuid.UUID] | None = None,
 ) -> dict[str, Any]:
     check_entity_type(entity_type)
     schema = await _schema(session, entity_type)
@@ -187,6 +206,7 @@ async def build_entity_list_context(
         attr_names=attr_names,
         limit=PAGE_SIZE,
         offset=offset,
+        visible_group_ids=visible_group_ids,
     )
     pages = max(1, (items_total + PAGE_SIZE - 1) // PAGE_SIZE)
     return {
@@ -207,6 +227,7 @@ async def build_entity_list_context(
         "pages": pages,
         "has_prev": page > 1,
         "has_next": page < pages,
+        "unlocked_groups": await _unlocked_groups(session, visible_group_ids),
         **await _relations(session, entity_type, items=items),
     }
 
@@ -216,17 +237,24 @@ async def build_entity_form_context(
     entity_type: str,
     *,
     entity_id: uuid.UUID | None,
+    visible_group_ids: set[uuid.UUID] | None = None,
 ) -> dict[str, Any]:
     check_entity_type(entity_type)
-    entity = await _get_item(session, entity_type, entity_id) if entity_id else None
+    entity = (
+        await _get_item(session, entity_type, entity_id, visible_group_ids=visible_group_ids)
+        if entity_id
+        else None
+    )
     schema = await _schema(session, entity_type)
     parent_options: list[Any] = []
     labels: dict[str, dict[str, str]] = {"client": {}, "account": {}, "card": {}}
+    # Parent pickers list only entities the caller can see, so an account/card
+    # can never be attached to a hidden client/account.
     if entity_type == "account":
-        parent_options = await ClientService(session).list_all()
+        parent_options = await ClientService(session).list_all(visible_group_ids=visible_group_ids)
         labels["client"] = {str(item.id): entity_label("client", item) for item in parent_options}
     elif entity_type == "card":
-        parent_options = await AccountService(session).list_all()
+        parent_options = await AccountService(session).list_all(visible_group_ids=visible_group_ids)
         labels["account"] = {str(item.id): entity_label("account", item) for item in parent_options}
     return {
         "active": "data",
@@ -238,6 +266,7 @@ async def build_entity_form_context(
         "schema": schema,
         "parent_options": parent_options,
         "labels": labels,
+        "unlocked_groups": await _unlocked_groups(session, visible_group_ids),
     }
 
 
@@ -264,7 +293,9 @@ async def _entity_payload(
         "attributes": read_entity_attributes(form, schema),
     }
     if entity_type == "client":
-        return ClientUpdate(**base) if is_update else ClientCreate(**base)
+        raw_group = form_str(form, "group_id").strip()
+        client_base = {**base, "group_id": uuid.UUID(raw_group) if raw_group else None}
+        return ClientUpdate(**client_base) if is_update else ClientCreate(**client_base)
     if entity_type == "account":
         data = {**base, "client_id": uuid.UUID(form_str(form, "client_id"))}
         return AccountUpdate(**data) if is_update else AccountCreate(**data)
@@ -276,8 +307,10 @@ async def _create_entity(
     session: AsyncSession,
     entity_type: str,
     data: ClientCreate | AccountCreate | CardCreate,
+    *,
+    allowed_group_ids: set[uuid.UUID] | None = None,
 ) -> Any:
-    return await _service(session, entity_type).create(data)
+    return await _service(session, entity_type).create(data, allowed_group_ids=allowed_group_ids)
 
 
 async def _update_entity(
@@ -285,12 +318,23 @@ async def _update_entity(
     entity_type: str,
     entity_id: uuid.UUID,
     data: ClientUpdate | AccountUpdate | CardUpdate,
+    *,
+    allowed_group_ids: set[uuid.UUID] | None = None,
+    visible_group_ids: set[uuid.UUID] | None = None,
 ) -> Any:
-    return await _service(session, entity_type).update(entity_id, data)
+    return await _service(session, entity_type).update(
+        entity_id, data, allowed_group_ids=allowed_group_ids, visible_group_ids=visible_group_ids
+    )
 
 
-async def _delete_entity(session: AsyncSession, entity_type: str, entity_id: uuid.UUID) -> None:
-    await _service(session, entity_type).delete(entity_id)
+async def _delete_entity(
+    session: AsyncSession,
+    entity_type: str,
+    entity_id: uuid.UUID,
+    *,
+    visible_group_ids: set[uuid.UUID] | None = None,
+) -> None:
+    await _service(session, entity_type).delete(entity_id, visible_group_ids=visible_group_ids)
 
 
 @router.get("/entities-htmx/{entity_type}/table")
@@ -302,9 +346,11 @@ async def htmx_table(
     direction: str = "desc",
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     context = await build_entity_list_context(
-        session, entity_type, request, search=search, sort=sort, direction=direction
+        session, entity_type, request, search=search, sort=sort, direction=direction,
+        visible_group_ids=group_ids,
     )
     context["oob_meta"] = True
     return templates.TemplateResponse(request, "partials/entities_table.html", context)
@@ -317,10 +363,11 @@ async def htmx_detail(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     check_entity_type(entity_type)
     schema = await _schema(session, entity_type)
-    item = await _get_item(session, entity_type, entity_id)
+    item = await _get_item(session, entity_type, entity_id, visible_group_ids=group_ids)
     return templates.TemplateResponse(
         request,
         "partials/entity_detail.html",
@@ -339,13 +386,19 @@ async def htmx_create(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     check_entity_type(entity_type)
     try:
         data = await _entity_payload(entity_type, request, session, is_update=False)
         created = await commit_and_refresh(
             session,
-            await _create_entity(session, entity_type, cast(ClientCreate | AccountCreate | CardCreate, data)),
+            await _create_entity(
+                session,
+                entity_type,
+                cast(ClientCreate | AccountCreate | CardCreate, data),
+                allowed_group_ids=group_ids,
+            ),
         )
     except (ValidationError, ValueError) as exc:
         if isinstance(exc, ValidationError):
@@ -370,6 +423,7 @@ async def htmx_update(
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     check_entity_type(entity_type)
     try:
@@ -381,6 +435,8 @@ async def htmx_update(
                 entity_type,
                 entity_id,
                 cast(ClientUpdate | AccountUpdate | CardUpdate, data),
+                allowed_group_ids=group_ids,
+                visible_group_ids=group_ids,
             ),
         )
     except (ValidationError, ValueError) as exc:
@@ -405,10 +461,11 @@ async def htmx_delete(
     entity_id: uuid.UUID,
     redirect: bool = Query(False),
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     check_entity_type(entity_type)
     try:
-        await _delete_entity(session, entity_type, entity_id)
+        await _delete_entity(session, entity_type, entity_id, visible_group_ids=group_ids)
         await commit_or_409(session, message="Не удалось удалить запись — есть связанные данные")
     except DomainError as exc:
         # Статус 200 (а не exc.status_code): htmx 2.0 по умолчанию не обрабатывает
@@ -429,6 +486,7 @@ async def htmx_export(
     entity_type: str,
     request: Request,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> StreamingResponse:
     check_entity_type(entity_type)
     form = await request.form()
@@ -438,7 +496,9 @@ async def htmx_export(
         accounts=ids if entity_type == "account" else [],
         cards=ids if entity_type == "card" else [],
     )
-    package = await ExportImportService(session).export(req)
+    # Filter to what the caller may see — otherwise hidden private data could be
+    # exported by id without unlocking its group.
+    package = await ExportImportService(session).export(req, visible_group_ids=group_ids)
     payload = json.dumps(package.model_dump(), ensure_ascii=False, indent=2, default=str).encode("utf-8")
 
     def stream() -> Iterator[bytes]:

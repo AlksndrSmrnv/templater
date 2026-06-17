@@ -28,6 +28,9 @@
             {% if ft.project_name_snapshot %}
             <span class="project-badge" title="Проект: {{ ft.project_name_snapshot }}"><span class="project-dot" style="background: {{ ft.project_color_snapshot or '#9E9E9E' }}"></span>{{ ft.project_name_snapshot }}</span>
             {% endif %}
+            {% if ft.group_name_snapshot %}
+            <span class="group-badge" title="Группа доступа: {{ ft.group_name_snapshot }}"><span class="group-dot" style="background: {{ ft.group_color_snapshot or '#9E9E9E' }}"></span>{{ ft.group_name_snapshot }}</span>
+            {% endif %}
         </div>
         <div class="panel-actions">
             <a class="btn" href="/templater/filled-templates/{{ ft.id }}" title="Открыть на отдельной странице"><iconify-icon icon="lucide:external-link"></iconify-icon></a>

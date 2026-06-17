@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
@@ -9,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.settings import SettingsRepository
-from app.routes.deps import SessionDep, TemplatesDep
+from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.services.export_import import ExportImportService
 from app.utils.edit_mode import is_edit_mode
 from app.utils.errors import DomainError
@@ -41,6 +42,7 @@ async def htmx_import(
     policy: str | None = Form(None),
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     try:
         raw = await file.read()
@@ -79,8 +81,13 @@ async def htmx_import(
         # service checks the permission at the exact point a project would be
         # created, so rows the import never writes (skip/fail conflicts,
         # duplicates, invalid records) and existing projects stay unaffected.
+        # Group assignment is gated by what the importer has unlocked — a client
+        # can only land in a group whose password the user entered.
         summary = await ExportImportService(session).import_package(
-            package, policy=policy, allow_project_creation=is_edit_mode(request)
+            package,
+            policy=policy,
+            allow_project_creation=is_edit_mode(request),
+            allowed_group_ids=group_ids,
         )
     except DomainError as exc:
         return templates.TemplateResponse(

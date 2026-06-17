@@ -151,18 +151,28 @@ class FilledTemplateService:
         self.settings = SettingsRepository(session)
 
     async def list_all(
-        self, *, search: str = "", limit: int = DEFAULT_LIST_LIMIT
+        self,
+        *,
+        search: str = "",
+        limit: int = DEFAULT_LIST_LIMIT,
+        visible_group_ids: set[uuid.UUID] | None = None,
     ) -> list[FilledTemplate]:
-        return await self.repo.list_all(search=search, limit=limit)
+        return await self.repo.list_all(
+            search=search, limit=limit, visible_group_ids=visible_group_ids
+        )
 
-    async def get(self, filled_id: uuid.UUID) -> FilledTemplate:
-        item = await self.repo.get(filled_id)
+    async def get(
+        self, filled_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> FilledTemplate:
+        item = await self.repo.get(filled_id, visible_group_ids=visible_group_ids)
         if item is None:
             raise NotFoundError("Заполненный шаблон не найден")
         return item
 
-    async def delete(self, filled_id: uuid.UUID) -> None:
-        item = await self.get(filled_id)
+    async def delete(
+        self, filled_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> None:
+        item = await self.get(filled_id, visible_group_ids=visible_group_ids)
         await self.repo.delete(item)
 
     # ---- folder tree (mirrors CollectionService, single root namespace) ----
@@ -179,15 +189,19 @@ class FilledTemplateService:
         await self.settings.set(FILLED_ROOT_FOLDERS_KEY, folders)
         await self.session.flush()
 
-    async def build_tree(self, *, search: str = "") -> dict[str, Any]:
+    async def build_tree(
+        self, *, search: str = "", visible_group_ids: set[uuid.UUID] | None = None
+    ) -> dict[str, Any]:
         """Build the left-panel tree of folders and filled templates.
 
         While searching, explicit empty folders are not seeded so the tree
         collapses to actual matches — same behaviour as the collections tree.
+        Only filled templates the caller may see (public + unlocked groups) are
+        placed in the tree; folders themselves are a shared namespace.
         """
 
         query = search.strip()
-        items = await self.repo.list_all(search=query)
+        items = await self.repo.list_all(search=query, visible_group_ids=visible_group_ids)
         explicit = list(await self.settings.get(FILLED_ROOT_FOLDERS_KEY) or [])
         tree = build_folder_tree(items, extra_folders=None if query else explicit)
         return {
@@ -291,6 +305,8 @@ class FilledTemplateService:
         filled_id: uuid.UUID,
         target_folder_path: list[str],
         order: list[uuid.UUID],
+        *,
+        visible_group_ids: set[uuid.UUID] | None = None,
     ) -> None:
         """Move a filled template into ``target_folder_path`` and renumber
         ``display_order`` across the target folder's siblings.
@@ -304,7 +320,7 @@ class FilledTemplateService:
         the folder (crafted or stale payloads) are ignored.
         """
 
-        item = await self.get(filled_id)
+        item = await self.get(filled_id, visible_group_ids=visible_group_ids)
         target_folder = _norm_path(target_folder_path)
         item.folder_path = target_folder
         # The session runs with autoflush=False (app/db/session.py) — flush
@@ -337,6 +353,82 @@ class FilledTemplateService:
         implied = await self.repo.list_folder_paths()
         return [list(p) for p in sorted(_expand_prefixes([*folders, *implied]))]
 
+    async def _fill_group(
+        self, fill_request: TemplateFillRequest
+    ) -> tuple[uuid.UUID | None, str, str]:
+        """Resolve ``(group_id, name, color)`` for a fill across *all* its roles.
+
+        A saved snapshot is a single artifact with one ``group_id``, so it can
+        only safely represent one access group. We resolve the *owning client* of
+        every referenced entity — a client directly, an account via its client, a
+        card via its account's client — so a private account/card protects the
+        snapshot even when the request carries no explicit ``*_client_id`` (a
+        crafted save could otherwise persist private data as public). Then over
+        the distinct private groups of those clients:
+
+        - none → public (``None``);
+        - exactly one → that group (name/color snapshotted for the badge);
+        - two or more → reject. A single ``group_id`` cannot be hidden from
+          holders of group A while shown to holders of group B, so persisting the
+          mix would leak one group's data to the other.
+
+        getattr-safe so test doubles without the ``group`` relationship work.
+        """
+
+        clients_repo = ClientRepository(self.session)
+        accounts_repo = AccountRepository(self.session)
+        cards_repo = CardRepository(self.session)
+
+        client_ids: set[uuid.UUID] = set()
+        for cid in (
+            fill_request.sender_client_id,
+            fill_request.receiver_client_id,
+            fill_request.account_owner_client_id,
+        ):
+            if cid is not None:
+                client_ids.add(cid)
+        for aid in (
+            fill_request.sender_account_id,
+            fill_request.receiver_account_id,
+            fill_request.account_owner_account_id,
+        ):
+            if aid is not None:
+                account = await accounts_repo.get(aid)
+                if account is not None:
+                    client_ids.add(account.client_id)
+        for kid in (
+            fill_request.sender_card_id,
+            fill_request.receiver_card_id,
+            fill_request.account_owner_card_id,
+        ):
+            if kid is not None:
+                card = await cards_repo.get(kid)
+                if card is not None:
+                    account = await accounts_repo.get(card.account_id)
+                    if account is not None:
+                        client_ids.add(account.client_id)
+
+        if not client_ids:
+            return None, "", ""
+        groups: dict[uuid.UUID, Any] = {}  # group_id → group row (for name/color)
+        for cid in client_ids:
+            client = await clients_repo.get(cid)
+            if client is None:
+                continue
+            gid = getattr(client, "group_id", None)
+            if gid is not None:
+                groups[gid] = getattr(client, "group", None)
+        if not groups:
+            return None, "", ""
+        if len(groups) > 1:
+            raise ValidationFailed(
+                "Нельзя сохранить заполненный шаблон с данными из разных групп доступа — "
+                "это раскрыло бы данные одной группы держателям другой. Используйте "
+                "данные одной группы (плюс публичные)."
+            )
+        gid, group = next(iter(groups.items()))
+        return gid, getattr(group, "name", "") or "", getattr(group, "color", "") or ""
+
     async def save_from_fill(
         self,
         *,
@@ -353,6 +445,10 @@ class FilledTemplateService:
         name = build_auto_name(template.name, role_labels, moment)
         # getattr-safe: test doubles may not carry the project relationship.
         project = getattr(template, "project", None)
+        # The snapshot's access group is derived from all involved role clients
+        # (raises on a cross-group mix); name and color are snapshotted so the
+        # badge survives the group being deleted.
+        group_id, group_name, group_color = await self._fill_group(fill_request)
         target_folder = _norm_path(folder_path)
         item = FilledTemplate(
             name=name,
@@ -370,6 +466,9 @@ class FilledTemplateService:
             http_method_snapshot=(getattr(template, "http_method", "") or "")[:16],
             url_snapshot=getattr(template, "url", "") or "",
             headers_snapshot=list(getattr(template, "headers", []) or []),
+            group_id=group_id,
+            group_name_snapshot=_truncate(group_name, limit=255),
+            group_color_snapshot=group_color,
             message_template_id=template.id,
             template_name_snapshot=_truncate(template.name or "", limit=255),
             project_name_snapshot=_truncate(getattr(project, "name", "") or "", limit=255),

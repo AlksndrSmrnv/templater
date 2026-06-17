@@ -965,3 +965,32 @@ li.tree-item.sortable-chosen { background: var(--surface-2); }
     margin: 10px 0; padding: 8px 10px; border-radius: var(--radius-sm);
     background: var(--surface-2); color: var(--warning); font-size: var(--fs-sm); border: 1px solid var(--border);
 }
+
+/* ---- Access groups: navbar unlock control + badges ---- */
+.nav-groups { flex-shrink: 0; display: flex; align-items: center; }
+.nav-groups-inner { display: inline-flex; align-items: center; gap: 6px; }
+.group-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 1px 8px; border: 1px solid var(--border); border-radius: 10px;
+    font-size: var(--fs-xs); color: var(--text); background: var(--surface-2);
+    flex-shrink: 0; max-width: 180px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+}
+.group-badge--sm { margin-left: 8px; vertical-align: middle; }
+.group-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+}
+.group-lock {
+    border: none; background: transparent; cursor: pointer; color: var(--muted);
+    font-size: 14px; line-height: 1; padding: 0 0 0 2px;
+}
+.group-lock:hover { color: var(--danger); }
+.group-unlock-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--surface); color: var(--text); font-size: var(--fs-sm); cursor: pointer;
+}
+.group-unlock-btn:hover { background: var(--surface-2); }
+.group-modal h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; }
+.group-modal { padding: 20px; }

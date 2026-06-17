@@ -37,6 +37,19 @@
         <textarea id="description" name="description" rows="6">{{ item.description if item else "" }}</textarea>
     </div>
 
+    {% if entity_type == "client" %}
+        <div class="form-section">
+            <label for="group_id">Группа доступа</label>
+            <div class="muted">Публичные данные видны всем. Данные в группе видны только тем, кто ввёл её пароль. Счета и карты этого клиента наследуют его группу.</div>
+            <select id="group_id" name="group_id">
+                <option value="">Публично (видно всем)</option>
+                {% for g in unlocked_groups | default([]) %}
+                    <option value="{{ g.id }}" {% if item and item.group_id and (item.group_id | string) == (g.id | string) %}selected{% endif %}>{{ g.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    {% endif %}
+
     {% if entity_type == "account" %}
         <div class="form-section">
             <label>Клиент <span class="required-mark">*</span>

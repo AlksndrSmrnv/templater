@@ -28,6 +28,7 @@ from app.routes.htmx_utils import (
     validation_errors_response,
 )
 from app.routes.uow import commit_and_refresh, commit_or_409
+from app.schemas.access_group import AccessGroupCreate, AccessGroupUpdate
 from app.schemas.attribute import (
     ALLOWED_TYPES,
     AttributeDefinitionCreate,
@@ -36,6 +37,7 @@ from app.schemas.attribute import (
 )
 from app.schemas.header_preset import HeaderPresetCreate, HeaderPresetUpdate
 from app.schemas.project import ProjectCreate, ProjectUpdate
+from app.services.access_groups import AccessGroupService
 from app.services.attribute_schema import AttributeSchemaService
 from app.services.header_presets import HeaderPresetService
 from app.services.projects import ProjectService
@@ -128,6 +130,7 @@ async def page_settings(
             "selected_entity_type": "",
             "default_policy": default_policy,
             "projects": await ProjectService(session).list_all(),
+            "groups": await AccessGroupService(session).list_all(),
             "header_presets": await HeaderPresetService(session).list_all(),
             "prompts": prompts,
             "edit_mode": is_edit_mode(request),
@@ -422,6 +425,100 @@ async def htmx_project_delete(
     return Response(
         status_code=204,
         headers={"HX-Trigger": toast_header("Проект удалён", refresh_projects=True)},
+    )
+
+
+@router.get("/settings-htmx/groups/table")
+async def htmx_groups_table(
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    return templates.TemplateResponse(
+        request,
+        "partials/groups_table.html",
+        {
+            "groups": await AccessGroupService(session).list_all(),
+            "edit_mode": is_edit_mode(request),
+        },
+    )
+
+
+# Like the project forms, the group forms submit with hx-swap="none", so
+# failures must surface as toasts on status 200 (htmx ignores HX-Trigger on 4xx).
+_GROUP_FORM_ERROR = "Проверьте поля: название, цвет (#RRGGBB) и пароль"
+
+
+def _group_error_response(message: str) -> Response:
+    return Response(
+        status_code=200,
+        headers={"HX-Trigger": toast_header(message, toast_type="error")},
+    )
+
+
+@edit_router.post("/settings-htmx/groups")
+async def htmx_group_create(
+    request: Request,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    form = await request.form()
+    svc = AccessGroupService(session)
+    try:
+        data = AccessGroupCreate(
+            name=form_str(form, "name"),
+            color=form_str(form, "color"),
+            password=form_str(form, "password"),
+        )
+        await commit_and_refresh(session, await svc.create(data))
+    except ValidationError:
+        return _group_error_response(_GROUP_FORM_ERROR)
+    except DomainError as exc:
+        return _group_error_response(exc.message)
+    return Response(
+        status_code=204,
+        headers={"HX-Trigger": toast_header("Группа создана", refresh_groups=True)},
+    )
+
+
+@edit_router.put("/settings-htmx/groups/{group_id}")
+async def htmx_group_update(
+    group_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    form = await request.form()
+    svc = AccessGroupService(session)
+    try:
+        # A blank password field means "leave the password unchanged".
+        data = AccessGroupUpdate(
+            name=form_str(form, "name"),
+            color=form_str(form, "color"),
+            password=form_str(form, "password") or None,
+        )
+        await commit_and_refresh(session, await svc.update(group_id, data))
+    except ValidationError:
+        return _group_error_response(_GROUP_FORM_ERROR)
+    except DomainError as exc:
+        return _group_error_response(exc.message)
+    return Response(
+        status_code=204,
+        headers={"HX-Trigger": toast_header("Группа сохранена", refresh_groups=True)},
+    )
+
+
+@edit_router.delete("/settings-htmx/groups/{group_id}")
+async def htmx_group_delete(
+    group_id: uuid.UUID, session: AsyncSession = SessionDep
+) -> Response:
+    svc = AccessGroupService(session)
+    try:
+        await svc.delete(group_id)
+    except DomainError as exc:
+        return _group_error_response(exc.message)
+    await commit_or_409(session, message="Не удалось удалить группу")
+    return Response(
+        status_code=204,
+        headers={"HX-Trigger": toast_header("Группа удалена", refresh_groups=True)},
     )
 
 
