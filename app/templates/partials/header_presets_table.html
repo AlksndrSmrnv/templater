@@ -54,7 +54,7 @@
             <div class="preset-card-meta">
                 {% set proj = preset.project if preset.project is defined else none %}
                 {% if proj %}<span class="project-badge"><span class="project-dot" style="background: {{ proj.color }}"></span>{{ proj.name }}</span>{% endif %}
-                {% if preset.url %}<code>{{ preset.url }}</code>{% else %}<span class="muted">URL не задан</span>{% endif %}
+                {% if preset.url %}<code class="preset-card-url">{{ preset.url }}</code>{% else %}<span class="muted">URL не задан</span>{% endif %}
                 <span class="muted">Заголовков: {{ preset.headers | length }}</span>
             </div>
         </div>
