@@ -67,9 +67,25 @@ def upgrade() -> None:
         "collection_jobs",
         ["collection_id", "status"],
     )
+    # Enforce "at most one active job per collection" at the DB level — the
+    # service's find_active() check is a fast path, but without this index two
+    # strictly concurrent POSTs could each pass the check and insert a job. The
+    # partial unique index admits only one pending/running row per collection;
+    # the second INSERT raises IntegrityError, which start() turns into a
+    # user-facing "уже идёт" error.
+    op.create_index(
+        "uq_collection_jobs_one_active",
+        "collection_jobs",
+        ["collection_id"],
+        unique=True,
+        postgresql_where=sa.text("status IN ('pending', 'running')"),
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "uq_collection_jobs_one_active", table_name="collection_jobs"
+    )
     op.drop_index(
         "ix_collection_jobs_collection_status", table_name="collection_jobs"
     )

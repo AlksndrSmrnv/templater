@@ -11,12 +11,27 @@ can poll a progress bar. The background coroutine opens its own DB session
 HTTP calls, so this only raises *template* parallelism, not *request*
 parallelism.
 
-One active job per collection is enforced (``find_active`` before create), so
-a repeat click is refused with a user-facing error rather than spawning a
-second batch. Per-template outcomes bump ``processed``/``skipped``/``failed``
-atomically (no read-modify-write) so the polling endpoint never sees torn
-state. On process restart :meth:`CollectionJobService.reconcile` rewrites any
-still-pending/running rows to ``failed`` — the in-process task is gone.
+One active job per collection is enforced: ``find_active`` is a fast-path
+check, and a partial unique index (``uq_collection_jobs_one_active``) is the
+race-condition backstop — two strictly concurrent POSTs can't both insert.
+Per-template outcomes bump ``processed``/``skipped``/``failed`` atomically (no
+read-modify-write) so the polling endpoint never sees torn state. On process
+restart :meth:`CollectionJobService.reconcile` rewrites any still-pending/
+running rows to ``failed`` — the in-process task is gone.
+
+.. note:: Single-worker assumption. The in-process :class:`JobRegistry` and
+   ``asyncio.create_task`` model is correct only with one uvicorn worker. Under
+   ``--workers > 1`` a task launched on worker A is invisible to worker B, and
+   ``reconcile`` on B's startup would wrongly mark A's live running jobs as
+   failed. The deployment runs a single worker (Dockerfile), so this is fine —
+   but don't add ``--workers`` without moving jobs to a shared queue (arq/Celery).
+
+A single :class:`~app.llm.client.GigaChatClient` is shared across all gather'd
+coroutines of a job. This is safe: the SDK's sync ``chat`` (wrapped in
+``asyncio.to_thread``) guards OAuth-token refresh with a ``threading.RLock``
+(double-checked), the underlying ``httpx.Client`` is a thread-safe connection
+pool, and retry state is local to each call. The :class:`LLMCoordinator`
+semaphore still caps concurrent GigaChat HTTP calls globally.
 """
 
 from __future__ import annotations
@@ -135,12 +150,26 @@ async def _process_one_template(
             )
             outcome = "failed"
 
-        sessionmaker = get_sessionmaker()
-        async with sessionmaker() as job_session:
-            await CollectionJobRepository(job_session).increment(
-                job_id, **{outcome: 1}
+        # Bump the counter on its own session. A failure here (DB blip) must
+        # NOT escape into asyncio.gather — that would abort the whole job and
+        # mark it failed while sibling coroutines keep committing results. Log
+        # and move on: the worst case is a count that's off by one, not a
+        # cascading failure.
+        try:
+            sessionmaker = get_sessionmaker()
+            async with sessionmaker() as job_session:
+                await CollectionJobRepository(job_session).increment(
+                    job_id, **{outcome: 1}
+                )
+                await job_session.commit()
+        except Exception:
+            log.warning(
+                "Failed to record %s outcome for template %s in job %s",
+                outcome,
+                template_id,
+                job_id,
+                exc_info=True,
             )
-            await job_session.commit()
 
 
 async def _run_job(job_id: uuid.UUID, collection_id: uuid.UUID) -> None:
@@ -215,6 +244,9 @@ class CollectionJobService:
         collection = await CollectionRepository(self.session).get(collection_id)
         if collection is None:
             raise NotFoundError("Коллекция не найдена")
+        # Fast-path check — gives a clean error without a constraint violation
+        # in the common case. The partial unique index is the backstop for the
+        # race where two concurrent POSTs both pass this check.
         if await self.repo.find_active(collection_id) is not None:
             raise ValidationFailed(
                 "Обработка коллекции уже идёт — дождитесь завершения"
@@ -222,7 +254,15 @@ class CollectionJobService:
 
         job = CollectionJob(collection_id=collection_id, status="pending", total=0)
         await self.repo.add(job)
-        await _commit(self.session)
+        try:
+            await _commit(self.session)
+        except IntegrityViolation:
+            # Lost the race to insert the active job — the partial unique index
+            # (uq_collection_jobs_one_active) blocked us. Surface it as the
+            # same user-facing "уже идёт" error the fast-path would have.
+            raise ValidationFailed(
+                "Обработка коллекции уже идёт — дождитесь завершения"
+            ) from None
 
         task = asyncio.create_task(_run_job(job.id, collection_id))
         JobRegistry.register(job.id, task)

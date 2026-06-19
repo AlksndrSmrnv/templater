@@ -40,6 +40,14 @@ class CollectionJobRepository:
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def list_all_active(self) -> list[CollectionJob]:
+        """Every pending/running job — used by the workspace tree to embed a
+        live progress partial per collection so a tree refresh (fired by one
+        job's completion) doesn't wipe another job's polling element."""
+
+        stmt = select(CollectionJob).where(CollectionJob.status.in_(_ACTIVE_STATUSES))
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def mark_running(self, job_id: uuid.UUID, started_at: datetime) -> None:
         await self.session.execute(
             update(CollectionJob)

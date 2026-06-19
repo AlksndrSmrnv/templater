@@ -1,14 +1,16 @@
 {# Progress partial for a background collection LLM job.
 
-   Rendered by POST /collections/{id}/process-llm (initial) and polled by
-   GET /collections/{id}/jobs/{job_id}. The root element carries the polling
-   attributes while the job is still active (pending/running); htmx swaps the
-   whole element on each poll, so the bar and counts update in place. On a
-   terminal state (done/failed) the polling attributes are gone and the route
-   fires ``refresh-tree`` so the ``pending_review`` flags show up in the tree. #}
+   Rendered standalone by POST /collections/{id}/process-llm (initial) and
+   GET /collections/{id}/jobs/{job_id} (poll), and embedded into the
+   collections-tree slot for any collection with an active job (so a tree
+   refresh triggered by *another* job's completion re-arms this one's polling
+   instead of wiping it — see collections_tree.html). The ``job_progress``
+   macro is the single source of truth; the file renders it when invoked
+   directly with ``job``/``collection_id`` in the context. #}
+{% macro job_progress(job, collection_id) %}
 {% set completed = job.processed + job.skipped + job.failed %}
 {% set terminal = job.status in ['done', 'failed'] %}
-{% set pct = (job.total * completed / 100) | int if job.total else 0 %}
+{% set pct = (completed * 100 / job.total) | int if job.total else 0 %}
 <div id="collection-job-{{ collection_id }}"
      class="job-progress{% if job.status == 'done' %} done{% elif job.status == 'failed' %} failed{% endif %}"
      {% if not terminal %}
@@ -46,3 +48,7 @@
     <div class="job-progress-hint muted">Проверьте разметку и сохраните каждый шаблон.</div>
     {% endif %}
 </div>
+{% endmacro %}
+{% if job is defined and collection_id is defined %}
+{{ job_progress(job, collection_id) }}
+{% endif %}

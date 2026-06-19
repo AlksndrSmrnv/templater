@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.db.models import CollectionJob
 from app.services import collection_jobs as cj
@@ -237,6 +238,34 @@ async def test_start_creates_pending_job_and_registers_task(monkeypatch: pytest.
     assert JobRegistry.get(job.id) is None
 
 
+@pytest.mark.asyncio
+async def test_start_race_backstop_turns_integrity_violation_into_validation_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two concurrent POSTs both pass find_active, but the partial unique index
+    blocks the second INSERT — start() must surface that as the same
+    user-facing "уже идёт" error rather than a 409."""
+
+    collection_id = uuid.uuid4()
+    monkeypatch.setattr(cj, "get_settings", lambda: _settings())
+    monkeypatch.setattr(
+        cj, "CollectionRepository", lambda session: _FakeCollectionRepo(SimpleNamespace(id=collection_id))
+    )
+    monkeypatch.setattr(cj, "_run_job", _noop_run_job)
+
+    class _RaceSession(_FakeSession):
+        async def commit(self) -> None:
+            raise IntegrityError("simulated unique violation", params=None, orig=Exception())
+
+    svc = CollectionJobService(_RaceSession())  # type: ignore[arg-type]
+    svc.repo = _FakeJobRepo(svc.session)  # type: ignore[assignment]
+
+    with pytest.raises(ValidationFailed):
+        await svc.start(collection_id)
+    # No task registered — the lost race didn't launch a background job.
+    assert JobRegistry._tasks == {}
+
+
 # --------------------------------------------------------------------------- #
 # _run_job — the background coroutine
 # --------------------------------------------------------------------------- #
@@ -398,6 +427,42 @@ async def test_run_job_marks_failed_when_orchestrator_blows_up(
 
     assert job.status == "failed"
     assert "cert decode failed" in (job.error or "")
+    assert job.finished_at is not None
+
+
+@pytest.mark.asyncio
+async def test_run_job_increment_failure_does_not_abort_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A DB blip while bumping a per-template counter must NOT escape into
+    asyncio.gather — that would mark the whole job failed while siblings keep
+    committing. The increment is wrapped so the job still reaches ``done``."""
+
+    collection_id = uuid.uuid4()
+    templates = [SimpleNamespace(id=uuid.uuid4())]
+    _patch_run_job_env(monkeypatch, templates, {})
+
+    class _FlakyIncrementRepo(_FakeJobRepo):
+        async def increment(
+            self,
+            job_id: uuid.UUID,
+            *,
+            processed: int = 0,
+            skipped: int = 0,
+            failed: int = 0,
+        ) -> None:
+            raise RuntimeError("DB blip during counter bump")
+
+    monkeypatch.setattr(cj, "CollectionJobRepository", _FlakyIncrementRepo)
+
+    job = _make_job(collection_id)
+    _FlakyIncrementRepo.jobs[job.id] = job
+
+    await _run_job(job.id, collection_id)
+
+    # The orchestrator completed (the increment failure was logged, not
+    # propagated) — mark_done still ran.
+    assert job.status == "done"
     assert job.finished_at is not None
 
 

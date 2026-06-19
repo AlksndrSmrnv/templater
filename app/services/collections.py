@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Collection, MessageTemplate
 from app.repositories.collection import CollectionRepository
+from app.repositories.collection_job import CollectionJobRepository
 from app.repositories.settings import SettingsRepository
 from app.repositories.template import TemplateRepository
 from app.schemas.collection import ImportCollectionSummary
@@ -127,6 +128,7 @@ class CollectionService:
         self.repo = CollectionRepository(session)
         self.templates = TemplateRepository(session)
         self.settings = SettingsRepository(session)
+        self.jobs = CollectionJobRepository(session)
 
     async def list_all(self) -> list[Collection]:
         return await self.repo.list_all()
@@ -177,12 +179,17 @@ class CollectionService:
             ungrouped, extra_folders=None if query else root_folders
         )
         loose = ungrouped_full["templates"]
+        # Active background LLM jobs, keyed by collection id — the tree embeds a
+        # live progress partial for each so a tree refresh (e.g. fired by one
+        # job's completion) re-arms another job's polling instead of wiping it.
+        active_jobs = {j.collection_id: j for j in await self.jobs.list_all_active()}
         return {
             "collection_nodes": collection_nodes,
             "root_tree": {"folders": ungrouped_full["folders"], "templates": []},
             "ungrouped_tree": {"folders": {}, "templates": loose},
             "ungrouped_count": len(loose),
             "search": search,
+            "active_jobs": active_jobs,
         }
 
     async def get(self, collection_id: uuid.UUID) -> Collection:
