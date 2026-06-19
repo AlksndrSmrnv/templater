@@ -117,6 +117,7 @@ async def htmx_process_collection(
         f"Обработано: {summary.processed}"
         f" · пропущено: {summary.skipped}"
         f" · ошибок: {summary.failed}"
+        ". Проверьте разметку и сохраните каждый шаблон."
     )
     return await _tree_response(
         request,

@@ -654,7 +654,7 @@ async def htmx_process_llm(
         action=lambda svc, template, llm_svc: svc.analyze_and_persist(
             template, llm_service=llm_svc
         ),
-        toast="Шаблон обработан LLM",
+        toast="Шаблон обработан LLM — проверьте разметку и нажмите «Сохранить изменения»",
     )
 
 
@@ -675,7 +675,7 @@ async def htmx_regenerate_meta(
         action=lambda svc, template, llm_svc: svc.regenerate_meta_and_persist(
             template, llm_service=llm_svc
         ),
-        toast="Метаинформация обновлена",
+        toast="Метаинформация обновлена — проверьте и нажмите «Сохранить изменения»",
     )
 
 
@@ -696,7 +696,7 @@ async def htmx_regenerate_fields(
         action=lambda svc, template, llm_svc: svc.regenerate_fields_and_persist(
             template, llm_service=llm_svc
         ),
-        toast="Шаблон обработан заново",
+        toast="Шаблон обработан заново — проверьте разметку и нажмите «Сохранить изменения»",
     )
 
 
@@ -818,6 +818,12 @@ async def htmx_update(
         if llm_meta is not None and not isinstance(llm_meta, dict):
             raise ValidationFailed("Поле llm_meta должно быть JSON-объектом")
         svc = TemplateService(session)
+        # Detect the pending_review → processed confirmation: the inline editor's
+        # "Сохранить изменения" is the user's sign-off on the LLM field mapping,
+        # so surface a distinct toast when that flip happens (vs. a routine edit
+        # of an already-processed template). Read before any mutation below.
+        pre = await svc.get(template_id)
+        was_pending = (pre.llm_meta or {}).get("import_status") == "pending_review"
         if llm_meta is not None:
             await svc.update(template_id, TemplateUpdate(llm_meta=llm_meta))
         template = await svc.update_placeholders(template_id, placeholders)
@@ -827,6 +833,21 @@ async def htmx_update(
     except DomainError as exc:
         return form_errors_response(
             request, templates, exc.message, details=exc.details, status_code=exc.status_code
+        )
+    # On the confirmation flip, refresh the WHOLE panel (not just the code wrap)
+    # so the header updates: "Заполнить" becomes an active link and the single
+    # "Обработать LLM" button is replaced by the granular reprocess buttons. The
+    # form targets #template-code-wrap, so override with HX-Retarget/Reswap.
+    if was_pending:
+        return templates.TemplateResponse(
+            request,
+            "partials/template_panel.html",
+            await _template_panel_context(session, template, request),
+            headers={
+                "HX-Trigger": toast_header("Разметка подтверждена — шаблон готов к заполнению"),
+                "HX-Retarget": "#template-panel",
+                "HX-Reswap": "innerHTML",
+            },
         )
     return templates.TemplateResponse(
         request,

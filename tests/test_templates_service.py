@@ -213,6 +213,155 @@ async def test_update_placeholders_clears_stale_llm_debug() -> None:
 
 
 @pytest.mark.asyncio
+async def test_analyze_and_persist_marks_pending_review_awaiting_confirmation() -> None:
+    # The LLM result is persisted but NOT promoted to "processed" — the user must
+    # review the field mapping and save it (update_placeholders) to unlock fill.
+    class FakeSession:
+        async def flush(self) -> None:
+            return None
+
+    svc = TemplateService(cast(Any, FakeSession()))
+
+    async def fake_analyze_content(
+        *, fmt: str, original_content: str, llm_service: Any | None = None
+    ) -> dict[str, Any]:
+        return {
+            "content": original_content,
+            "placeholders": [],
+            "llm_meta": {"summary": "ok"},
+            "llm_debug": None,
+        }
+
+    svc.analyze_content = fake_analyze_content  # type: ignore[method-assign]
+
+    template = SimpleNamespace(
+        format="json",
+        content='{"a":"x"}',
+        original_content='{"a":"x"}',
+        placeholders=[],
+        llm_meta={},
+        llm_debug=None,
+        headers=[],
+    )
+
+    await svc.analyze_and_persist(cast(Any, template), llm_service=object())
+
+    assert template.llm_meta["import_status"] == "pending_review"
+    assert template.llm_meta["summary"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_update_placeholders_confirms_pending_review_to_processed() -> None:
+    # Saving the placeholder mapping is the user's sign-off: a pending_review
+    # template (LLM ran, mapping not yet confirmed) is promoted to "processed",
+    # which unlocks the "Заполнить" button.
+    class FakeSession:
+        async def flush(self) -> None:
+            return None
+
+    template_id = uuid.uuid4()
+    template = SimpleNamespace(
+        id=template_id,
+        format="json",
+        content='{"a":"{{sender.fullName}}"}',
+        original_content='{"a":"Иванов"}',
+        placeholders=[],
+        llm_meta={"summary": "ok", "import_status": "pending_review"},
+    )
+    svc = TemplateService(cast(Any, FakeSession()))
+
+    async def fake_get(requested_id: uuid.UUID) -> Any:
+        assert requested_id == template_id
+        return template
+
+    svc.get = fake_get  # type: ignore[assignment, method-assign]
+
+    updated = await svc.update_placeholders(
+        template_id,
+        [
+            {
+                "location": "/a",
+                "mode": "mapped",
+                "value": "{{sender.fullName}}",
+                "original": "Иванов",
+                "suggestion": "sender.fullName",
+            }
+        ],
+    )
+
+    assert updated.llm_meta["import_status"] == "processed"
+    assert updated.llm_meta["summary"] == "ok"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("existing_status", "expected_status"),
+    [
+        ("processed", "processed"),
+        ("imported", "imported"),
+        ("unparsed", "unparsed"),
+    ],
+)
+async def test_update_placeholders_leaves_non_pending_statuses_untouched(
+    existing_status: str, expected_status: str
+) -> None:
+    # Only the pending_review → processed confirmation flip happens on save.
+    # A routine edit of an already-processed template keeps it processed, and
+    # templates without a confirmed LLM run are NOT smuggled to "processed".
+    class FakeSession:
+        async def flush(self) -> None:
+            return None
+
+    template_id = uuid.uuid4()
+    template = SimpleNamespace(
+        id=template_id,
+        format="json",
+        content='{"a":"x"}',
+        original_content='{"a":"x"}',
+        placeholders=[],
+        llm_meta={"import_status": existing_status},
+    )
+    svc = TemplateService(cast(Any, FakeSession()))
+
+    async def fake_get(requested_id: uuid.UUID) -> Any:
+        return template
+
+    svc.get = fake_get  # type: ignore[assignment, method-assign]
+
+    updated = await svc.update_placeholders(template_id, [])
+    assert updated.llm_meta["import_status"] == expected_status
+
+
+@pytest.mark.asyncio
+async def test_update_placeholders_does_not_add_import_status_when_absent() -> None:
+    # A template that never had import_status (e.g. hand-created without LLM)
+    # must not gain one on a manual save — preserves the pre-existing behaviour.
+    class FakeSession:
+        async def flush(self) -> None:
+            return None
+
+    template_id = uuid.uuid4()
+    template = SimpleNamespace(
+        id=template_id,
+        format="json",
+        content='{"a":"x"}',
+        original_content='{"a":"x"}',
+        placeholders=[],
+        llm_meta={"summary": "manual"},
+    )
+    svc = TemplateService(cast(Any, FakeSession()))
+
+    async def fake_get(requested_id: uuid.UUID) -> Any:
+        return template
+
+    svc.get = fake_get  # type: ignore[assignment, method-assign]
+
+    updated = await svc.update_placeholders(template_id, [])
+    assert "import_status" not in updated.llm_meta
+    assert updated.llm_meta == {"summary": "manual", "has_account_owner": False}
+
+
+@pytest.mark.asyncio
 async def test_analyze_content_propagates_llm_debug() -> None:
     svc = TemplateService(cast(Any, SimpleNamespace()))
     debug = {
@@ -1114,7 +1263,10 @@ async def test_regenerate_meta_only_updates_meta_and_keeps_placeholders() -> Non
     out = await svc.regenerate_meta_and_persist(template, llm_service=FakeLlm())
 
     assert out.llm_meta["summary"] == "new"
-    assert out.llm_meta["import_status"] == "processed"
+    # A meta re-run produces a fresh LLM output awaiting user confirmation —
+    # the template is demoted to pending_review until "Сохранить изменения"
+    # flips it back to processed (see update_placeholders).
+    assert out.llm_meta["import_status"] == "pending_review"
     # account-owner flag recomputed from the existing placeholders
     assert out.llm_meta["has_account_owner"] is True
     # content + placeholders are left untouched by a meta-only reprocess

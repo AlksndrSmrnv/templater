@@ -703,6 +703,7 @@ h3 { font-size: var(--fs-lg); line-height: 1.3; font-weight: 600; letter-spacing
 .htmx-request .htmx-indicator,
 .htmx-indicator.htmx-request { display: inline-flex; align-items: center; gap: 6px; }
 .btn[disabled] { opacity: 0.6; cursor: not-allowed; }
+.btn.disabled { opacity: 0.6; cursor: not-allowed; pointer-events: none; }
 .btn.htmx-request,
 .htmx-request .btn[disabled] { opacity: 0.6; cursor: wait; }
 @keyframes spin { to { transform: rotate(360deg); } }

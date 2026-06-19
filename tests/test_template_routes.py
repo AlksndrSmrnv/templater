@@ -485,6 +485,12 @@ async def test_htmx_update_persists_llm_meta_only_on_save(monkeypatch: pytest.Mo
         def __init__(self, session: object) -> None:
             self.session = session
 
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            assert requested_id == template_id
+            # Not in pending_review → htmx_update takes the lightweight editor-
+            # response path (no full-panel refresh, no confirmation toast).
+            return SimpleNamespace(id=template_id, llm_meta={"import_status": "processed"})
+
         async def update(self, requested_id: uuid.UUID, data: Any) -> Any:
             assert requested_id == template_id
             calls.append(("update", data))
@@ -539,6 +545,79 @@ async def test_htmx_update_persists_llm_meta_only_on_save(monkeypatch: pytest.Mo
     assert calls[0][1].llm_meta == {"summary": "preview"}
     assert calls[1][0] == "update_placeholders"
     assert calls[2][0] == "commit_and_refresh"
+
+
+@pytest.mark.asyncio
+async def test_htmx_update_pending_review_confirmation_refreshes_full_panel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # When the user saves the field mapping of a pending_review template, the
+    # confirmation flip (pending_review → processed) refreshes the WHOLE panel
+    # (so the "Заполнить" button activates and the split reprocess buttons
+    # appear), with a distinct confirmation toast. A routine edit of an already-
+    # processed template takes the lightweight editor-response path instead
+    # (covered by test_htmx_update_persists_llm_meta_only_on_save).
+    template_id = uuid.uuid4()
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            assert requested_id == template_id
+            # The template enters the save in pending_review — the confirmation
+            # path must detect this and refresh the full panel.
+            return SimpleNamespace(id=template_id, llm_meta={"import_status": "pending_review"})
+
+        async def update(self, requested_id: uuid.UUID, data: Any) -> Any:
+            return SimpleNamespace()
+
+        async def update_placeholders(
+            self, requested_id: uuid.UUID, placeholders: list[dict[str, Any]]
+        ) -> Any:
+            return SimpleNamespace(
+                id=template_id,
+                name="T",
+                description="",
+                format="json",
+                content='{"a":"{{sender.fullName}}"}',
+                original_content='{"a":"x"}',
+                placeholders=placeholders,
+                llm_meta={"summary": "saved", "import_status": "processed"},
+            )
+
+    async def fake_commit_and_refresh(session: object, template: Any) -> Any:
+        return template
+
+    async def fake_panel_context(session: object, tpl: Any, request: Any = None) -> dict[str, Any]:
+        return {"template": tpl}
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit_and_refresh)
+    monkeypatch.setattr(templates_reg, "_template_panel_context", fake_panel_context)
+
+    response = await templates_reg.htmx_update(
+        template_id=template_id,
+        request=cast(
+            Any,
+            FakeFormRequest(
+                {
+                    "placeholders": '[{"location":"/a","mode":"mapped","value":"{{sender.fullName}}"}]',
+                    "llm_meta": '{"summary":"preview","import_status":"pending_review"}',
+                }
+            ),
+        ),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    # Full panel refresh (not the lightweight editor response) so the header
+    # updates: active "Заполнить" link + split reprocess buttons.
+    assert response.name == "partials/template_panel.html"
+    assert response.headers["HX-Retarget"] == "#template-panel"
+    assert response.headers["HX-Reswap"] == "innerHTML"
+    trigger = json.loads(response.headers["HX-Trigger"])
+    assert "Разметка подтверждена" in trigger["showToast"]["message"]
 
 
 @pytest.mark.asyncio
