@@ -853,25 +853,25 @@ async def htmx_update(
         llm_meta = _json_form_value(form, "llm_meta", None)
         if llm_meta is not None and not isinstance(llm_meta, dict):
             raise ValidationFailed("Поле llm_meta должно быть JSON-объектом")
-        # `import_status` is a server-managed flag, never client input — strip
-        # any value the POST tried to smuggle in (mirrors htmx_create). Without
-        # this a crafted PUT could set import_status="processed" (bypassing the
-        # LLM confirmation gate and the fill guard) or "pending_review" (faking
-        # the confirmation flow on an unprocessed template). With the strip in
-        # place, svc.update below can't change import_status, so the
-        # was_pending flag read from `pre` (before any mutation) is the single
-        # source of truth for the confirmation flip — update_placeholders will
-        # see the same previous_status.
-        if llm_meta is not None:
-            llm_meta = {k: v for k, v in llm_meta.items() if k != "import_status"}
         svc = TemplateService(session)
-        # Detect the pending_review → processed confirmation: the inline editor's
-        # "Сохранить изменения" is the user's sign-off on the LLM field mapping,
-        # so surface a distinct toast when that flip happens (vs. a routine edit
-        # of an already-processed template). Read before any mutation below.
+        # Read the server-authoritative state BEFORE any mutation — this drives
+        # both the confirmation-flip detection (was_pending) and the
+        # import_status re-injection below.
         pre = await svc.get(template_id)
-        was_pending = (pre.llm_meta or {}).get("import_status") == "pending_review"
+        server_status = (pre.llm_meta or {}).get("import_status")
+        was_pending = server_status == "pending_review"
         if llm_meta is not None:
+            # `import_status` is a server-managed flag, never client input —
+            # strip any value the POST tried to smuggle in (mirrors htmx_create)
+            # so a crafted PUT can't forge "processed" (bypassing the fill guard)
+            # or "pending_review" (faking the confirmation flip). Then re-inject
+            # the server-authoritative value: svc.update below does a FULL llm_meta
+            # replacement (template.llm_meta = data.llm_meta), so without the
+            # re-inject the status would be erased and update_placeholders would
+            # read previous_status=None, never flipping pending_review→processed.
+            llm_meta = {k: v for k, v in llm_meta.items() if k != "import_status"}
+            if server_status is not None:
+                llm_meta["import_status"] = server_status
             await svc.update(template_id, TemplateUpdate(llm_meta=llm_meta))
         template = await svc.update_placeholders(template_id, placeholders)
         template = await commit_and_refresh(session, template)

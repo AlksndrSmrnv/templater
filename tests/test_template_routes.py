@@ -543,7 +543,10 @@ async def test_htmx_update_persists_llm_meta_only_on_save(monkeypatch: pytest.Mo
 
     assert response.name == "partials/template_editor_response.html"
     assert calls[0][0] == "update"
-    assert calls[0][1].llm_meta == {"summary": "preview"}
+    # The server-authoritative import_status ("processed", from get) is
+    # re-injected after the strip, so the client's llm_meta passes through
+    # augmented with the real status — not replaced by any client value.
+    assert calls[0][1].llm_meta == {"summary": "preview", "import_status": "processed"}
     assert calls[1][0] == "update_placeholders"
     assert calls[2][0] == "commit_and_refresh"
 
@@ -622,6 +625,96 @@ async def test_htmx_update_pending_review_confirmation_refreshes_full_panel(
 
 
 @pytest.mark.asyncio
+async def test_htmx_update_pending_review_confirmation_flips_to_processed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The confirmation flip must actually reach import_status="processed" on the
+    persisted template — not just route to the full-panel refresh. This models the
+    real ``update`` → ``update_placeholders`` interaction on a SHARED object
+    (identity map): ``update`` does a full ``template.llm_meta = data.llm_meta``
+    replacement, then ``update_placeholders`` reads ``previous_status`` from the
+    post-update state. A fake that hardcodes the return value (like the one in
+    test_htmx_update_pending_review_confirmation_refreshes_full_panel) hides the
+    bug where the strip erases import_status before update_placeholders can see
+    it — this test catches it by faithfully reproducing the service behaviour."""
+
+    template_id = uuid.uuid4()
+    # The shared object the fake service mutates — starts in pending_review.
+    shared = SimpleNamespace(
+        id=template_id,
+        name="T",
+        description="",
+        format="json",
+        content='{"a":"{{sender.fullName}}"}',
+        original_content='{"a":"x"}',
+        placeholders=[],
+        llm_meta={"summary": "ok", "import_status": "pending_review"},
+    )
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            assert requested_id == template_id
+            return shared
+
+        async def update(self, requested_id: uuid.UUID, data: Any) -> Any:
+            # Faithful: full llm_meta replacement (mirrors real
+            # TemplateService.update at templates.py:244).
+            if data.llm_meta is not None:
+                shared.llm_meta = data.llm_meta
+
+        async def update_placeholders(
+            self, requested_id: uuid.UUID, placeholders: list[dict[str, Any]]
+        ) -> Any:
+            # Faithful: reads previous_status from the POST-update llm_meta and
+            # flips pending_review → processed (mirrors real
+            # TemplateService.update_placeholders).
+            previous_status = (shared.llm_meta or {}).get("import_status")
+            shared.placeholders = placeholders
+            new_meta = {**(shared.llm_meta or {}), "has_account_owner": False}
+            if previous_status == "pending_review":
+                new_meta["import_status"] = "processed"
+            shared.llm_meta = new_meta
+            return shared
+
+        async def build_field_catalog(self) -> list[dict[str, str]]:
+            return []
+
+    async def fake_commit(session: object, template: Any) -> Any:
+        return template
+
+    async def fake_panel_context(session: object, tpl: Any, request: Any = None) -> dict[str, Any]:
+        return {"template": tpl}
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
+    monkeypatch.setattr(templates_reg, "_template_panel_context", fake_panel_context)
+
+    await templates_reg.htmx_update(
+        template_id=template_id,
+        request=cast(
+            Any,
+            FakeFormRequest(
+                {
+                    "placeholders": '[{"location":"/a","mode":"mapped","value":"{{sender.fullName}}"}]',
+                    # The editor form sends the current llm_meta (with
+                    # import_status=pending_review) as a hidden field.
+                    "llm_meta": '{"summary":"ok","import_status":"pending_review"}',
+                }
+            ),
+        ),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    # The flip must have actually happened on the shared object — not just the
+    # routing decision (was_pending) but the final persisted status.
+    assert shared.llm_meta["import_status"] == "processed"
+
+
+@pytest.mark.asyncio
 async def test_htmx_update_strips_client_supplied_import_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -683,8 +776,10 @@ async def test_htmx_update_strips_client_supplied_import_status(
         session=cast(Any, object()),
     )
 
-    # The strip removed import_status before svc.update saw it
-    assert "import_status" not in updated_meta
+    # The client's forged "processed" was stripped; the server-authoritative
+    # "imported" (from get) was re-injected in its place. The client cannot
+    # flip the status — only the server's real value passes through.
+    assert updated_meta["import_status"] == "imported"
     assert updated_meta["summary"] == "ok"
     # No confirmation flip happened (template was "imported", not "pending_review")
     assert response.name == "partials/template_editor_response.html"
