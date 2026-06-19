@@ -27,10 +27,13 @@ running rows to ``failed`` — the in-process task is gone.
    but don't add ``--workers`` without moving jobs to a shared queue (arq/Celery).
 
 A single :class:`~app.llm.client.GigaChatClient` is shared across all gather'd
-coroutines of a job. This is safe: the SDK's sync ``chat`` (wrapped in
-``asyncio.to_thread``) guards OAuth-token refresh with a ``threading.RLock``
-(double-checked), the underlying ``httpx.Client`` is a thread-safe connection
-pool, and retry state is local to each call. The :class:`LLMCoordinator`
+coroutines of a job. Thread-safety of concurrent sync ``chat`` calls (wrapped in
+``asyncio.to_thread``) on one client instance was verified against the pinned
+``gigachat==0.2.1`` source: OAuth-token refresh is guarded by a
+``threading.RLock`` with a double-check, the underlying ``httpx.Client`` is a
+thread-safe connection pool, and retry state is local to each call. **This
+holds only for the pinned version** — re-verify before upgrading ``gigachat``,
+since the shared-client design depends on it. The :class:`LLMCoordinator`
 semaphore still caps concurrent GigaChat HTTP calls globally.
 """
 
