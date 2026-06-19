@@ -72,15 +72,16 @@
                 <iconify-icon icon="lucide:sparkles"></iconify-icon> Обработать LLM
             </button>
             {% endif %}
-            {# "Заполнить" is unlocked only after the user confirms the LLM field
-               mapping (import_status="processed"). Before that — "imported"
-               (not yet LLM-analysed) or "pending_review" (LLM ran, mapping not
-               yet confirmed) — it renders as a disabled link with a hint, so the
-               user sees the goal but can't fill an unvalidated template. #}
-            {% if processed %}
+            {# "Заполнить" is blocked only for pending_review (LLM ran, mapping
+               not yet confirmed). "imported" (manual or untouched, no LLM) and
+               "processed" (confirmed) templates stay fillable — preserving the
+               pre-existing manual-marking flow. The server enforces the same
+               guard in _require_fillable so direct URLs can't bypass it. #}
+            {% if parsable and not pending %}
             <a class="btn" href="/templater/templates/{{ template.id }}/fill">Заполнить</a>
             {% elif parsable %}
-            <span class="btn disabled" title="Сначала обработайте LLM и подтвердите разметку («Сохранить изменения»)">Заполнить</span>
+            <button class="btn" type="button" disabled
+                    title="Сначала подтвердите разметку LLM — нажмите «Сохранить изменения»">Заполнить</button>
             {% endif %}
             <button class="btn danger"
                     type="button"

@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import pytest
 from fastapi.routing import APIRoute
+from starlette.responses import RedirectResponse
 from starlette.routing import Match
 
 from app.routes import templates_reg
@@ -618,6 +619,292 @@ async def test_htmx_update_pending_review_confirmation_refreshes_full_panel(
     assert response.headers["HX-Reswap"] == "innerHTML"
     trigger = json.loads(response.headers["HX-Trigger"])
     assert "Разметка подтверждена" in trigger["showToast"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_htmx_update_strips_client_supplied_import_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PUT can't smuggle import_status through llm_meta — the reserved key is
+    stripped before svc.update, so a crafted request can't forge "processed"
+    (bypassing the fill guard) or "pending_review" (faking the confirmation
+    flow on an unprocessed template). Mirrors the htmx_create strip."""
+
+    updated_meta: dict[str, Any] = {}
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            return SimpleNamespace(id=requested_id, llm_meta={"import_status": "imported"})
+
+        async def update(self, requested_id: uuid.UUID, data: Any) -> Any:
+            updated_meta.update(data.llm_meta)
+            return SimpleNamespace()
+
+        async def update_placeholders(
+            self, requested_id: uuid.UUID, placeholders: list[dict[str, Any]]
+        ) -> Any:
+            return SimpleNamespace(
+                id=requested_id,
+                name="T",
+                description="",
+                format="json",
+                content='{"a":"x"}',
+                original_content='{"a":"x"}',
+                placeholders=placeholders,
+                llm_meta={"import_status": "imported"},
+            )
+
+        async def build_field_catalog(self) -> list[dict[str, str]]:
+            return []
+
+    async def fake_commit(session: object, template: Any) -> Any:
+        return template
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
+    monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
+
+    response = await templates_reg.htmx_update(
+        template_id=uuid.uuid4(),
+        request=cast(
+            Any,
+            FakeFormRequest(
+                {
+                    "placeholders": "[]",
+                    # Forged: try to flip to processed without LLM
+                    "llm_meta": '{"summary": "ok", "import_status": "processed"}',
+                }
+            ),
+        ),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    # The strip removed import_status before svc.update saw it
+    assert "import_status" not in updated_meta
+    assert updated_meta["summary"] == "ok"
+    # No confirmation flip happened (template was "imported", not "pending_review")
+    assert response.name == "partials/template_editor_response.html"
+
+
+@pytest.mark.asyncio
+async def test_htmx_update_pending_review_cannot_be_faked_via_llm_meta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sending llm_meta={"import_status":"pending_review"} on an imported template
+    must NOT trigger the confirmation flip — the strip removes the key, so
+    was_pending is read from the real DB state (imported), not the forged
+    client meta."""
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            # Real DB state: imported, NOT pending_review
+            return SimpleNamespace(id=requested_id, llm_meta={"import_status": "imported"})
+
+        async def update(self, requested_id: uuid.UUID, data: Any) -> Any:
+            return SimpleNamespace()
+
+        async def update_placeholders(
+            self, requested_id: uuid.UUID, placeholders: list[dict[str, Any]]
+        ) -> Any:
+            return SimpleNamespace(
+                id=requested_id,
+                name="T",
+                description="",
+                format="json",
+                content='{"a":"x"}',
+                original_content='{"a":"x"}',
+                placeholders=placeholders,
+                llm_meta={"import_status": "imported"},
+            )
+
+        async def build_field_catalog(self) -> list[dict[str, str]]:
+            return []
+
+    async def fake_commit(session: object, template: Any) -> Any:
+        return template
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+    monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
+    monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
+
+    response = await templates_reg.htmx_update(
+        template_id=uuid.uuid4(),
+        request=cast(
+            Any,
+            FakeFormRequest(
+                {
+                    "placeholders": "[]",
+                    # Forged: try to fake pending_review to get the confirmation
+                    # toast / full-panel refresh without a real LLM run
+                    "llm_meta": '{"import_status": "pending_review"}',
+                }
+            ),
+        ),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    # No confirmation: editor-response path (not full-panel refresh)
+    assert response.name == "partials/template_editor_response.html"
+    assert "HX-Retarget" not in response.headers
+
+
+@pytest.mark.asyncio
+async def test_render_fill_refuses_pending_review_template(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The server-side fill guard blocks _render_fill for a pending_review
+    template — a direct POST to fill/render can't bypass the confirmation gate."""
+
+    template = SimpleNamespace(
+        id=uuid.uuid4(),
+        format="json",
+        llm_meta={"import_status": "pending_review"},
+        content='{"a": "x"}',
+        original_content='{"a": "x"}',
+        placeholders=[],
+    )
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            assert requested_id == template.id
+            return template
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+
+    with pytest.raises(ValidationFailed, match="не подтверждён"):
+        await templates_reg._render_fill(
+            cast(Any, object()),
+            template.id,
+            cast(Any, SimpleNamespace()),  # TemplateFillRequest
+        )
+
+
+@pytest.mark.asyncio
+async def test_htmx_fill_render_refuses_pending_review_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """htmx_fill_render surfaces the pending_review guard as a form error."""
+
+    template = SimpleNamespace(
+        id=uuid.uuid4(),
+        format="json",
+        llm_meta={"import_status": "pending_review"},
+        content='{"a": "x"}',
+        original_content='{"a": "x"}',
+        placeholders=[],
+    )
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            return template
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+
+    response = await templates_reg.htmx_fill_render(
+        template_id=template.id,
+        request=cast(Any, FakeFormRequest({})),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert response.name == "partials/form_errors.html"
+    assert "не подтверждён" in response.context["message"]
+
+
+@pytest.mark.asyncio
+async def test_htmx_fill_save_refuses_pending_review_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """htmx_fill_save guards on pending_review too — it trusts the form snapshot
+    and doesn't re-render, so the guard must run before the save."""
+
+    template = SimpleNamespace(
+        id=uuid.uuid4(),
+        format="json",
+        llm_meta={"import_status": "pending_review"},
+        content='{"a": "x"}',
+        original_content='{"a": "x"}',
+        placeholders=[],
+    )
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            return template
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+
+    response = await templates_reg.htmx_fill_save(
+        template_id=template.id,
+        request=cast(
+            Any,
+            FakeFormRequest(
+                {
+                    "content": '{"a": "filled"}',
+                    "changed_json": "[]",
+                    "unresolved_json": "[]",
+                }
+            ),
+        ),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert response.name == "partials/form_errors.html"
+    assert "не подтверждён" in response.context["message"]
+    assert response.headers["HX-Retarget"] == "#save-feedback"
+
+
+@pytest.mark.asyncio
+async def test_page_fill_redirects_pending_review_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """page_fill (the GET fill page) redirects a pending_review template to the
+    workspace panel — direct URLs / bookmarks / assistant deep links can't
+    reach the fill form."""
+
+    template = SimpleNamespace(
+        id=uuid.uuid4(),
+        format="json",
+        llm_meta={"import_status": "pending_review"},
+        content='{"a": "x"}',
+        original_content='{"a": "x"}',
+        placeholders=[],
+    )
+
+    class FakeTemplateService:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        async def get(self, requested_id: uuid.UUID) -> Any:
+            return template
+
+    monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
+
+    response = await templates_reg.page_fill(
+        template_id=template.id,
+        request=cast(Any, SimpleNamespace(query_params={})),
+        templates=cast(Any, FakeTemplateRenderer()),
+        session=cast(Any, object()),
+    )
+
+    assert isinstance(response, RedirectResponse)
+    assert f"template={template.id}" in response.headers["location"]
+    assert response.status_code == 307
 
 
 @pytest.mark.asyncio

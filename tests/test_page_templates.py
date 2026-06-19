@@ -985,6 +985,9 @@ def _panel_context(template: SimpleNamespace, *, parsable: bool, filled_links: l
 
 
 def test_template_panel_parsable_shows_headers_body_and_process_button() -> None:
+    # A parsable template without LLM (import_status absent / "imported") keeps
+    # an active "Заполнить" — the pre-existing manual-marking flow is preserved.
+    # Only pending_review blocks fill; this template is not pending.
     template = _panel_template()
     html = render_template("partials/template_panel.html", _panel_context(template, parsable=True))
     assert "RqUID" in html
@@ -992,39 +995,39 @@ def test_template_panel_parsable_shows_headers_body_and_process_button() -> None
     assert "динамический" in html
     assert "Обработать LLM" in html
     assert "template-editor-form" in html  # interactive editor present
-    # Fill is NOT active for an unprocessed parsable template — it renders as a
-    # disabled span (no href). The user must run LLM and confirm the mapping first.
     assert "Заполнить" in html
     fill_links = [a for a in start_tags(html, "a") if "/fill" in (a.get("href") or "")]
-    assert not fill_links
-    assert "btn disabled" in html
+    assert len(fill_links) == 1
+    assert fill_links[0].get("href") == f"/templater/templates/{template.id}/fill"
+    # no disabled fill button when the template is fillable
+    assert "Сначала подтвердите разметку LLM" not in html
     # process-llm button targets the center panel
     buttons = [tag for tag in start_tags(html, "button") if tag.get("hx-post")]
     assert any("/process-llm" in (tag.get("hx-post") or "") for tag in buttons)
 
 
 def test_template_panel_processed_shows_active_fill_link() -> None:
-    # Only a confirmed (import_status="processed") template exposes an active
-    # "Заполнить" link — the gating the whole pending_review flow builds toward.
+    # A confirmed (import_status="processed") template exposes an active
+    # "Заполнить" link — same as imported, no disabled variant.
     template = _panel_template(llm_meta={"summary": "S", "import_status": "processed"})
     html = render_template("partials/template_panel.html", _panel_context(template, parsable=True))
     fill_links = [a for a in start_tags(html, "a") if "/fill" in (a.get("href") or "")]
     assert len(fill_links) == 1
     assert fill_links[0].get("href") == f"/templater/templates/{template.id}/fill"
-    assert "btn disabled" not in html  # no disabled fill variant once processed
 
 
 def test_template_panel_pending_review_disables_fill_and_shows_confirmation_banner() -> None:
-    # After an LLM run the template is pending_review: fill stays disabled, a
-    # banner nudges the user to confirm the mapping, and the save button is
-    # relabelled to "Подтвердить разметку".
+    # After an LLM run the template is pending_review: fill is a disabled button
+    # (no active link), a banner nudges the user to confirm the mapping, and the
+    # save button is relabelled to "Подтвердить разметку".
     template = _panel_template(llm_meta={"summary": "S", "import_status": "pending_review"})
     html = render_template("partials/template_panel.html", _panel_context(template, parsable=True))
-    # fill disabled (no active link)
+    # fill disabled (no active link, but a disabled <button> is present)
     fill_links = [a for a in start_tags(html, "a") if "/fill" in (a.get("href") or "")]
     assert not fill_links
     assert "Заполнить" in html
-    assert "btn disabled" in html
+    # the disabled fill button carries the confirmation-hint title
+    assert "Сначала подтвердите разметку LLM" in html
     # confirmation banner + relabelled save button ("Подтвердить разметку" only
     # appears as the submit button label in the pending state)
     assert "Разметка ожидает подтверждения" in html
