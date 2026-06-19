@@ -427,6 +427,14 @@ class CollectionService:
         :class:`LLMUnavailable` when it is not configured, which the route turns
         into a user-facing error. Per-template outcomes are counted —
         unparsable bodies are skipped, other failures are recorded.
+
+        Each successfully analysed template lands in ``import_status="pending_review"``:
+        the LLM result (content, placeholders, meta, headers) is persisted, but the
+        template is NOT fillable until the user opens it, reviews the field mapping
+        in the inline editor and clicks "Сохранить изменения" — that confirmation
+        (via :meth:`TemplateService.update_placeholders`) flips the status to
+        ``processed`` and unlocks fill. The collection tree surfaces a flag on
+        templates still awaiting confirmation so the user can find them.
         """
 
         await self.get(collection_id)  # 404 if missing

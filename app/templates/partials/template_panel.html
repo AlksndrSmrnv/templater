@@ -36,6 +36,7 @@
             {% endif %}
         </div>
         {% set processed = (template.llm_meta or {}).get('import_status') == 'processed' %}
+        {% set pending = (template.llm_meta or {}).get('import_status') == 'pending_review' %}
         <div class="panel-actions">
             {% if processed %}
             {# Already processed → split reprocess: metadata only / template body only. #}
@@ -71,8 +72,16 @@
                 <iconify-icon icon="lucide:sparkles"></iconify-icon> Обработать LLM
             </button>
             {% endif %}
-            {% if parsable %}
+            {# "Заполнить" is blocked only for pending_review (LLM ran, mapping
+               not yet confirmed). "imported" (manual or untouched, no LLM) and
+               "processed" (confirmed) templates stay fillable — preserving the
+               pre-existing manual-marking flow. The server enforces the same
+               guard in _require_fillable so direct URLs can't bypass it. #}
+            {% if parsable and not pending %}
             <a class="btn" href="/templater/templates/{{ template.id }}/fill">Заполнить</a>
+            {% elif parsable %}
+            <button class="btn" type="button" disabled
+                    title="Сначала подтвердите разметку LLM — нажмите «Сохранить изменения»">Заполнить</button>
             {% endif %}
             <button class="btn danger"
                     type="button"
@@ -129,6 +138,14 @@
             <p class="muted" style="margin:0 0 8px;">
                 Наведите на подсвеченное значение и выберите поле из тестовых данных, либо оставьте исходное.
             </p>
+            {% if pending %}
+            {# LLM ran but the field mapping hasn't been confirmed yet — nudge the
+               user to review the placeholders and click "Сохранить изменения",
+               which flips import_status to "processed" and unlocks "Заполнить". #}
+            <div class="fill-warning" style="margin:0 0 10px;">
+                <p class="fill-warning__lead"><iconify-icon icon="lucide:circle-alert"></iconify-icon> Разметка ожидает подтверждения. Проверьте поля ниже и нажмите «Сохранить изменения» — после этого шаблон будет готов к заполнению.</p>
+            </div>
+            {% endif %}
             <form id="template-editor-form"
                   class="template-editor"
                   hx-put="/templater/templates-htmx/{{ template.id }}"
@@ -140,7 +157,7 @@
                 </div>
                 {% include "partials/template_code.html" %}
                 <div class="form-actions" style="margin-top:10px;">
-                    <button class="btn primary" type="submit">Сохранить изменения</button>
+                    <button class="btn primary" type="submit">{% if pending %}Подтвердить разметку{% else %}Сохранить изменения{% endif %}</button>
                 </div>
             </form>
         </div>

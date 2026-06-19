@@ -335,6 +335,29 @@ async def _assert_fill_visible(
             raise ValidationFailed("Выбраны недоступные записи — разблокируйте нужную группу паролем")
 
 
+def _require_fillable(template: Any) -> None:
+    """Refuse fill for a template whose LLM field mapping hasn't been confirmed.
+
+    A template in ``pending_review`` (LLM ran, mapping not yet saved/confirmed)
+    must not be fillable — the whole point of the pending_review state is that
+    the user validates the LLM output before it drives a fill. This guard lives
+    on the server (not just the UI button) so direct URLs, bookmarks, the
+    home-page assistant deep links and crafted POSTs can't bypass it.
+
+    ``imported`` (manual or untouched, no LLM run) and ``processed`` (confirmed)
+    templates remain fillable, preserving the pre-existing manual-marking flow;
+    only ``pending_review`` is refused. ``unparsed`` templates are already
+    blocked by the ``parsable`` check in the UI and by the body-parse guard
+    inside :meth:`PlaceholderFiller.fill_template`.
+    """
+
+    if (template.llm_meta or {}).get("import_status") == "pending_review":
+        raise ValidationFailed(
+            "Шаблон не подтверждён — проверьте разметку LLM и нажмите "
+            "«Сохранить изменения» перед заполнением."
+        )
+
+
 def _client_matches(client: Any, query: str) -> bool:
     if not query:
         return True
@@ -397,6 +420,7 @@ async def _render_fill(
     visible_group_ids: set[uuid.UUID] | None = None,
 ) -> tuple[Any, str, str, list[str], list[str]]:
     template = await TemplateService(session).get(template_id)
+    _require_fillable(template)
     await _assert_fill_visible(session, data, visible_group_ids)
     rendered, unresolved, changed = await PlaceholderFiller(session).fill_template(
         template,
@@ -507,6 +531,18 @@ async def page_fill(
     from app.services.filled_templates import FilledTemplateService
 
     template = await TemplateService(session).get(template_id)
+    # Block the fill page for pending_review templates server-side — the UI
+    # disables the "Заполнить" link, but a direct URL / bookmark / assistant
+    # deep link must not bypass the confirmation gate. Redirect to the
+    # workspace panel, which shows the pending banner and the confirmation
+    # button.
+    try:
+        _require_fillable(template)
+    except ValidationFailed:
+        return RedirectResponse(
+            url=f"/templater/templates?template={template_id}",
+            status_code=307,
+        )
     clients = await ClientService(session).list_all(visible_group_ids=group_ids)
     # Existing folders of the «Заполненные шаблоны» tree feed the «Сохранить в
     # папку» selector: (JSON-encoded path, human-readable label) pairs.
@@ -654,7 +690,7 @@ async def htmx_process_llm(
         action=lambda svc, template, llm_svc: svc.analyze_and_persist(
             template, llm_service=llm_svc
         ),
-        toast="Шаблон обработан LLM",
+        toast="Шаблон обработан LLM — проверьте разметку и нажмите «Сохранить изменения»",
     )
 
 
@@ -675,7 +711,7 @@ async def htmx_regenerate_meta(
         action=lambda svc, template, llm_svc: svc.regenerate_meta_and_persist(
             template, llm_service=llm_svc
         ),
-        toast="Метаинформация обновлена",
+        toast="Метаинформация обновлена — проверьте и нажмите «Сохранить изменения»",
     )
 
 
@@ -696,7 +732,7 @@ async def htmx_regenerate_fields(
         action=lambda svc, template, llm_svc: svc.regenerate_fields_and_persist(
             template, llm_service=llm_svc
         ),
-        toast="Шаблон обработан заново",
+        toast="Шаблон обработан заново — проверьте разметку и нажмите «Сохранить изменения»",
     )
 
 
@@ -818,7 +854,24 @@ async def htmx_update(
         if llm_meta is not None and not isinstance(llm_meta, dict):
             raise ValidationFailed("Поле llm_meta должно быть JSON-объектом")
         svc = TemplateService(session)
+        # Read the server-authoritative state BEFORE any mutation — this drives
+        # both the confirmation-flip detection (was_pending) and the
+        # import_status re-injection below.
+        pre = await svc.get(template_id)
+        server_status = (pre.llm_meta or {}).get("import_status")
+        was_pending = server_status == "pending_review"
         if llm_meta is not None:
+            # `import_status` is a server-managed flag, never client input —
+            # strip any value the POST tried to smuggle in (mirrors htmx_create)
+            # so a crafted PUT can't forge "processed" (bypassing the fill guard)
+            # or "pending_review" (faking the confirmation flip). Then re-inject
+            # the server-authoritative value: svc.update below does a FULL llm_meta
+            # replacement (template.llm_meta = data.llm_meta), so without the
+            # re-inject the status would be erased and update_placeholders would
+            # read previous_status=None, never flipping pending_review→processed.
+            llm_meta = {k: v for k, v in llm_meta.items() if k != "import_status"}
+            if server_status is not None:
+                llm_meta["import_status"] = server_status
             await svc.update(template_id, TemplateUpdate(llm_meta=llm_meta))
         template = await svc.update_placeholders(template_id, placeholders)
         template = await commit_and_refresh(session, template)
@@ -827,6 +880,21 @@ async def htmx_update(
     except DomainError as exc:
         return form_errors_response(
             request, templates, exc.message, details=exc.details, status_code=exc.status_code
+        )
+    # On the confirmation flip, refresh the WHOLE panel (not just the code wrap)
+    # so the header updates: "Заполнить" becomes an active link and the single
+    # "Обработать LLM" button is replaced by the granular reprocess buttons. The
+    # form targets #template-code-wrap, so override with HX-Retarget/Reswap.
+    if was_pending:
+        return templates.TemplateResponse(
+            request,
+            "partials/template_panel.html",
+            await _template_panel_context(session, template, request),
+            headers={
+                "HX-Trigger": toast_header("Разметка подтверждена — шаблон готов к заполнению"),
+                "HX-Retarget": "#template-panel",
+                "HX-Reswap": "innerHTML",
+            },
         )
     return templates.TemplateResponse(
         request,
@@ -1107,13 +1175,23 @@ async def htmx_fill_render(
 async def htmx_fill_download(
     template_id: uuid.UUID,
     request: Request,
+    templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
     group_ids: set[uuid.UUID] = UnlockedGroupsDep,
-) -> StreamingResponse:
-    data, _ = await _fill_request_from_form(request)
-    template, rendered, _, _, _ = await _render_fill(
-        session, template_id, data, visible_group_ids=group_ids
-    )
+) -> Response:
+    try:
+        data, _ = await _fill_request_from_form(request)
+        template, rendered, _, _, _ = await _render_fill(
+            session, template_id, data, visible_group_ids=group_ids
+        )
+    except ValueError:
+        return form_errors_response(request, templates, "Проверьте выбранные записи")
+    except DomainError as exc:
+        # pending_review guard or body-parse failure — surface a readable error
+        # instead of the global JSON error response.
+        return form_errors_response(
+            request, templates, exc.message, details=exc.details, status_code=200
+        )
     payload = rendered.encode("utf-8")
     ext = "xml" if template.format == "xml" else "json"
 
@@ -1202,6 +1280,20 @@ async def htmx_fill_save(
         )
 
     template = await TemplateService(session).get(template_id)
+    # Block saving a fill snapshot of a pending_review template — the render
+    # path (_render_fill) already refuses, but htmx_fill_save trusts the form
+    # snapshot and doesn't re-render, so guard here too.
+    try:
+        _require_fillable(template)
+    except DomainError as exc:
+        return form_errors_response(
+            request,
+            templates,
+            exc.message,
+            details=exc.details,
+            status_code=200,
+            headers=FILL_SAVE_ERROR_HEADERS,
+        )
     try:
         saved = await FilledTemplateService(session).save_from_fill(
             template=template,

@@ -403,7 +403,12 @@ class TemplateService:
         self._require_parsable(template.format, source)
         await self.analyze(template, llm_service=llm_service)
         template.headers = apply_dynamic_headers(template.headers or [])
-        template.llm_meta = {**(template.llm_meta or {}), "import_status": "processed"}
+        # The LLM result is persisted but NOT promoted to "processed" here — the
+        # user must review the field mapping in the inline editor and click
+        # "Сохранить изменения" (which routes through ``update_placeholders``)
+        # to flip the status to "processed" and unlock fill. See
+        # :meth:`update_placeholders` for the confirmation step.
+        template.llm_meta = {**(template.llm_meta or {}), "import_status": "pending_review"}
         await self.session.flush()
         return template
 
@@ -430,12 +435,16 @@ class TemplateService:
         until a template is processed, but a direct or stale POST must not be
         able to flip an un-analysed template to ``import_status="processed"``
         with partial data — refuse it and point the user at the full process.
+
+        A template in the ``pending_review`` state (LLM ran but the user hasn't
+        confirmed the mapping yet) is also refused here: the granular buttons
+        are only meaningful once the previous result has been saved/confirmed.
         """
 
         if (template.llm_meta or {}).get("import_status") != "processed":
             raise ValidationFailed(
                 "Шаблон ещё не обработан LLM — сначала выполните полную обработку "
-                "(«Обработать LLM»)."
+                "(«Обработать LLM»), проверьте разметку и нажмите «Сохранить изменения»."
             )
 
     async def regenerate_meta_and_persist(
@@ -456,10 +465,13 @@ class TemplateService:
         self._require_parsable(template.format, source)
         result = await llm_service.regenerate_meta(content=source, fmt=template.format)
         meta = result.get("meta") or {}
+        # Like ``analyze_and_persist``, a meta re-run produces a fresh LLM output
+        # that the user should review before fill is unlocked — demote to
+        # ``pending_review`` until ``update_placeholders`` confirms it.
         template.llm_meta = {
             **meta,
             "has_account_owner": placeholders_have_account_owner(template.placeholders or []),
-            "import_status": "processed",
+            "import_status": "pending_review",
         }
         template.llm_debug = result.get("debug")
         await self.session.flush()
@@ -502,10 +514,13 @@ class TemplateService:
         template.content = new_content
         template.placeholders = placeholders
         template.headers = apply_dynamic_headers(template.headers or [])
+        # Fresh field mapping from the LLM — demote to ``pending_review`` so the
+        # user reviews/edits the new mapping in the inline editor and confirms
+        # via "Сохранить изменения" before fill is unlocked again.
         template.llm_meta = {
             **(template.llm_meta or {}),
             "has_account_owner": placeholders_have_account_owner(placeholders),
-            "import_status": "processed",
+            "import_status": "pending_review",
         }
         template.llm_debug = mapping.get("debug")
         await self.session.flush()
@@ -863,11 +878,23 @@ class TemplateService:
         self, template_id: uuid.UUID, placeholders: list[dict[str, Any]]
     ) -> MessageTemplate:
         template = await self.get(template_id)
+        previous_status = (template.llm_meta or {}).get("import_status")
         template.placeholders = normalize_placeholders(placeholders)
-        template.llm_meta = {
+        new_meta: dict[str, Any] = {
             **(template.llm_meta or {}),
             "has_account_owner": placeholders_have_account_owner(template.placeholders),
         }
+        # Saving the placeholder mapping is the user's confirmation step: after an
+        # LLM run the template sits in ``pending_review`` until the user reviews
+        # the field mapping in the inline editor and clicks "Сохранить изменения"
+        # — this call. That flip promotes it to ``processed`` and unlocks fill.
+        # Other statuses are left untouched (spread above): an already-``processed``
+        # template stays processed, ``unparsed``/``imported`` stay as-is, and a
+        # template with no ``import_status`` key stays without one — so the
+        # pre-existing behaviour for non-LLM-edited templates is preserved.
+        if previous_status == "pending_review":
+            new_meta["import_status"] = "processed"
+        template.llm_meta = new_meta
         # Manual, non-LLM save: the previously captured prompts/response no longer
         # correspond to the saved placeholders, so drop the now-stale debug rather
         # than leave a misleading record (re-run "Обработать LLM" to refresh it).
