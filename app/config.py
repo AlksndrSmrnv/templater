@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     # Max LLM calls for one field-mapping run: first call + retries for leaves a
     # weak model failed to map (truncated answer, empty field, confused id/path).
     llm_field_mapping_max_attempts: int = 2
+    # Parallelism *within* a background collection job: how many templates are
+    # analysed concurrently. Capped separately from ``llm_concurrency`` (the
+    # global GigaChat request semafor) so a single collection can queue many
+    # templates without starving other features — the LLM coordinator still
+    # gates the actual HTTP calls.
+    llm_batch_concurrency: int = 3
 
     base_dir: Path = Field(default_factory=lambda: Path(__file__).resolve().parent)
 

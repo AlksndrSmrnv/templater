@@ -266,6 +266,50 @@ class Collection(Base):
     updated_at: Mapped[datetime] = _updated_at()
 
 
+class CollectionJob(Base):
+    """Background LLM-processing job for a :class:`Collection`.
+
+    One collection has at most one *active* job (``status`` in
+    ``pending|running``) at a time — :meth:`CollectionJobService.start`
+    enforces this by checking ``find_active`` before creating a new row. A
+    job is created ``pending`` with ``total=0`` and flipped to ``running``
+    once the background coroutine starts; counts (``processed``/``skipped``/
+    ``failed``) are incremented atomically as each template resolves, so the
+    polling endpoint never observes torn state. ``done`` (all good or per-
+    template failures absorbed) and ``failed`` (the orchestrator itself
+    blew up) are terminal. On server restart ``reconcile`` rewrites any
+    still-pending/running rows to ``failed`` — the in-process task is gone.
+    """
+
+    __tablename__ = "collection_jobs"
+    __table_args__ = (
+        Index("ix_collection_jobs_collection_status", "collection_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("collections.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Job-level failure text (set only when the orchestrator itself blows up,
+    # not for per-template LLM failures — those bump ``failed``).
+    error: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
 class MessageTemplate(Base):
     __tablename__ = "message_templates"
     __table_args__ = (

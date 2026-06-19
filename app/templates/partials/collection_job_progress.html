@@ -1,0 +1,48 @@
+{# Progress partial for a background collection LLM job.
+
+   Rendered by POST /collections/{id}/process-llm (initial) and polled by
+   GET /collections/{id}/jobs/{job_id}. The root element carries the polling
+   attributes while the job is still active (pending/running); htmx swaps the
+   whole element on each poll, so the bar and counts update in place. On a
+   terminal state (done/failed) the polling attributes are gone and the route
+   fires ``refresh-tree`` so the ``pending_review`` flags show up in the tree. #}
+{% set completed = job.processed + job.skipped + job.failed %}
+{% set terminal = job.status in ['done', 'failed'] %}
+{% set pct = (job.total * completed / 100) | int if job.total else 0 %}
+<div id="collection-job-{{ collection_id }}"
+     class="job-progress{% if job.status == 'done' %} done{% elif job.status == 'failed' %} failed{% endif %}"
+     {% if not terminal %}
+     hx-get="/templater/collections/{{ collection_id }}/jobs/{{ job.id }}"
+     hx-trigger="every 1s"
+     hx-swap="outerHTML"
+     hx-target="this"
+     {% endif %}>
+    <div class="job-progress-head">
+        {% if job.status == 'pending' or job.status == 'running' %}
+        <span class="spinner"></span>
+        <span class="job-progress-title">Обработка коллекции LLM…</span>
+        {% elif job.status == 'done' %}
+        <iconify-icon icon="lucide:circle-check-big"></iconify-icon>
+        <span class="job-progress-title">Обработка завершена</span>
+        {% elif job.status == 'failed' %}
+        <iconify-icon icon="lucide:circle-x"></iconify-icon>
+        <span class="job-progress-title">Обработка прервана</span>
+        {% endif %}
+    </div>
+    {% if job.status == 'running' or job.status == 'done' %}
+    <div class="job-progress-bar" title="{{ completed }} / {{ job.total }}">
+        <div class="job-progress-fill" style="width: {{ pct }}%"></div>
+    </div>
+    {% endif %}
+    <div class="job-progress-counts">
+        <span class="job-count job-count-processed">Обработано: {{ job.processed }}{% if job.total %}/{{ job.total }}{% endif %}</span>
+        <span class="job-count job-count-skipped">Пропущено: {{ job.skipped }}</span>
+        <span class="job-count job-count-failed">Ошибок: {{ job.failed }}</span>
+    </div>
+    {% if job.status == 'failed' and job.error %}
+    <div class="job-progress-error">{{ job.error }}</div>
+    {% endif %}
+    {% if job.status == 'done' %}
+    <div class="job-progress-hint muted">Проверьте разметку и сохраните каждый шаблон.</div>
+    {% endif %}
+</div>

@@ -26,6 +26,7 @@ from app.routes import (
     settings as settings_routes,
 )
 from app.routes.entity_pages import build_entity_pages_router
+from app.services.collection_jobs import CollectionJobService, JobRegistry
 from app.utils.errors import DomainError
 from app.utils.logging import configure_logging
 
@@ -35,8 +36,21 @@ log = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
+        # Any jobs left pending/running by a previous process died with it —
+        # their in-process task is gone, so flip the rows to ``failed`` before
+        # serving the first request (otherwise the UI would poll a "running"
+        # job that never progresses). Wrapped defensively so a transient DB
+        # outage at startup doesn't keep the app from booting — the jobs just
+        # stay stale until the next successful restart.
+        try:
+            await CollectionJobService.reconcile()
+        except Exception:
+            log.warning("Collection job reconcile failed at startup", exc_info=True)
         yield
     finally:
+        # Cancel live jobs before disposing the engine so their ``finally``
+        # blocks (LLM context close, cert temp-file cleanup) can still run.
+        await JobRegistry.cancel_all()
         await shutdown_engine()
 
 

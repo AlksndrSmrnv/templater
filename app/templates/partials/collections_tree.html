@@ -111,8 +111,8 @@
             <button class="btn small"
                     title="Обработать всю коллекцию LLM"
                     hx-post="/templater/collections/{{ cn.collection.id }}/process-llm"
-                    hx-target="#collections-tree"
-                    hx-swap="innerHTML"
+                    hx-target="#collection-job-{{ cn.collection.id }}"
+                    hx-swap="outerHTML"
                     hx-indicator="#tree-indicator"
                     hx-disabled-elt="this"><iconify-icon icon="lucide:sparkles"></iconify-icon></button>
             <button class="btn small danger"
@@ -123,6 +123,7 @@
                     hx-swap="innerHTML"><iconify-icon icon="lucide:trash-2"></iconify-icon></button>
         </div>
     </div>
+    <div id="collection-job-{{ cn.collection.id }}" class="job-progress-slot"></div>
     <form class="tree-inline-form" x-show="creating" x-cloak
           hx-post="/templater/collections/{{ cn.collection.id }}/folders"
           hx-target="#collections-tree" hx-swap="innerHTML">

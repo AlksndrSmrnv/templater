@@ -9,23 +9,19 @@ with non-parsable bodies (GET, urlencoded, …) are still imported.
 
 from __future__ import annotations
 
-import logging
 import uuid
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Collection, MessageTemplate
-from app.llm.runner import llm_service
 from app.repositories.collection import CollectionRepository
 from app.repositories.settings import SettingsRepository
 from app.repositories.template import TemplateRepository
-from app.schemas.collection import ImportCollectionSummary, ProcessCollectionSummary
+from app.schemas.collection import ImportCollectionSummary
 from app.services.importers import detect_and_parse
-from app.services.templates import TemplateService, apply_dynamic_headers
+from app.services.templates import apply_dynamic_headers
 from app.utils.errors import NotFoundError, ValidationFailed
-
-log = logging.getLogger(__name__)
 
 # ``AppSetting`` key holding the root-level folder list (folders for templates
 # that belong to no collection). Mirrors ``Collection.folders`` in shape:
@@ -420,35 +416,3 @@ class CollectionService:
             t.display_order = position
         await self.session.flush()
 
-    async def process_collection_llm(self, collection_id: uuid.UUID) -> ProcessCollectionSummary:
-        """Run LLM analysis across every parsable template of a collection.
-
-        Requires a working LLM: opening :func:`llm_service` raises
-        :class:`LLMUnavailable` when it is not configured, which the route turns
-        into a user-facing error. Per-template outcomes are counted —
-        unparsable bodies are skipped, other failures are recorded.
-
-        Each successfully analysed template lands in ``import_status="pending_review"``:
-        the LLM result (content, placeholders, meta, headers) is persisted, but the
-        template is NOT fillable until the user opens it, reviews the field mapping
-        in the inline editor and clicks "Сохранить изменения" — that confirmation
-        (via :meth:`TemplateService.update_placeholders`) flips the status to
-        ``processed`` and unlocks fill. The collection tree surfaces a flag on
-        templates still awaiting confirmation so the user can find them.
-        """
-
-        await self.get(collection_id)  # 404 if missing
-        templates = await self.templates.list_by_collection(collection_id)
-        svc = TemplateService(self.session)
-        summary = ProcessCollectionSummary()
-        async with llm_service(session=self.session) as llm_svc:
-            for template in templates:
-                try:
-                    await svc.analyze_and_persist(template, llm_service=llm_svc)
-                    summary.processed += 1
-                except ValidationFailed:
-                    summary.skipped += 1
-                except Exception:
-                    log.warning("LLM analysis failed for template %s", template.id, exc_info=True)
-                    summary.failed += 1
-        return summary
