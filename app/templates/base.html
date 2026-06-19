@@ -36,6 +36,7 @@
         this.toastTimer = setTimeout(() => { this.toastOpen = false; }, 4200);
     }
 }" @show-toast.window="showToast($event)" @showToast.window="showToast($event)">
+<div class="ambient" aria-hidden="true"></div>
 <header class="topbar">
     <div class="brand"><a href="/templater/"><iconify-icon icon="lucide:notebook-pen"></iconify-icon> Template Maker</a></div>
     <nav class="topnav">
