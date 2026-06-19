@@ -248,6 +248,15 @@ class _FakeSettingsRepo:
         self.values[key] = value
 
 
+class _NoopJobRepo:
+    """Stand-in for ``CollectionJobRepository`` — ``build_workspace_tree`` calls
+    ``list_all_active``; the folder/tree tests don't exercise jobs, so it
+    returns an empty list."""
+
+    async def list_all_active(self) -> list[object]:
+        return []
+
+
 def _service(
     collections: list[SimpleNamespace],
     templates: list[SimpleNamespace],
@@ -261,6 +270,7 @@ def _service(
     svc.repo = _FakeCollectionRepo(collections)  # type: ignore[assignment]
     svc.templates = template_repo  # type: ignore[assignment]
     svc.settings = settings or _FakeSettingsRepo()  # type: ignore[assignment]
+    svc.jobs = _NoopJobRepo()  # type: ignore[assignment]
     return svc
 
 

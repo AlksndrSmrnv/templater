@@ -949,6 +949,79 @@ def test_collections_tree_flags_pending_review_templates() -> None:
     assert "lucide:circle-dot" in html
 
 
+def _job_template(
+    *, status: str = "running", total: int = 0, processed: int = 0,
+    skipped: int = 0, failed: int = 0, error: str | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(), status=status, total=total, processed=processed,
+        skipped=skipped, failed=failed, error=error,
+    )
+
+
+def test_collection_job_progress_bar_uses_completed_over_total() -> None:
+    # 2 of 3 templates resolved → ~66%, NOT the inverted ``total*completed/100``
+    # (which would yield 0.06 → 0% for a 3-item collection).
+    job = _job_template(status="running", total=3, processed=2)
+    html = render_template(
+        "partials/collection_job_progress.html",
+        {"job": job, "collection_id": uuid.uuid4()},
+    )
+    assert "width: 66%" in html
+    # A full bar at completion.
+    done = _job_template(status="done", total=3, processed=3)
+    html_done = render_template(
+        "partials/collection_job_progress.html",
+        {"job": done, "collection_id": uuid.uuid4()},
+    )
+    assert "width: 100%" in html_done
+    # Terminal state carries no self-polling attributes.
+    assert "hx-trigger" not in html_done
+
+
+def test_collections_tree_embeds_active_job_progress_without_duplicate_id() -> None:
+    # A collection with a running job renders the progress partial in its slot
+    # (so a tree refresh from another job's completion re-arms polling), and the
+    # slot id appears exactly once (the partial owns it; no empty-slot twin).
+    collection_id = uuid.uuid4()
+    tree: dict[str, object] = {"folders": {}, "templates": []}
+    active_job = _job_template(status="running", total=5, processed=2)
+    context = {
+        "collection_nodes": [
+            {"collection": SimpleNamespace(id=collection_id, name="Demo Bank"), "count": 0, "tree": tree}
+        ],
+        "ungrouped_tree": {"folders": {}, "templates": []},
+        "ungrouped_count": 0,
+        "search": "",
+        "active_jobs": {collection_id: active_job},
+    }
+    html = render_template("partials/collections_tree.html", context)
+    # The progress partial is embedded with its polling attrs and bar.
+    assert "Обработка коллекции LLM" in html
+    assert "hx-trigger=\"every 1s\"" in html
+    assert "width: 40%" in html  # 2/5
+    # Exactly one element with the slot id (no empty-slot duplicate alongside).
+    assert html.count(f'id="collection-job-{collection_id}"') == 1
+
+
+def test_collections_tree_empty_slot_when_no_active_job() -> None:
+    # Without an active job the slot is an empty id'd div (the hx-target for a
+    # future «Обработать» click), and no progress partial is rendered.
+    collection_id = uuid.uuid4()
+    tree: dict[str, object] = {"folders": {}, "templates": []}
+    context = {
+        "collection_nodes": [
+            {"collection": SimpleNamespace(id=collection_id, name="Demo Bank"), "count": 0, "tree": tree}
+        ],
+        "ungrouped_tree": {"folders": {}, "templates": []},
+        "ungrouped_count": 0,
+        "search": "",
+    }
+    html = render_template("partials/collections_tree.html", context)
+    assert html.count(f'id="collection-job-{collection_id}"') == 1
+    assert "Обработка коллекции LLM" not in html
+
+
 def _panel_template(**overrides: Any) -> SimpleNamespace:
     base = dict(
         id=uuid.uuid4(),

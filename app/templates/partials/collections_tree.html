@@ -1,3 +1,4 @@
+{% from "partials/collection_job_progress.html" import job_progress %}
 {% macro render_node(node, collection_id, folder_ns, path, editable) %}
     {% for folder_name, child in node.folders.items() %}
     {% set fpath = path + [folder_name] %}
@@ -111,8 +112,8 @@
             <button class="btn small"
                     title="Обработать всю коллекцию LLM"
                     hx-post="/templater/collections/{{ cn.collection.id }}/process-llm"
-                    hx-target="#collections-tree"
-                    hx-swap="innerHTML"
+                    hx-target="#collection-job-{{ cn.collection.id }}"
+                    hx-swap="outerHTML"
                     hx-indicator="#tree-indicator"
                     hx-disabled-elt="this"><iconify-icon icon="lucide:sparkles"></iconify-icon></button>
             <button class="btn small danger"
@@ -123,6 +124,16 @@
                     hx-swap="innerHTML"><iconify-icon icon="lucide:trash-2"></iconify-icon></button>
         </div>
     </div>
+    {# Per-collection job slot. Empty (id'd, ready as an hx-target) when no job
+       is active; replaced by the progress partial (which carries the same id
+       and its own polling attrs) when a job is running. Rendering the active
+       job here means a tree refresh fired by *another* job's completion
+       re-arms this one's polling instead of wiping the progress bar. #}
+    {% if active_jobs is defined and active_jobs and active_jobs.get(cn.collection.id) %}
+        {{ job_progress(active_jobs.get(cn.collection.id), cn.collection.id) }}
+    {% else %}
+    <div id="collection-job-{{ cn.collection.id }}" class="job-progress-slot"></div>
+    {% endif %}
     <form class="tree-inline-form" x-show="creating" x-cloak
           hx-post="/templater/collections/{{ cn.collection.id }}/folders"
           hx-target="#collections-tree" hx-swap="innerHTML">

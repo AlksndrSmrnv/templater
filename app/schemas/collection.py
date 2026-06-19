@@ -13,10 +13,3 @@ class ImportCollectionSummary(BaseModel):
     templates_created: int
     unparsable: int = 0
 
-
-class ProcessCollectionSummary(BaseModel):
-    """Outcome of running LLM analysis across a collection's templates."""
-
-    processed: int = 0
-    skipped: int = 0
-    failed: int = 0

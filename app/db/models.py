@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -262,6 +263,65 @@ class Collection(Base):
     # tree rebuild. So created/renamed folders are persisted here, giving folder
     # rename/delete a home and letting the workspace tree show empty folders.
     folders: Mapped[list[list[str]]] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
+class CollectionJob(Base):
+    """Background LLM-processing job for a :class:`Collection`.
+
+    One collection has at most one *active* job (``status`` in
+    ``pending|running``) at a time. This is enforced two ways:
+    :meth:`CollectionJobService.start` checks ``find_active`` as a fast path
+    (clean error without a constraint violation in the common case), and the
+    partial unique index ``uq_collection_jobs_one_active`` is the race-condition
+    backstop — two strictly concurrent POSTs that both pass the check can't both
+    insert; the loser gets an ``IntegrityError`` that ``start`` turns into the
+    same user-facing error. A job is created ``pending`` with ``total=0`` and
+    flipped to ``running`` once the background coroutine starts; counts
+    (``processed``/``skipped``/``failed``) are incremented atomically as each
+    template resolves, so the polling endpoint never observes torn state.
+    ``done`` (all good or per-template failures absorbed) and ``failed`` (the
+    orchestrator itself blew up) are terminal. On server restart ``reconcile``
+    rewrites any still-pending/running rows to ``failed`` — the in-process task
+    is gone.
+    """
+
+    __tablename__ = "collection_jobs"
+    __table_args__ = (
+        Index("ix_collection_jobs_collection_status", "collection_id", "status"),
+        # At most one pending/running job per collection — the DB-level backstop
+        # for the "one active job" rule. Mirrors the partial unique index created
+        # in migration 0014 so ``alembic revision --autogenerate`` doesn't emit a
+        # spurious DROP for it.
+        Index(
+            "uq_collection_jobs_one_active",
+            "collection_id",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'running')"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("collections.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Job-level failure text (set only when the orchestrator itself blows up,
+    # not for per-template LLM failures — those bump ``failed``).
+    error: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 

@@ -11,9 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.routes.deps import SessionDep, TemplatesDep
 from app.routes.htmx_utils import form_str, parse_json_path, parse_uuid_list, toast_header
 from app.routes.uow import commit_or_409
+from app.services.collection_jobs import CollectionJobService
 from app.services.collections import CollectionService
 from app.services.projects import ProjectService
-from app.utils.errors import DomainError
+from app.utils.errors import DomainError, NotFoundError
 
 router = APIRouter()
 
@@ -102,9 +103,13 @@ async def htmx_process_collection(
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
 ) -> Response:
+    """Kick off a background LLM batch for the collection and return the
+    initial progress partial. The partial self-polls ``GET .../jobs/{job_id}``
+    every second until the job reaches a terminal state, then refreshes the
+    tree so the ``pending_review`` flags appear next to the templates."""
+
     try:
-        summary = await CollectionService(session).process_collection_llm(collection_id)
-        await commit_or_409(session)
+        job = await CollectionJobService(session).start(collection_id)
     except DomainError as exc:
         await session.rollback()
         return await _tree_response(
@@ -113,17 +118,55 @@ async def htmx_process_collection(
             session,
             headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
         )
-    message = (
-        f"Обработано: {summary.processed}"
-        f" · пропущено: {summary.skipped}"
-        f" · ошибок: {summary.failed}"
-        ". Проверьте разметку и сохраните каждый шаблон."
-    )
-    return await _tree_response(
+    return templates.TemplateResponse(
         request,
-        templates,
-        session,
-        headers={"HX-Trigger": toast_header(message)},
+        "partials/collection_job_progress.html",
+        {"job": job, "collection_id": collection_id},
+        headers={"HX-Trigger": toast_header("Запущена фоновая обработка коллекции")},
+    )
+
+
+@router.get("/collections/{collection_id}/jobs/{job_id}")
+async def htmx_collection_job_poll(
+    collection_id: uuid.UUID,
+    job_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+) -> Response:
+    """Polling endpoint for a running collection job. Returns the progress
+    partial; while the job is still ``pending``/``running`` the partial carries
+    ``hx-trigger="every 1s"`` so htmx re-polls. On a terminal state the
+    ``refresh-tree`` event reloads the collections tree (so the
+    ``pending_review`` flags show up) alongside a summary toast."""
+
+    job = await CollectionJobService(session).get(job_id)
+    if job is None or job.collection_id != collection_id:
+        raise NotFoundError("Задача не найдена")
+    headers: dict[str, str] = {}
+    if job.status in ("done", "failed"):
+        if job.status == "failed":
+            message = f"Обработка завершилась с ошибкой: {job.error or 'неизвестная ошибка'}"
+            toast_type = "error"
+        else:
+            message = (
+                f"Готово: обработано {job.processed}"
+                f" · пропущено {job.skipped}"
+                f" · ошибок {job.failed}"
+                ". Проверьте разметку и сохраните каждый шаблон."
+            )
+            toast_type = "success"
+        # ``refresh-tree`` is listened for by ``#collections-tree``
+        # (workspace.html) — reloading it surfaces the ``pending_review`` flags
+        # on the freshly analysed templates without a manual page refresh.
+        headers["HX-Trigger"] = toast_header(
+            message, toast_type=toast_type, refresh_tree="{}"
+        )
+    return templates.TemplateResponse(
+        request,
+        "partials/collection_job_progress.html",
+        {"job": job, "collection_id": collection_id},
+        headers=headers or None,
     )
 
 
