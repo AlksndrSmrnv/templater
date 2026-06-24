@@ -118,6 +118,39 @@ def _entity_order_by(
     return col.desc() if direction == "desc" else col.asc()
 
 
+async def _entity_position(
+    session: AsyncSession,
+    model: Any,
+    target_id: uuid.UUID,
+    *,
+    visible_group_ids: set[uuid.UUID] | None,
+) -> int | None:
+    """0-based index of ``target_id`` under the list's default order
+    (``created_at DESC, id ASC``), restricted to rows the caller may see.
+
+    Used by the ``?open=<id>`` deep link to compute which page to show so the
+    target row is always rendered (and highlighted) regardless of pagination.
+    Returns ``None`` when the target is missing or outside the visible groups —
+    callers fall back to the first page instead of erroring.
+    """
+
+    cond = group_visibility_condition(model, visible_group_ids)
+    target_stmt = select(model).where(model.id == target_id)
+    if cond is not None:
+        target_stmt = target_stmt.where(cond)
+    target = (await session.execute(target_stmt)).scalar_one_or_none()
+    if target is None:
+        return None
+    before = or_(
+        model.created_at > target.created_at,
+        (model.created_at == target.created_at) & (model.id < target.id),
+    )
+    count_stmt = select(func.count()).select_from(model).where(before)
+    if cond is not None:
+        count_stmt = count_stmt.where(cond)
+    return int((await session.execute(count_stmt)).scalar_one())
+
+
 async def _query_entity_page(
     session: AsyncSession,
     model: Any,
@@ -212,6 +245,13 @@ class ClientRepository:
         stmt = select(func.count(Account.id)).where(Account.client_id == client_id)
         return int((await self.session.execute(stmt)).scalar_one())
 
+    async def position_of(
+        self, client_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> int | None:
+        return await _entity_position(
+            self.session, Client, client_id, visible_group_ids=visible_group_ids
+        )
+
     async def add(self, client: Client) -> Client:
         self.session.add(client)
         await self.session.flush()
@@ -292,6 +332,13 @@ class AccountRepository:
     async def count_cards(self, account_id: uuid.UUID) -> int:
         stmt = select(func.count(Card.id)).where(Card.account_id == account_id)
         return int((await self.session.execute(stmt)).scalar_one())
+
+    async def position_of(
+        self, account_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> int | None:
+        return await _entity_position(
+            self.session, Account, account_id, visible_group_ids=visible_group_ids
+        )
 
     async def add(self, account: Account) -> Account:
         self.session.add(account)
@@ -383,6 +430,13 @@ class CardRepository:
             .order_by(Card.created_at.desc())
         )
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def position_of(
+        self, card_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> int | None:
+        return await _entity_position(
+            self.session, Card, card_id, visible_group_ids=visible_group_ids
+        )
 
     async def add(self, card: Card) -> Card:
         self.session.add(card)

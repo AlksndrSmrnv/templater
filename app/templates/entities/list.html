@@ -10,6 +10,7 @@
     drawerHasContent: false,
     drawerLoading: false,
     detailId: null,
+    openId: {{ (open_id | default(none)) | tojson | forceescape }},
     dispatchFilters() { this.page = 1; this.$nextTick(() => htmx.trigger(this.$refs.controls, 'refresh')); },
     dispatchPage() { this.$nextTick(() => htmx.trigger(this.$refs.controls, 'refresh')); },
     openDrawer(id) {
@@ -17,6 +18,10 @@
         this.drawerHasContent = true;
         this.drawerLoading = true;
         this.detailId = id;
+        this.$nextTick(() => {
+            const row = this.$root.querySelector('tr[data-id=\"' + id + '\"]');
+            if (row) row.scrollIntoView({ block: 'center' });
+        });
     },
     closeDrawer(clear = false) {
         this.drawerOpen = false;
@@ -58,7 +63,15 @@
             this.selected = this.selected.filter((id) => !ids.includes(id));
         }
     }
-}" @refresh-entities.window="dispatchFilters()" @close-drawer.window="closeDrawer(true)">
+}" @refresh-entities.window="dispatchFilters()" @close-drawer.window="closeDrawer(true)"{% if open_id %}
+     x-init="if (openId) {
+         openDrawer(openId);
+         const u = new URL(window.location.href);
+         if (u.searchParams.has('open')) {
+             u.searchParams.delete('open');
+             history.replaceState(null, '', u.pathname + (u.search ? u.search : ''));
+         }
+     }"{% endif %}>
     <div class="page-header">
         <h1><iconify-icon icon="{{ icon | default('') }}"></iconify-icon> {{ title }}</h1>
         <div class="actions">
