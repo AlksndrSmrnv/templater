@@ -487,10 +487,14 @@ def test_entity_list_with_open_id_seeds_alpine_open_id_and_autoruns_drawer() -> 
     assert f"openId: &#34;{target_id}&#34;" in html
     assert "x-init=" in html
     assert "if (openId) {" in html
-    assert "openDrawer(openId)" in html
+    # Deep-link path scrolls the row into view AND fetches the drawer content
+    # (openDrawer only toggles Alpine state; the row's hx-get fires on click,
+    # which a deep link doesn't have, so it must fetch explicitly).
+    assert "openDrawer(openId, true)" in html
+    assert "htmx.ajax('GET'" in html
+    assert "/templater/entities-htmx/account/' + openId + '/detail" in html
     assert "searchParams.has('open')" in html
     assert "history.replaceState" in html
-    # Scrolling the highlighted row into view on open works for any entity type.
     assert "scrollIntoView" in html
 
 

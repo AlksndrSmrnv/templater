@@ -135,10 +135,10 @@ async def _entity_position(
     """
 
     cond = group_visibility_condition(model, visible_group_ids)
-    target_stmt = select(model).where(model.id == target_id)
+    target_stmt = select(model.created_at, model.id).where(model.id == target_id)
     if cond is not None:
         target_stmt = target_stmt.where(cond)
-    target = (await session.execute(target_stmt)).scalar_one_or_none()
+    target = (await session.execute(target_stmt)).one_or_none()
     if target is None:
         return None
     before = or_(

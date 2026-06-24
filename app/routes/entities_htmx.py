@@ -209,7 +209,7 @@ async def build_entity_list_context(
             open_id, visible_group_ids=visible_group_ids
         )
         if position is not None:
-            page = max(1, position // PAGE_SIZE + 1)
+            page = position // PAGE_SIZE + 1
             sort = "created_at"
             direction = "desc"
             search = ""
