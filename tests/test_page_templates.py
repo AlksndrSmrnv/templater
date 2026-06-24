@@ -437,6 +437,86 @@ def test_entity_list_has_table_meta_and_detail_drawer() -> None:
     assert '<script src="/templater/static/js/entity-list.js">' not in html
 
 
+def test_entity_list_without_open_id_emits_null_open_id_and_no_autorun() -> None:
+    # Without a deep-link target the page seeds openId=null and must not wire an
+    # x-init autorun (so the drawer never pops open on a plain listing visit).
+    html = render_template(
+        "entities/list.html",
+        {
+            "active": "data",
+            "entity_type": "client",
+            "title": "Клиенты",
+            "schema": [],
+            "items": [],
+            "items_total": 0,
+            "accounts_by_client": {},
+            "cards_by_client": {},
+            "cards_by_account": {},
+            "accounts_by_id": {},
+            "labels": {"client": {}, "account": {}, "card": {}},
+        },
+    )
+
+    assert "openId: null" in html
+    assert "if (openId)" not in html
+
+
+def test_entity_list_with_open_id_seeds_alpine_open_id_and_autoruns_drawer() -> None:
+    # A deep link (?open=<uuid>) seeds openId as a JSON string literal so the
+    # drawer auto-opens on load, scrolls the row into view and clears ?open
+    # from the URL (so a refresh/pagination doesn't reopen the drawer).
+    target_id = "3db678b1-1111-2222-3333-444444444444"
+    html = render_template(
+        "entities/list.html",
+        {
+            "active": "data",
+            "entity_type": "account",
+            "title": "Счета",
+            "schema": [],
+            "items": [],
+            "items_total": 0,
+            "open_id": target_id,
+            "accounts_by_client": {},
+            "cards_by_client": {},
+            "cards_by_account": {},
+            "accounts_by_id": {},
+            "labels": {"client": {}, "account": {}, "card": {}},
+        },
+    )
+
+    assert f"openId: &#34;{target_id}&#34;" in html
+    assert "x-init=" in html
+    assert "if (openId) {" in html
+    # Deep-link path scrolls the row into view AND fetches the drawer content
+    # (openDrawer only toggles Alpine state; the row's hx-get fires on click,
+    # which a deep link doesn't have, so it must fetch explicitly).
+    assert "openDrawer(openId, true)" in html
+    assert "htmx.ajax('GET'" in html
+    assert "/templater/entities-htmx/account/' + openId + '/detail" in html
+    assert "searchParams.has('open')" in html
+    assert "history.replaceState" in html
+    assert "scrollIntoView" in html
+
+
+def test_parse_open_id_reads_uuid_from_query_string() -> None:
+    from app.routes.entity_pages import _parse_open_id
+
+    target = uuid.uuid4()
+    request = SimpleNamespace(query_params={"open": str(target)})
+
+    assert _parse_open_id(cast(Any, request)) == target
+
+
+def test_parse_open_id_none_when_missing_or_malformed() -> None:
+    from app.routes.entity_pages import _parse_open_id
+
+    # Missing param → None (render the plain first page).
+    assert _parse_open_id(cast(Any, SimpleNamespace(query_params={}))) is None
+    # Malformed value → None instead of a 400 (a bad cross-link must never 500
+    # the list page).
+    assert _parse_open_id(cast(Any, SimpleNamespace(query_params={"open": "not-a-uuid"}))) is None
+
+
 def test_entity_detail_preserves_whitespace_only_for_text_values() -> None:
     html = render_template(
         "partials/entity_detail.html",

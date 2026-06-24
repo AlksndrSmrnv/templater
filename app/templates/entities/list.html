@@ -10,13 +10,20 @@
     drawerHasContent: false,
     drawerLoading: false,
     detailId: null,
+    openId: {{ (open_id | default(none)) | tojson | forceescape }},
     dispatchFilters() { this.page = 1; this.$nextTick(() => htmx.trigger(this.$refs.controls, 'refresh')); },
     dispatchPage() { this.$nextTick(() => htmx.trigger(this.$refs.controls, 'refresh')); },
-    openDrawer(id) {
+    openDrawer(id, scroll = false) {
         this.drawerOpen = true;
         this.drawerHasContent = true;
         this.drawerLoading = true;
         this.detailId = id;
+        if (scroll) {
+            this.$nextTick(() => {
+                const row = this.$root.querySelector('tr[data-id=\"' + id + '\"]');
+                if (row) row.scrollIntoView({ block: 'center' });
+            });
+        }
     },
     closeDrawer(clear = false) {
         this.drawerOpen = false;
@@ -58,7 +65,16 @@
             this.selected = this.selected.filter((id) => !ids.includes(id));
         }
     }
-}" @refresh-entities.window="dispatchFilters()" @close-drawer.window="closeDrawer(true)">
+}" @refresh-entities.window="dispatchFilters()" @close-drawer.window="closeDrawer(true)"{% if open_id %}
+     x-init="if (openId) {
+         openDrawer(openId, true);
+         htmx.ajax('GET', '/templater/entities-htmx/{{ entity_type }}/' + openId + '/detail', { target: '#drawer-content', swap: 'innerHTML' });
+         const u = new URL(window.location.href);
+         if (u.searchParams.has('open')) {
+             u.searchParams.delete('open');
+             history.replaceState(null, '', u.pathname + u.search + u.hash);
+         }
+     }"{% endif %}>
     <div class="page-header">
         <h1><iconify-icon icon="{{ icon | default('') }}"></iconify-icon> {{ title }}</h1>
         <div class="actions">

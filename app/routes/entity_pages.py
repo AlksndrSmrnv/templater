@@ -11,6 +11,22 @@ from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.entities_htmx import build_entity_form_context, build_entity_list_context
 
 
+def _parse_open_id(request: Request) -> uuid.UUID | None:
+    """Read the ``?open=<uuid>`` deep-link target from the query string.
+
+    Returns ``None`` (and lets the page render normally) for a missing or
+    malformed value so a bad cross-link never 500s the list page.
+    """
+
+    raw = request.query_params.get("open")
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(raw)
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 def build_entity_pages_router(entity_type: str, segment: str) -> APIRouter:
     """Build the HTML page routes (list / new / edit) for a data entity type."""
     router = APIRouter()
@@ -22,8 +38,9 @@ def build_entity_pages_router(entity_type: str, segment: str) -> APIRouter:
         session: AsyncSession = SessionDep,
         group_ids: set[uuid.UUID] = UnlockedGroupsDep,
     ) -> Response:
+        open_id = _parse_open_id(request)
         context = await build_entity_list_context(
-            session, entity_type, request, visible_group_ids=group_ids
+            session, entity_type, request, visible_group_ids=group_ids, open_id=open_id
         )
         return templates.TemplateResponse(request, "entities/list.html", context)
 

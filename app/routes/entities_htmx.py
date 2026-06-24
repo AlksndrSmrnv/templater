@@ -191,12 +191,30 @@ async def build_entity_list_context(
     sort: str = "created_at",
     direction: str = "desc",
     visible_group_ids: set[uuid.UUID] | None = None,
+    open_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     check_entity_type(entity_type)
     schema = await _schema(session, entity_type)
     filters = _filter_values(request) if request is not None else {}
     attr_names = {field.name for field in schema}
     page = _page_param(request)
+    # A ?open=<id> deep link must always land on the row's page regardless of
+    # the user's last sort/filter/search, so the row can be highlighted and the
+    # detail drawer opened. We therefore force the default order (created_at
+    # desc) and drop any filters, then compute the page from the row's position.
+    # A missing/invisible target is ignored — the first page renders as usual.
+    resolved_open_id: str | None = None
+    if open_id is not None:
+        position = await _service(session, entity_type).position_of(
+            open_id, visible_group_ids=visible_group_ids
+        )
+        if position is not None:
+            page = position // PAGE_SIZE + 1
+            sort = "created_at"
+            direction = "desc"
+            search = ""
+            filters = {}
+            resolved_open_id = str(open_id)
     offset = (page - 1) * PAGE_SIZE
     items, items_total = await _service(session, entity_type).list_page(
         search=search,
@@ -227,6 +245,7 @@ async def build_entity_list_context(
         "pages": pages,
         "has_prev": page > 1,
         "has_next": page < pages,
+        "open_id": resolved_open_id,
         "unlocked_groups": await _unlocked_groups(session, visible_group_ids),
         **await _relations(session, entity_type, items=items),
     }

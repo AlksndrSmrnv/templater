@@ -84,6 +84,11 @@ class ClientService:
     ) -> list[Client]:
         return await self.repo.get_many(ids, visible_group_ids=visible_group_ids)
 
+    async def position_of(
+        self, client_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> int | None:
+        return await self.repo.position_of(client_id, visible_group_ids=visible_group_ids)
+
     async def create(
         self, data: ClientCreate, *, allowed_group_ids: set[uuid.UUID] | None = None
     ) -> Client:
@@ -173,6 +178,11 @@ class AccountService:
         self, ids: Sequence[uuid.UUID], *, visible_group_ids: set[uuid.UUID] | None = None
     ) -> list[Account]:
         return await self.repo.get_many(ids, visible_group_ids=visible_group_ids)
+
+    async def position_of(
+        self, account_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> int | None:
+        return await self.repo.position_of(account_id, visible_group_ids=visible_group_ids)
 
     async def list_for_client_ids(self, client_ids: Sequence[uuid.UUID]) -> list[Account]:
         return await self.repo.list_for_client_ids(client_ids)
@@ -277,6 +287,11 @@ class CardService:
         self, ids: Sequence[uuid.UUID], *, visible_group_ids: set[uuid.UUID] | None = None
     ) -> list[Card]:
         return await self.repo.get_many(ids, visible_group_ids=visible_group_ids)
+
+    async def position_of(
+        self, card_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
+    ) -> int | None:
+        return await self.repo.position_of(card_id, visible_group_ids=visible_group_ids)
 
     async def list_for_account_ids(self, account_ids: Sequence[uuid.UUID]) -> list[Card]:
         return await self.repo.list_for_account_ids(account_ids)
