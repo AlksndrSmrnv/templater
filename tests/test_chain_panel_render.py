@@ -22,6 +22,8 @@ def _step(name: str, body: str, mock: str = '{"transferId": "TRF-1"}') -> dict:
         "headers": [{"key": "Authorization", "value": "Bearer x", "mode": "dynamic"}],
         "format": "json",
         "body": body,
+        "body_html": body,  # server renders coloured markup; raw is fine for the seed
+        "changed_locations": [],
         "mock_response": mock,
     }
 
@@ -55,6 +57,26 @@ def test_chain_panel_renders_steps_and_controls() -> None:
     assert "Перевод A2A" in html
     # Inline header (delete + open-standalone) only when not standalone.
     assert "Удалить" in html
+
+
+def test_chain_panel_drops_example_and_insert_link_adds_collapse() -> None:
+    html = render_template(
+        "partials/chain_panel.html",
+        _chain_panel_context([_step("Создать перевод", '{"amount": 100}')]),
+    )
+    # No editable example response and no insert-link button on the chain page.
+    assert "Пример ответа" not in html
+    assert "Вставить ссылку" not in html
+    # Manual body textarea is gone; the body is the server-coloured markup.
+    assert "Редактировать тело" not in html
+    assert 'x-html="step.bodyHtml"' in html
+    # Click-to-bind + collapsible steps (collapsed by default in chain_panel.js).
+    assert "onFieldClick(" in html
+    assert "chain-collapse-toggle" in html
+    assert 'x-show="!step.collapsed"' in html
+    # Colour legend in the hint.
+    assert "placeholder dynamic" in html
+    assert "placeholder filled" in html
 
 
 def test_chain_panel_seed_json_is_escaped() -> None:

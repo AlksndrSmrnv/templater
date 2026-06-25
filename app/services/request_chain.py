@@ -18,6 +18,7 @@ import json
 import random
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,9 +28,71 @@ from app.repositories.request_chain import RequestChainRepository
 from app.repositories.settings import SettingsRepository
 from app.services.collections import _norm_path
 from app.services.filled_templates import FILLED_ROOT_FOLDERS_KEY, _expand_prefixes
+from app.utils import walker
 from app.utils.errors import NotFoundError, ValidationFailed
 
 NAME_MAX_LEN = 255
+
+
+def _leaf_exists(fmt: str, body: str, location: str) -> bool:
+    """Whether a *replaceable* leaf at ``location`` is present in ``body``.
+
+    The document root (``""``/``"/"``) is excluded: ``walker.replace_*`` can't
+    set the root, so a bare-scalar body has no bindable field — reporting it as
+    present would buffer an original and then no-op the replace."""
+
+    if location in ("", "/"):
+        return False
+    try:
+        if fmt == "json":
+            leaves = walker.walk_json(body)
+        elif fmt == "xml":
+            leaves = walker.walk_xml(body)
+        else:
+            return False
+    except Exception:
+        return False
+    return any(leaf.location == location for leaf in leaves)
+
+
+def _original_leaf(fmt: str, body: str, location: str) -> Any:
+    """The leaf's *typed* value (so a JSON number round-trips as a number on
+    reset, not a string), or ``None`` if the body doesn't parse / location is
+    absent. XML is text-only by nature."""
+
+    if fmt == "json":
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        node: Any = data
+        for tok in location.lstrip("/").split("/"):
+            tok = tok.replace("~1", "/").replace("~0", "~")
+            try:
+                node = node[int(tok)] if isinstance(node, list) else node[tok]
+            except (KeyError, IndexError, ValueError, TypeError):
+                return None
+        return node
+    if fmt == "xml":
+        try:
+            leaves = walker.walk_xml(body)
+        except Exception:
+            return None
+        return next((leaf.value for leaf in leaves if leaf.location == location), None)
+    return None
+
+
+def _replace_leaf(fmt: str, body: str, location: str, new_value: Any) -> str:
+    """Return ``body`` with the leaf at ``location`` set to ``new_value``.
+
+    ``new_value`` keeps its Python type for JSON (so resetting a number restores
+    a number); only ``json``/``xml`` bodies are supported."""
+
+    if fmt == "json":
+        return walker.replace_json(body, {location: new_value})
+    if fmt == "xml":
+        return walker.replace_xml(body, {location: str(new_value)})
+    raise ValidationFailed("Неподдерживаемый формат тела для привязки поля")
 
 
 def default_mock_response(now: datetime | None = None) -> str:
@@ -166,6 +229,12 @@ class RequestChainService:
             headers_snapshot=list(getattr(filled, "headers_snapshot", []) or []),
             body=getattr(filled, "filled_content", "") or "",
             mock_response=default_mock_response(),
+            # Green-colour markers in the chain UI: the locations this filled
+            # template replaced with concrete test data. The other colours
+            # (blue dynamic tokens, purple references, white literals) derive
+            # from the body text itself.
+            changed_locations=list(getattr(filled, "changed_locations", []) or []),
+            bindings={},
         )
         return await self.repo.add_step(step)
 
@@ -197,20 +266,60 @@ class RequestChainService:
         for position, remaining in enumerate(await self.repo.list_steps(chain_id)):
             remaining.position = position
 
-    async def update_step(
+    async def bind_field(
         self,
         chain_id: uuid.UUID,
         step_id: uuid.UUID,
         *,
-        body: str | None = None,
-        mock_response: str | None = None,
+        location: str,
+        ref_step: int,
+        ref_path: str,
         visible_group_ids: set[uuid.UUID] | None = None,
     ) -> RequestChainStep:
+        """Bind the leaf at ``location`` to ``{{ $ref_step.ref_path }}``.
+
+        The reference lives inline in ``body`` (so send/resolve/dependency logic
+        keeps reading it from there); the leaf's pre-bind value is buffered in
+        ``bindings`` once, so «Сбросить» can restore the original literal even
+        after the source is re-bound to a different field."""
+
+        ref_path = (ref_path or "").strip()
+        if not ref_path:
+            raise ValidationFailed("Некорректная ссылка на поле ответа")
         step = await self._get_step(chain_id, step_id, visible_group_ids=visible_group_ids)
-        if body is not None:
-            step.body = body
-        if mock_response is not None:
-            step.mock_response = mock_response
+        # A reference may only point at an *earlier* step (1-based ≤ this step's
+        # 0-based position). The UI already restricts this; enforce it server-side
+        # so a forged request can't store an unresolvable forward/self reference.
+        if not 1 <= ref_step <= step.position:
+            raise ValidationFailed("Ссылка может указывать только на предыдущий шаг")
+        if not _leaf_exists(step.format, step.body, location):
+            raise NotFoundError("Поле не найдено в теле запроса")
+        # Remember the first (true literal/dynamic) value only — a re-bind must
+        # not overwrite it with a previous reference token. Stored typed so a
+        # number resets to a number, not a string.
+        if location not in (step.bindings or {}):
+            original = _original_leaf(step.format, step.body, location)
+            step.bindings = {**(step.bindings or {}), location: original}
+        token = f"{{{{ ${ref_step}.{ref_path} }}}}"
+        step.body = _replace_leaf(step.format, step.body, location, token)
+        return step
+
+    async def unbind_field(
+        self,
+        chain_id: uuid.UUID,
+        step_id: uuid.UUID,
+        *,
+        location: str,
+        visible_group_ids: set[uuid.UUID] | None = None,
+    ) -> RequestChainStep:
+        """Restore the leaf at ``location`` to its buffered pre-bind value."""
+
+        step = await self._get_step(chain_id, step_id, visible_group_ids=visible_group_ids)
+        bindings = dict(step.bindings or {})
+        if location not in bindings:
+            raise NotFoundError("Это поле не привязано к ответу")
+        step.body = _replace_leaf(step.format, step.body, location, bindings.pop(location))
+        step.bindings = bindings
         return step
 
     async def reorder_steps(

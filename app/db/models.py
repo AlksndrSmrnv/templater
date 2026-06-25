@@ -582,6 +582,19 @@ class RequestChainStep(Base):
     body: Mapped[str] = mapped_column(Text, nullable=False, default="")
     mock_response: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
+    # JSON-pointer / XML-path locations whose leaf was filled with concrete test
+    # data at fill time (snapshotted from the source filled template). Drives the
+    # green «заполнено тестовыми данными» colour in the chain UI; the remaining
+    # marks (blue dynamic ``{{token}}``, purple ``{{ $N.path }}`` references,
+    # white literals) are derivable from the body text itself.
+    changed_locations: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    # Reset-buffer for click-to-bind: maps a leaf location to its original
+    # (typed, so a JSON number resets to a number) value before it was bound to
+    # a previous step's response field. The active reference lives inline in
+    # ``body`` (``{{ $N.path }}``); this only lets the UI restore the pre-bind
+    # value on «Сбросить».
+    bindings: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
     chain: Mapped[RequestChain] = relationship(back_populates="steps")
 
     created_at: Mapped[datetime] = _created_at()

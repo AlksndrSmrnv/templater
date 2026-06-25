@@ -119,6 +119,7 @@ def _filled(
         url_snapshot="https://api.example/x",
         headers_snapshot=[{"key": "X", "value": "1"}],
         filled_content='{"amount": 100}',
+        changed_locations=["/amount"],
         folder_path=[],
         group_id=group_id,
         group_name_snapshot=group_name,
@@ -187,6 +188,9 @@ async def test_add_step_snapshots_filled_envelope() -> None:
     assert step.url_snapshot == "https://api.example/x"
     assert step.body == '{"amount": 100}'
     assert step.filled_template_id == ft.id
+    # Green-field locations snapshotted from the filled template.
+    assert step.changed_locations == ["/amount"]
+    assert step.bindings == {}
     # mock_response seeded with a realistic example.
     assert "transferId" in step.mock_response
 
@@ -252,16 +256,97 @@ async def test_reorder_steps_follows_payload_and_renumbers() -> None:
     assert [s.position for s in ordered] == [0, 1, 2]
 
 
-@pytest.mark.asyncio
-async def test_update_step_body_and_mock() -> None:
-    ft = _filled()
-    svc = _service([ft])
-    chain = await svc.create_chain([], "Цепочка")
-    step = await svc.add_step(chain.id, ft.id)
+# ---- bind / unbind ------------------------------------------------------------
 
-    await svc.update_step(chain.id, step.id, body='{"x": "{{ $1.id }}"}', mock_response='{"id": 7}')
-    assert step.body == '{"x": "{{ $1.id }}"}'
-    assert step.mock_response == '{"id": 7}'
+
+async def _chain_with_two_steps() -> tuple[RequestChainService, Any, Any, Any]:
+    """A chain whose second step (position 1) can reference the first. Both
+    steps share the body '{"amount": 100}' with /amount marked filled."""
+
+    fts = [_filled(name="Создать"), _filled(name="Подтвердить")]
+    svc = _service(fts)
+    chain = await svc.create_chain([], "Цепочка")
+    s1 = await svc.add_step(chain.id, fts[0].id)
+    s2 = await svc.add_step(chain.id, fts[1].id)
+    return svc, chain, s1, s2
+
+
+@pytest.mark.asyncio
+async def test_bind_field_replaces_leaf_and_buffers_typed_original() -> None:
+    svc, chain, _s1, s2 = await _chain_with_two_steps()
+
+    await svc.bind_field(
+        chain.id, s2.id, location="/amount", ref_step=1, ref_path="transferId"
+    )
+    # The reference lives inline in the body…
+    assert "{{ $1.transferId }}" in s2.body
+    # …and the original number is buffered (typed) for «Сбросить».
+    assert s2.bindings == {"/amount": 100}
+
+
+@pytest.mark.asyncio
+async def test_bind_field_rebind_keeps_first_original() -> None:
+    svc, chain, _s1, s2 = await _chain_with_two_steps()
+
+    await svc.bind_field(chain.id, s2.id, location="/amount", ref_step=1, ref_path="a")
+    await svc.bind_field(chain.id, s2.id, location="/amount", ref_step=1, ref_path="b")
+    # Re-binding must not overwrite the buffered literal with the prior token.
+    assert s2.bindings == {"/amount": 100}
+    assert "{{ $1.b }}" in s2.body
+
+
+@pytest.mark.asyncio
+async def test_unbind_field_restores_number_type() -> None:
+    svc, chain, _s1, s2 = await _chain_with_two_steps()
+
+    await svc.bind_field(chain.id, s2.id, location="/amount", ref_step=1, ref_path="x")
+    await svc.unbind_field(chain.id, s2.id, location="/amount")
+    assert s2.bindings == {}
+    assert "{{" not in s2.body
+    # Restored as a JSON number, not the string "100".
+    assert '"amount": 100' in s2.body
+    assert '"100"' not in s2.body
+
+
+@pytest.mark.asyncio
+async def test_bind_field_rejects_forward_self_and_zero_reference() -> None:
+    svc, chain, _s1, s2 = await _chain_with_two_steps()
+
+    # ref_step must be a real *earlier* step (1 ≤ ref_step ≤ position).
+    with pytest.raises(ValidationFailed):
+        await svc.bind_field(chain.id, s2.id, location="/amount", ref_step=0, ref_path="x")
+    with pytest.raises(ValidationFailed):
+        await svc.bind_field(chain.id, s2.id, location="/amount", ref_step=2, ref_path="x")
+    # The first step has no earlier step to reference at all.
+    with pytest.raises(ValidationFailed):
+        await svc.bind_field(chain.id, _s1.id, location="/amount", ref_step=1, ref_path="x")
+
+
+@pytest.mark.asyncio
+async def test_bind_field_unknown_location_and_unbind_unbound() -> None:
+    svc, chain, _s1, s2 = await _chain_with_two_steps()
 
     with pytest.raises(NotFoundError):
-        await svc.update_step(chain.id, uuid.uuid4(), body="x")
+        await svc.bind_field(chain.id, s2.id, location="/missing", ref_step=1, ref_path="x")
+    # Unbinding a field that was never bound is a clean error.
+    with pytest.raises(NotFoundError):
+        await svc.unbind_field(chain.id, s2.id, location="/amount")
+
+
+@pytest.mark.asyncio
+async def test_bind_field_rejects_root_scalar() -> None:
+    # A bare-scalar body has no replaceable field — walker can't set the root,
+    # so binding the root must be rejected, not buffered-then-no-op'd.
+    ft1 = _filled(name="a")
+    ft2 = _filled(name="b")
+    ft2.filled_content = "100"
+    ft2.changed_locations = []
+    svc = _service([ft1, ft2])
+    chain = await svc.create_chain([], "Цепочка")
+    await svc.add_step(chain.id, ft1.id)
+    s2 = await svc.add_step(chain.id, ft2.id)
+
+    for loc in ("/", ""):
+        with pytest.raises(NotFoundError):
+            await svc.bind_field(chain.id, s2.id, location=loc, ref_step=1, ref_path="x")
+    assert s2.bindings == {}

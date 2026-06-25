@@ -30,9 +30,13 @@
 
     <p class="muted send-hint">
         Соберите цепочку запросов из заполненных шаблонов. Отправка имитируется —
-        реальные запросы не уходят, показывается пример ответа. В теле запроса можно
-        сослаться на поле ответа предыдущего шага (кнопка «Вставить ссылку») — такие
-        ссылки подсвечены <span class="placeholder reference">фиолетовым</span>.
+        реальные запросы не уходят. Поля тела подсвечены по роли:
+        <span class="placeholder dynamic">голубой</span> — динамические по умолчанию,
+        <span class="placeholder filled">зелёный</span> — из тестовых данных,
+        белый — как в оригинальном шаблоне,
+        <span class="placeholder reference">фиолетовый</span> — ссылка на поле ответа
+        предыдущего шага. Кликните по значению поля, чтобы привязать его к полю ответа
+        предыдущего шага (доступно после отправки этого шага).
     </p>
 
     <div class="chain-toolbar">
@@ -75,9 +79,14 @@
             <section class="send-step">
                 <div class="send-step-header">
                     <div class="send-step-title">
+                        <button class="btn small chain-collapse-toggle" type="button"
+                                :title="step.collapsed ? 'Развернуть шаг' : 'Свернуть шаг'"
+                                :aria-expanded="(!step.collapsed).toString()" @click="step.collapsed = !step.collapsed">
+                            <iconify-icon icon="lucide:chevron-right" :class="{ 'chain-collapse-open': !step.collapsed }"></iconify-icon>
+                        </button>
                         <span class="send-step-num" x-text="idx + 1"></span>
                         <span class="tree-method" :class="'method-' + (step.method || '').toLowerCase()" x-text="step.method || '·'"></span>
-                        <h2 x-text="step.name"></h2>
+                        <h2 @click="step.collapsed = !step.collapsed" style="cursor:pointer;" x-text="step.name"></h2>
                         <template x-for="n in stepDeps(idx)" :key="n">
                             <span class="chain-dep-badge" title="Использует поля из ответа этого шага">
                                 <iconify-icon icon="lucide:link"></iconify-icon> зависит от шага <span x-text="n"></span>
@@ -91,11 +100,11 @@
                     </div>
                 </div>
 
-                <div class="panel-url" x-show="step.url">
+                <div class="panel-url" x-show="step.url && !step.collapsed" x-cloak>
                     <span class="panel-url-method" x-text="step.method"></span> <code x-text="step.url"></code>
                 </div>
 
-                <div class="send-step-body">
+                <div class="send-step-body" x-show="!step.collapsed" x-cloak>
                     <section class="send-block" x-show="step.headers && step.headers.length">
                         <h3>Заголовки</h3>
                         <table class="headers-table">
@@ -113,48 +122,47 @@
                         </table>
                     </section>
 
-                    <section class="send-block">
+                    <section class="send-block" @click.outside="if (picker.stepIdx === idx) closePicker()">
                         <div class="send-block-title">
                             <h3>Тело сообщения</h3>
-                            <div class="send-block-tools">
-                                <button class="btn small" type="button" @click="openRefUI(idx)" :disabled="idx === 0"
-                                        :title="idx === 0 ? 'У первого шага нет предыдущих ответов' : 'Подставить значение из ответа предыдущего шага'">
-                                    <iconify-icon icon="lucide:link"></iconify-icon> Вставить ссылку
-                                </button>
-                                <button class="btn small" type="button" @click="step.editingBody = !step.editingBody">
-                                    <iconify-icon icon="lucide:pencil"></iconify-icon>
-                                    <span x-text="step.editingBody ? 'Готово' : 'Редактировать тело'"></span>
-                                </button>
-                            </div>
+                            <span class="muted send-sub" x-show="idx > 0">Кликните по значению поля, чтобы привязать его к ответу предыдущего шага.</span>
                         </div>
 
-                        <div class="send-ref-ui" x-show="refUI.stepIdx === idx" x-cloak>
+                        <div class="chain-field-picker" x-show="picker.stepIdx === idx" x-cloak>
                             <div class="send-ref-row">
-                                <span class="muted">Из шага:</span>
+                                <span class="muted">Привязать поле <code x-text="picker.location"></code> к ответу шага:</span>
+                                <button type="button" class="btn small chain-picker-close" @click="closePicker()" title="Закрыть">
+                                    <iconify-icon icon="lucide:x"></iconify-icon>
+                                </button>
+                            </div>
+                            <div class="send-ref-row">
                                 <template x-for="ps in priorSteps(idx)" :key="ps.num">
-                                    <button type="button" class="btn small" :class="{ primary: refUI.sourceStep === ps.num }" @click="selectRefSource(ps.num)">
+                                    <button type="button" class="btn small" :class="{ primary: picker.sourceStep === ps.num }" @click="selectPickerSource(ps.num)">
                                         <span x-text="'#' + ps.num + ' ' + ps.name"></span>
                                         <span class="muted" x-show="!ps.sent"> · не отправлен</span>
                                     </button>
                                 </template>
                             </div>
-                            <div class="send-ref-row" x-show="refUI.sourceStep !== null">
-                                <span class="muted">Поле:</span>
-                                <template x-for="p in refUI.paths" :key="p.path">
-                                    <button type="button" class="btn small" @click="insertRef(refUI.sourceStep, p.path)">
+                            <div class="send-ref-row" x-show="picker.sourceStep !== null">
+                                <span class="muted">Поле ответа:</span>
+                                <template x-for="p in picker.paths" :key="p.path">
+                                    <button type="button" class="btn small" @click="bindField(picker.sourceStep, p.path)">
                                         <code x-text="p.path"></code>
                                     </button>
                                 </template>
-                                <span class="muted" x-show="refUI.paths.length === 0">
-                                    В ответе нет полей — отправьте шаг-источник или впишите валидный JSON в «Пример ответа».
+                                <span class="muted" x-show="picker.paths.length === 0">
+                                    Отправьте шаг <span x-text="picker.sourceStep"></span>, чтобы получить список полей его ответа.
                                 </span>
+                            </div>
+                            <div class="send-ref-row" x-show="picker.isRef">
+                                <button type="button" class="btn small danger" @click="unbindField()">
+                                    <iconify-icon icon="lucide:rotate-ccw"></iconify-icon> Сбросить к исходному значению
+                                </button>
                             </div>
                         </div>
 
-                        <pre class="template-code" x-show="!step.editingBody" x-html="highlightRefs(step.body)"></pre>
-                        <textarea x-show="step.editingBody" x-cloak class="send-body-edit template-code"
-                                  :id="'body-ta-' + step.id" x-model="step.body"
-                                  @input.debounce.500ms="invalidate(idx)" spellcheck="false" rows="10"></textarea>
+                        <pre class="template-code chain-body" :class="{ 'chain-body-bindable': idx > 0 }"
+                             x-html="step.bodyHtml" @click="onFieldClick($event, idx)"></pre>
                     </section>
 
                     <div class="send-actions">
@@ -164,13 +172,6 @@
                         <span class="muted" x-show="step.sending">Отправка…</span>
                         <span class="send-error" x-show="step.error" x-text="step.error"></span>
                     </div>
-
-                    <section class="send-block">
-                        <h3>Пример ответа</h3>
-                        <p class="muted send-sub">Отредактируйте пример ответа — из его полей берутся ссылки для следующих шагов.</p>
-                        <textarea class="send-body-edit template-code" x-model="step.mockResponse"
-                                  @input.debounce.500ms="invalidate(idx)" spellcheck="false" rows="6"></textarea>
-                    </section>
 
                     <section class="send-block send-response" x-show="step.response" x-cloak>
                         <h3>Итоговый ответ (мок)</h3>

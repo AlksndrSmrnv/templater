@@ -33,6 +33,7 @@ from app.routes.htmx_utils import form_str, parse_json_path, parse_uuid_list, to
 from app.routes.uow import commit_or_409
 from app.services.filled_templates import FilledTemplateService
 from app.services.request_chain import RequestChainService
+from app.services.template_render import render_chain_step_html
 from app.utils.errors import DomainError
 
 router = APIRouter()
@@ -60,14 +61,22 @@ def _toast_only(
 
 
 def _serialize_step(step: RequestChainStep) -> dict[str, Any]:
+    body = step.body or ""
+    fmt = step.format or "json"
+    changed = step.changed_locations or []
     return {
         "id": str(step.id),
         "name": step.name_snapshot,
         "method": step.http_method_snapshot or "",
         "url": step.url_snapshot or "",
         "headers": step.headers_snapshot or [],
-        "format": step.format or "json",
-        "body": step.body or "",
+        "format": fmt,
+        "body": body,
+        # Coloured, clickable markup of the body (blue dynamic / green filled /
+        # purple reference / white literal) — re-rendered server-side after each
+        # bind/unbind so the Alpine panel can update one step in place.
+        "body_html": render_chain_step_html(fmt, body, changed),
+        "changed_locations": changed,
         "mock_response": step.mock_response or "",
     }
 
@@ -406,27 +415,69 @@ async def htmx_reorder_steps(
     return Response(status_code=204)
 
 
-@router.post("/filled-templates-htmx/chains/{chain_id}/steps/{step_id}")
-async def htmx_update_step(
+def _step_body_json(step: RequestChainStep) -> JSONResponse:
+    """The refreshed body + coloured markup for one step, for in-place client
+    updates after a bind/unbind (no full-panel re-render, so other steps' sent
+    responses survive)."""
+
+    body = step.body or ""
+    fmt = step.format or "json"
+    return JSONResponse(
+        {"body": body, "body_html": render_chain_step_html(fmt, body, step.changed_locations or [])}
+    )
+
+
+@router.post("/filled-templates-htmx/chains/{chain_id}/steps/{step_id}/bind")
+async def htmx_bind_field(
     chain_id: uuid.UUID,
     step_id: uuid.UUID,
     request: Request,
     session: AsyncSession = SessionDep,
     group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
+    """Bind a body field (by ``location``) to ``{{ $ref_step.ref_path }}`` —
+    a field of an earlier step's response. Returns the refreshed step body."""
+
     form = await request.form()
-    body = form_str(form, "body") if "body" in form else None
-    mock_response = form_str(form, "mock_response") if "mock_response" in form else None
+    location = form_str(form, "location")
+    ref_path = form_str(form, "ref_path")
     try:
-        await RequestChainService(session).update_step(
-            chain_id, step_id, body=body, mock_response=mock_response,
-            visible_group_ids=group_ids,
+        ref_step = int(form_str(form, "ref_step"))
+    except ValueError:
+        return JSONResponse(status_code=400, content={"message": "Некорректный шаг-источник"})
+    try:
+        step = await RequestChainService(session).bind_field(
+            chain_id, step_id, location=location, ref_step=ref_step,
+            ref_path=ref_path, visible_group_ids=group_ids,
         )
         await commit_or_409(session)
     except DomainError as exc:
         await session.rollback()
         return JSONResponse(status_code=400, content={"message": exc.message})
-    return Response(status_code=204)
+    return _step_body_json(step)
+
+
+@router.post("/filled-templates-htmx/chains/{chain_id}/steps/{step_id}/unbind")
+async def htmx_unbind_field(
+    chain_id: uuid.UUID,
+    step_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
+) -> Response:
+    """Reset a previously bound body field back to its original value."""
+
+    form = await request.form()
+    location = form_str(form, "location")
+    try:
+        step = await RequestChainService(session).unbind_field(
+            chain_id, step_id, location=location, visible_group_ids=group_ids,
+        )
+        await commit_or_409(session)
+    except DomainError as exc:
+        await session.rollback()
+        return JSONResponse(status_code=400, content={"message": exc.message})
+    return _step_body_json(step)
 
 
 # ---------- stub «send» seam (NO real network request) ----------

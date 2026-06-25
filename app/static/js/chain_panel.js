@@ -2,15 +2,20 @@
  * Alpine component for the «Цепочка запросов» panel (inline in the «Заполненные
  * шаблоны» workspace and on the standalone chain page).
  *
- * Steps are seeded from the server (DB-persisted). Per-step edits (body, example
- * response), reordering and removal autosave via fetch; structural *adds* are
- * HTMX-driven (the whole panel re-renders from the server). Sending is a STUB —
- * no real network request is made: the server seam echoes the step's editable
- * example response back so later steps can pull fields from it via
- * `{{ $N.path }}` tokens, highlighted purple.
+ * Steps are seeded from the server (DB-persisted) and each carries a
+ * server-rendered, coloured `body_html`: blue = dynamic-by-default token, green
+ * = filled with test data, purple = a `{{ $N.path }}` reference to an earlier
+ * step's response, white = untouched literal. Every value is a clickable span
+ * (`data-location`); clicking it opens a picker of the previous steps' response
+ * fields and binds the chosen one as a reference (server replaces the leaf and
+ * returns the refreshed body + markup, updated in place so other steps' sent
+ * responses survive). Reordering and removal autosave via fetch; structural
+ * *adds* are HTMX-driven (the whole panel re-renders from the server).
  *
- * The resolution/highlight/encoding helpers are ported from the (reverted) PR
- * #92 send page — they were the correct part of that work.
+ * Sending is a STUB — no real network request is made: the server seam echoes
+ * the step's (hidden) example response back so later steps can pull fields from
+ * it. The resolution/highlight/encoding helpers are ported from the (reverted)
+ * PR #92 send page.
  *
  * Defined on window so HTMX-swapped panels can reference it without a per-swap
  * <script> race; loaded once at page level.
@@ -24,7 +29,8 @@ window.chainPanel = function (config) {
         pickerOpen: false,
         pickerSearch: '',
         running: false,
-        refUI: { stepIdx: null, sourceStep: null, paths: [] },
+        // Field-binding picker, anchored to the clicked body field.
+        picker: { stepIdx: null, location: null, isRef: false, sourceStep: null, paths: [] },
 
         init() {
             // Seed run-time/ephemeral fields onto the server-provided steps.
@@ -36,8 +42,9 @@ window.chainPanel = function (config) {
                 headers: s.headers || [],
                 format: s.format || 'json',
                 body: s.body || '',
+                bodyHtml: s.body_html || '',
                 mockResponse: s.mock_response || '',
-                editingBody: false,
+                collapsed: true,
                 sending: false,
                 error: '',
                 response: null,
@@ -52,17 +59,6 @@ window.chainPanel = function (config) {
         },
 
         // ---------- persistence ----------
-        async saveStep(idx) {
-            const step = this.steps[idx];
-            if (!step) return;
-            try {
-                await fetch(base + this.chainId + '/steps/' + step.id, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: new URLSearchParams({ body: step.body, mock_response: step.mockResponse }),
-                });
-            } catch (e) { /* autosave is best-effort; next edit retries */ }
-        },
         async persistOrder() {
             const order = this.steps.map((s) => s.id).join(',');
             try {
@@ -94,7 +90,7 @@ window.chainPanel = function (config) {
             if (!ok) { this.toast('Не удалось удалить шаг', 'error'); return; }
             const pos = this.steps.findIndex((s) => s.id === step.id);
             if (pos !== -1) this.steps.splice(pos, 1);
-            this.closeRefUI();
+            this.closePicker();
             this.refreshTree();
             this.toast('Шаг удалён');
         },
@@ -104,31 +100,19 @@ window.chainPanel = function (config) {
             const prev = this.steps.slice();  // snapshot for rollback
             const [s] = this.steps.splice(idx, 1);
             this.steps.splice(j, 0, s);
-            // Indices shift on reorder, so a reference panel would point at the
-            // wrong step — close it.
-            this.closeRefUI();
+            // Indices shift on reorder, so a picker would point at the wrong
+            // step — close it.
+            this.closePicker();
             if (!await this.persistOrder()) {
                 this.steps = prev;  // server rejected — restore the old order
                 this.toast('Не удалось изменить порядок', 'error');
             }
         },
 
-        // ---------- references / dependencies / highlighting ----------
-        escapeHtml(s) {
-            return String(s == null ? '' : s)
-                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-        },
-        // Wrap {{ $N.path }} tokens in a purple span inside an escaped body. The
-        // pattern matches resolveBody's exactly — a token without a path is
-        // neither highlighted nor resolved.
-        highlightRefs(text) {
-            return this.escapeHtml(text).replace(/\{\{\s*\$\d+\.[^}\s]+\s*\}\}/g, (m) =>
-                '<span class="placeholder reference" title="Ссылка на ответ предыдущего шага">' + m + '</span>');
-        },
-        // Prior step numbers (1-based) a step references — drives «зависит от шага N».
-        // Only steps before this one (1..idx) are real dependencies; a self or
-        // forward reference can't resolve, so it isn't badged.
+        // ---------- dependencies / prior steps ----------
+        // Prior step numbers (1-based) a step references via {{ $N.path }} tokens
+        // in its body — drives «зависит от шага N». Only steps before this one
+        // (1..idx) are real dependencies; a self/forward reference can't resolve.
         stepDeps(idx) {
             const body = (this.steps[idx] && this.steps[idx].body) || '';
             const re = /\{\{\s*\$(\d+)\.[^}\s]+\s*\}\}/g;
@@ -145,27 +129,38 @@ window.chainPanel = function (config) {
                 num: i + 1, name: s.name, sent: !!s.response,
             }));
         },
-        openRefUI(idx) {
+
+        // ---------- click-to-bind ----------
+        // A click anywhere in the rendered body: if it landed on a field span,
+        // open the binding picker for that leaf.
+        onFieldClick(ev, idx) {
+            const span = ev.target.closest && ev.target.closest('.placeholder[data-location]');
+            if (!span) return;
+            // The first step has no previous response to pull from — its fields
+            // aren't bindable (and the cursor reflects that), so do nothing.
             if (idx === 0) return;
-            this.refUI = { stepIdx: idx, sourceStep: null, paths: [] };
+            this.picker = {
+                stepIdx: idx,
+                location: span.dataset.location,
+                isRef: span.classList.contains('reference'),
+                sourceStep: null,
+                paths: [],
+            };
         },
-        closeRefUI() {
-            this.refUI = { stepIdx: null, sourceStep: null, paths: [] };
+        closePicker() {
+            this.picker = { stepIdx: null, location: null, isRef: false, sourceStep: null, paths: [] };
         },
-        // The JSON a reference reads from: the actual response once the step has
-        // been sent, otherwise its (editable) example response.
-        sourceBody(step) {
-            if (!step) return '';
-            return step.response ? step.response.body : (step.mockResponse || '');
-        },
-        selectRefSource(stepNum) {
+        // Fields offered for a source step come from its *sent* response only —
+        // until the step is sent there is nothing to parse (per the spec, the
+        // list appears after the previous step actually runs).
+        selectPickerSource(stepNum) {
             const src = this.steps[stepNum - 1];
             let paths = [];
-            if (src) {
-                try { paths = this.leafPaths(JSON.parse(this.sourceBody(src))); } catch (e) { paths = []; }
+            if (src && src.response) {
+                try { paths = this.leafPaths(JSON.parse(src.response.body)); } catch (e) { paths = []; }
             }
-            this.refUI.sourceStep = stepNum;
-            this.refUI.paths = paths;
+            this.picker.sourceStep = stepNum;
+            this.picker.paths = paths;
         },
         // Flatten a parsed JSON value to its leaf paths (a.b, a.c[0].d ...).
         leafPaths(obj, prefix) {
@@ -187,34 +182,66 @@ window.chainPanel = function (config) {
             }
             return out;
         },
-        insertRef(stepNum, path) {
-            const idx = this.refUI.stepIdx;
+        async bindField(stepNum, path) {
+            const idx = this.picker.stepIdx;
             if (idx === null) return;
             const step = this.steps[idx];
-            const token = '{{ $' + stepNum + '.' + path + ' }}';
-            const ta = document.getElementById('body-ta-' + step.id);
-            if (step.editingBody && ta && typeof ta.selectionStart === 'number') {
-                const start = ta.selectionStart;
-                const end = ta.selectionEnd;
-                const b = step.body || '';
-                step.body = b.slice(0, start) + token + b.slice(end);
-                this.$nextTick(() => {
-                    ta.focus();
-                    const pos = start + token.length;
-                    ta.setSelectionRange(pos, pos);
+            const location = this.picker.location;
+            try {
+                const r = await fetch(base + this.chainId + '/steps/' + step.id + '/bind', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ location: location, ref_step: stepNum, ref_path: path }),
                 });
-            } else {
-                // Not editing: switch to edit mode and append so the user can
-                // place the token where it belongs.
-                step.editingBody = true;
-                step.body = (step.body || '') + token;
+                if (!r.ok) throw new Error(await this.errorMessage(r, 'Не удалось привязать поле'));
+                const d = await r.json();
+                step.body = d.body;
+                step.bodyHtml = d.body_html;
+                this.invalidate(idx);
+                this.closePicker();
+                this.toast('Поле привязано к ответу шага ' + stepNum);
+            } catch (e) {
+                this.toast(e.message || 'Не удалось привязать поле', 'error');
             }
-            this.closeRefUI();
-            this.invalidate(idx);
-            this.toast('Ссылка вставлена');
+        },
+        async unbindField() {
+            const idx = this.picker.stepIdx;
+            if (idx === null) return;
+            const step = this.steps[idx];
+            const location = this.picker.location;
+            try {
+                const r = await fetch(base + this.chainId + '/steps/' + step.id + '/unbind', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ location: location }),
+                });
+                if (!r.ok) throw new Error(await this.errorMessage(r, 'Не удалось сбросить привязку'));
+                const d = await r.json();
+                step.body = d.body;
+                step.bodyHtml = d.body_html;
+                this.invalidate(idx);
+                this.closePicker();
+                this.toast('Привязка сброшена');
+            } catch (e) {
+                this.toast(e.message || 'Не удалось сбросить привязку', 'error');
+            }
+        },
+        // Pull the server's {message: …} off a failed response, falling back to
+        // a generic label so the user sees the concrete reason (e.g. «Поле не
+        // найдено в теле запроса») instead of an opaque HTTP code.
+        async errorMessage(r, fallback) {
+            try {
+                const d = await r.json();
+                return (d && d.message) || fallback;
+            } catch (e) { return fallback; }
         },
 
-        // ---------- resolution ----------
+        // ---------- resolution (for the stub send) ----------
+        escapeHtml(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        },
         getPath(obj, path) {
             const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean);
             let cur = obj;
@@ -223,6 +250,12 @@ window.chainPanel = function (config) {
                 cur = cur[p];
             }
             return cur;
+        },
+        // The JSON a reference reads from: the actual response once the step has
+        // been sent, otherwise its (hidden) example response.
+        sourceBody(step) {
+            if (!step) return '';
+            return step.response ? step.response.body : (step.mockResponse || '');
         },
         resolveValue(stepNum, path) {
             const src = this.steps[stepNum - 1];
@@ -353,13 +386,18 @@ window.chainPanel = function (config) {
         prettyJson(s) {
             try { return JSON.stringify(JSON.parse(s), null, 2); } catch (e) { return s; }
         },
-        // Editing the body or the example response invalidates the last run.
+        // Binding a field changes this step's body, so its own last run no longer
+        // matches. Later steps may reference this step's response, so their
+        // resolved-request preview is now stale too — clear it (keep their
+        // responses, which the field picker still reads from).
         invalidate(idx) {
             const step = this.steps[idx];
             step.response = null;
             step.resolvedRequestHtml = null;
             step.error = '';
-            this.saveStep(idx);
+            for (let j = idx + 1; j < this.steps.length; j++) {
+                this.steps[j].resolvedRequestHtml = null;
+            }
         },
 
         toast(message, type) {
