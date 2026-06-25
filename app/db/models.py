@@ -542,7 +542,22 @@ class RequestChainStep(Base):
     """
 
     __tablename__ = "request_chain_steps"
-    __table_args__ = (Index("ix_request_chain_steps_chain_id", "chain_id"),)
+    __table_args__ = (
+        Index("ix_request_chain_steps_chain_id", "chain_id"),
+        # ``position`` drives the {{ $N.path }} reference numbering, so a
+        # duplicate would silently corrupt which step a reference points at.
+        # DEFERRABLE INITIALLY DEFERRED lets reorder/remove renumber the whole
+        # chain to 0..n-1 within one transaction (positions may collide
+        # mid-flush); the check runs at COMMIT, when they are unique again. A
+        # concurrent add racing on max(position)+1 then surfaces as a clean 409.
+        UniqueConstraint(
+            "chain_id",
+            "position",
+            name="uq_request_chain_steps_chain_position",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     chain_id: Mapped[uuid.UUID] = mapped_column(

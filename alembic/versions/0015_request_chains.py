@@ -118,9 +118,24 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_request_chain_steps_chain_id", "request_chain_steps", ["chain_id"])
+    # Unique step order per chain. DEFERRABLE INITIALLY DEFERRED so a single
+    # transaction can renumber positions 0..n-1 (reorder/remove) without
+    # tripping on transient mid-flush collisions; the check runs at COMMIT.
+    op.create_unique_constraint(
+        "uq_request_chain_steps_chain_position",
+        "request_chain_steps",
+        ["chain_id", "position"],
+        deferrable=True,
+        initially="DEFERRED",
+    )
 
 
 def downgrade() -> None:
+    op.drop_constraint(
+        "uq_request_chain_steps_chain_position",
+        "request_chain_steps",
+        type_="unique",
+    )
     op.drop_index("ix_request_chain_steps_chain_id", table_name="request_chain_steps")
     op.drop_table("request_chain_steps")
     op.drop_index("ix_request_chains_created_at", table_name="request_chains")

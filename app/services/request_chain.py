@@ -125,10 +125,16 @@ class RequestChainService:
         """Append a filled template to the chain as a new step.
 
         The request envelope is snapshotted from the filled template. A chain
-        carries a single ``group_id``: a public filled template adds freely; the
-        first private-group filled template sets the chain's group, and a
-        conflicting group is rejected (a lone ``group_id`` can't hide one group's
-        data from holders of another).
+        carries a single ``group_id`` (visibility), resolved from the steps:
+
+        - a **public** filled template (``group_id is None``) may be added to any
+          chain, including a private one. This is intentional and safe: it never
+          *widens* access — the public copy inherits the chain's stricter
+          visibility, it can't leak a private group's data. So we don't touch the
+          chain's group for public steps.
+        - the **first private** filled template sets the chain's group;
+        - a filled template from a **different** private group is rejected — a
+          lone ``group_id`` cannot hide one group's data from holders of another.
         """
 
         chain = await self.get(chain_id, visible_group_ids=visible_group_ids)
@@ -137,6 +143,8 @@ class RequestChainService:
             raise NotFoundError("Заполненный шаблон не найден")
 
         filled_group = getattr(filled, "group_id", None)
+        # Public steps (filled_group is None) fall through untouched — see the
+        # docstring: allowing them into a private chain only narrows visibility.
         if filled_group is not None:
             if chain.group_id is None:
                 chain.group_id = filled_group
