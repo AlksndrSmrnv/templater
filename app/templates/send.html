@@ -411,18 +411,54 @@
             },
             // Replace {{ $N.path }} tokens in a step's body; returns the resolved
             // string, an HTML view (substitutions wrapped purple) and unresolved tokens.
+            // Advance a "currently inside a JSON string literal" flag across a chunk
+            // of template text, honouring backslash escapes. Only the template's own
+            // quotes matter, so we scan the literal text between tokens.
+            scanJsonStringState(inString, chunk) {
+                let i = 0;
+                while (i < chunk.length) {
+                    const ch = chunk[i];
+                    if (inString) {
+                        if (ch === '\\') { i += 2; continue; }
+                        if (ch === '"') inString = false;
+                    } else if (ch === '"') {
+                        inString = true;
+                    }
+                    i++;
+                }
+                return inString;
+            },
+            // Encode a resolved value for substitution so the result stays valid:
+            //  - JSON value position  -> JSON.stringify (string -> "...", number -> 123)
+            //  - inside a JSON string -> escaped characters WITHOUT the wrapping quotes
+            //    (so "TRF-{{ $1.id }}" -> "TRF-123", not "TRF-"123"")
+            //  - non-JSON body        -> raw string
+            encodeRef(val, isJson, inString) {
+                if (!isJson) {
+                    return (typeof val === 'string') ? val : JSON.stringify(val);
+                }
+                if (inString) {
+                    const s = (typeof val === 'string') ? val : JSON.stringify(val);
+                    return JSON.stringify(s).slice(1, -1);
+                }
+                return JSON.stringify(val);
+            },
             resolveBody(idx) {
-                const src = this.steps[idx].body || '';
+                const step = this.steps[idx];
+                const src = step.body || '';
+                const isJson = (step.format || 'json') === 'json';
                 const re = /\{\{\s*\$(\d+)\.([^}\s]+)\s*\}\}/g;
                 const unresolved = [];
                 let html = '';
                 let resolved = '';
                 let last = 0;
+                let inString = false;
                 let m;
                 while ((m = re.exec(src)) !== null) {
                     const before = src.slice(last, m.index);
                     html += this.escapeHtml(before);
                     resolved += before;
+                    if (isJson) inString = this.scanJsonStringState(inString, before);
                     const val = this.resolveValue(parseInt(m[1], 10), m[2]);
                     if (val === undefined) {
                         unresolved.push(m[0]);
@@ -430,10 +466,7 @@
                             + this.escapeHtml(m[0]) + '</span>';
                         resolved += m[0];
                     } else {
-                        // JSON-encode every value (string -> "...", number -> 123,
-                        // object -> {...}) so a bare {{ $N.path }} in a JSON value
-                        // position stays valid JSON after substitution.
-                        const strVal = JSON.stringify(val);
+                        const strVal = this.encodeRef(val, isJson, inString);
                         html += '<span class="placeholder reference" title="Из ответа шага ' + m[1] + '">'
                             + this.escapeHtml(strVal) + '</span>';
                         resolved += strVal;

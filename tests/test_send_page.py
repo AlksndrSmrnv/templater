@@ -184,7 +184,15 @@ async def test_htmx_filled_snapshot_returns_request_envelope(
 
 
 @pytest.mark.asyncio
-async def test_htmx_execute_is_a_stub_that_echoes_mock_response() -> None:
+async def test_htmx_execute_is_a_stub_that_echoes_mock_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The handler awaits a mock latency; don't actually wait in tests.
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(send.asyncio, "sleep", _no_sleep)
+
     class FakeRequest:
         async def json(self) -> dict[str, object]:
             return {
@@ -208,6 +216,18 @@ async def test_htmx_execute_rejects_invalid_json() -> None:
     class FakeRequest:
         async def json(self) -> object:
             raise json.JSONDecodeError("Expecting value", "", 0)
+
+    resp = await send.htmx_execute(cast(Any, FakeRequest()))
+    assert resp.status_code == 422
+    assert json.loads(resp.body)["error"] == "invalid_json"
+
+
+@pytest.mark.asyncio
+async def test_htmx_execute_rejects_non_object_body() -> None:
+    # A valid-JSON-but-not-an-object body (array / scalar) is still a bad request.
+    class FakeRequest:
+        async def json(self) -> object:
+            return [1, 2, 3]
 
     resp = await send.htmx_execute(cast(Any, FakeRequest()))
     assert resp.status_code == 422

@@ -107,15 +107,15 @@ async def htmx_execute(request: Request) -> JSONResponse:
     try:
         payload = await request.json()
     except (json.JSONDecodeError, ValueError):
+        payload = None
+    if not isinstance(payload, dict):
         return JSONResponse(
             status_code=422,
             content={
                 "error": "invalid_json",
-                "message": "Тело запроса должно быть корректным JSON",
+                "message": "Тело запроса должно быть объектом JSON",
             },
         )
-    if not isinstance(payload, dict):
-        payload = {}
 
     mock_response = payload.get("mock_response", "")
     # Simulate a little network latency so the reported value reflects a real wait.
