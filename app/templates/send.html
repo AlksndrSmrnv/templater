@@ -1,17 +1,562 @@
 {% extends "base.html" %}
 {% block title %}Отправка сообщений — Template Maker{% endblock %}
 {% block content %}
-<h1><iconify-icon icon="lucide:send"></iconify-icon> Отправка сообщений</h1>
-<div class="placeholder-screen">
-    <p class="muted">
-        Функция в разработке. В следующих версиях здесь появится аналог Postman:
-        выбор шаблона, формирование запроса с подстановкой тестовых данных и отправка по REST в
-        тестируемую систему.
+<div class="send-page"
+     x-data="sendChain({{ filled_templates | tojson | forceescape }}, '/templater/send-htmx/filled/', '/templater/send-htmx/execute')">
+
+    <div class="send-toolbar">
+        <h1><iconify-icon icon="lucide:send"></iconify-icon> Отправка сообщений</h1>
+        <div class="send-toolbar-actions">
+            <div class="send-picker" @click.outside="pickerOpen = false">
+                <button class="btn primary" type="button" @click="pickerOpen = !pickerOpen">
+                    <iconify-icon icon="lucide:plus"></iconify-icon> Добавить шаг
+                </button>
+                <div class="send-picker-menu" x-show="pickerOpen" x-cloak>
+                    <input class="send-picker-search" type="search" placeholder="Поиск шаблона…"
+                           x-model="pickerSearch">
+                    <ul>
+                        <template x-for="a in filteredAvailable()" :key="a.id">
+                            <li>
+                                <button type="button" @click="addStep(a.id)">
+                                    <span class="tree-method" :class="'method-' + (a.method || '').toLowerCase()"
+                                          x-text="a.method || '·'"></span>
+                                    <span class="send-picker-name" x-text="a.name"></span>
+                                    <span class="project-badge" x-show="a.project_name">
+                                        <span class="project-dot" :style="'background:' + (a.project_color || '#9E9E9E')"></span>
+                                        <span x-text="a.project_name"></span>
+                                    </span>
+                                </button>
+                            </li>
+                        </template>
+                        <li class="send-picker-empty muted" x-show="filteredAvailable().length === 0">
+                            Нет заполненных шаблонов.
+                        </li>
+                        {% if picker_truncated %}
+                        <li class="send-picker-empty muted">Показаны не все шаблоны — список усечён.</li>
+                        {% endif %}
+                    </ul>
+                </div>
+            </div>
+            <button class="btn" type="button" @click="sendAll()" x-show="steps.length" :disabled="running">
+                <iconify-icon icon="lucide:play"></iconify-icon> Запустить всё
+            </button>
+            <button class="btn danger" type="button" @click="reset()" x-show="steps.length">
+                Сбросить
+            </button>
+        </div>
+    </div>
+
+    <p class="muted send-hint">
+        Соберите цепочку запросов из заполненных шаблонов. Отправка имитируется —
+        реальные запросы не уходят, показывается пример ответа. В теле запроса можно
+        сослаться на поле ответа предыдущего шага токеном
+        <code>{{ '{{ $1.transferId }}' }}</code> — такие ссылки подсвечены
+        <span class="placeholder reference">фиолетовым</span>.
     </p>
-    <p class="muted">
-        Сейчас вы можете подготавливать тестовые данные, регистрировать шаблоны и подставлять
-        в них значения отправителя/получателя.
-    </p>
-    <a class="btn" href="/templater/templates">К шаблонам</a>
+
+    <div class="send-empty" x-show="steps.length === 0" x-cloak>
+        <p class="muted">Пока нет шагов. Нажмите «Добавить шаг» и выберите заполненный шаблон.</p>
+    </div>
+
+    <div class="send-chain">
+        <template x-for="(step, idx) in steps" :key="step.key">
+            <section class="send-step">
+                <div class="send-step-header">
+                    <div class="send-step-title">
+                        <span class="send-step-num" x-text="idx + 1"></span>
+                        <span class="tree-method" :class="'method-' + (step.method || '').toLowerCase()"
+                              x-text="step.method || '·'"></span>
+                        <h2 x-text="step.name"></h2>
+                        <span class="project-badge" x-show="step.project_name">
+                            <span class="project-dot" :style="'background:' + (step.project_color || '#9E9E9E')"></span>
+                            <span x-text="step.project_name"></span>
+                        </span>
+                    </div>
+                    <div class="send-step-actions">
+                        <button class="btn small" type="button" title="Выше" @click="moveStep(idx, -1)"
+                                :disabled="idx === 0"><iconify-icon icon="lucide:chevron-up"></iconify-icon></button>
+                        <button class="btn small" type="button" title="Ниже" @click="moveStep(idx, 1)"
+                                :disabled="idx === steps.length - 1"><iconify-icon icon="lucide:chevron-down"></iconify-icon></button>
+                        <button class="btn small danger" type="button" title="Удалить шаг" @click="removeStep(idx)">
+                            <iconify-icon icon="lucide:trash-2"></iconify-icon></button>
+                    </div>
+                </div>
+
+                <div class="panel-url" x-show="step.url">
+                    <span class="panel-url-method" x-text="step.method"></span> <code x-text="step.url"></code>
+                </div>
+
+                <div class="send-step-body">
+                    <section class="send-block" x-show="step.headers && step.headers.length">
+                        <h3>Заголовки</h3>
+                        <table class="headers-table">
+                            <tbody>
+                                <template x-for="(h, hi) in step.headers" :key="hi">
+                                    <tr :class="{ 'header-dynamic': h.mode === 'dynamic', 'header-disabled': h.disabled }">
+                                        <td class="header-key" x-text="h.key"></td>
+                                        <td class="header-value">
+                                            <code x-text="h.value"></code>
+                                            <span class="tag" x-show="h.mode === 'dynamic'">динамический</span>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </section>
+
+                    <section class="send-block">
+                        <div class="send-block-title">
+                            <h3>Тело сообщения</h3>
+                            <div class="send-block-tools">
+                                <button class="btn small" type="button" @click="openRefUI(idx)" :disabled="idx === 0"
+                                        :title="idx === 0 ? 'У первого шага нет предыдущих ответов' : 'Подставить значение из ответа предыдущего шага'">
+                                    <iconify-icon icon="lucide:link"></iconify-icon> Вставить ссылку
+                                </button>
+                                <button class="btn small" type="button" @click="step.editingBody = !step.editingBody">
+                                    <iconify-icon icon="lucide:pencil"></iconify-icon>
+                                    <span x-text="step.editingBody ? 'Готово' : 'Редактировать тело'"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="send-ref-ui" x-show="refUI.stepIdx === idx" x-cloak>
+                            <div class="send-ref-row">
+                                <span class="muted">Из шага:</span>
+                                <template x-for="ps in priorSteps(idx)" :key="ps.num">
+                                    <button type="button" class="btn small"
+                                            :class="{ primary: refUI.sourceStep === ps.num }"
+                                            @click="selectRefSource(ps.num)">
+                                        <span x-text="'#' + ps.num + ' ' + ps.name"></span>
+                                        <span class="muted" x-show="!ps.sent"> · не отправлен</span>
+                                    </button>
+                                </template>
+                            </div>
+                            <div class="send-ref-row" x-show="refUI.sourceStep !== null">
+                                <span class="muted">Поле:</span>
+                                <template x-for="p in refUI.paths" :key="p.path">
+                                    <button type="button" class="btn small" @click="insertRef(refUI.sourceStep, p.path)">
+                                        <code x-text="p.path"></code>
+                                    </button>
+                                </template>
+                                <span class="muted" x-show="refUI.paths.length === 0">
+                                    В ответе нет полей — отправьте шаг-источник или впишите валидный JSON в «Тело ответа».
+                                </span>
+                            </div>
+                        </div>
+
+                        <pre class="template-code" x-show="!step.editingBody" x-html="highlightRefs(step.body)"></pre>
+                        <textarea x-show="step.editingBody" x-cloak class="send-body-edit template-code"
+                                  :id="'body-ta-' + step.key" x-model="step.body"
+                                  @input.debounce.500ms="invalidate(idx)" spellcheck="false" rows="10"></textarea>
+                    </section>
+
+                    <div class="send-actions">
+                        <button class="btn primary" type="button" @click="send(idx)" :disabled="step.sending">
+                            <iconify-icon icon="lucide:send"></iconify-icon> Отправить
+                        </button>
+                        <span class="muted" x-show="step.sending">Отправка…</span>
+                        <span class="send-error" x-show="step.error" x-text="step.error"></span>
+                    </div>
+
+                    <section class="send-block">
+                        <h3>Тело ответа (пример)</h3>
+                        <p class="muted send-sub">
+                            Отредактируйте пример ответа — из его полей берутся ссылки для следующих шагов.
+                        </p>
+                        <textarea class="send-body-edit template-code" x-model="step.mockResponse"
+                                  @input.debounce.500ms="invalidate(idx)" spellcheck="false" rows="6"></textarea>
+                    </section>
+
+                    <section class="send-block send-response" x-show="step.response" x-cloak>
+                        <h3>Итоговый ответ</h3>
+                        <div class="send-status-line">
+                            <span class="send-status-pill"
+                                  x-text="(step.response?.status || '') + ' ' + (step.response?.statusText || '')"></span>
+                            <span class="muted" x-text="(step.response?.latencyMs ?? '') + ' мс · мок'"></span>
+                        </div>
+                        <pre class="template-code" x-text="step.response?.body"></pre>
+                    </section>
+
+                    <section class="send-block" x-show="step.resolvedRequestHtml" x-cloak>
+                        <h3>Итоговый запрос</h3>
+                        <p class="muted send-sub">
+                            Тело с подставленными значениями ссылок (подсвечены фиолетовым).
+                        </p>
+                        <pre class="template-code" x-html="step.resolvedRequestHtml"></pre>
+                    </section>
+                </div>
+            </section>
+        </template>
+    </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% raw %}
+<script>
+    function sendChain(available, fetchBase, executeUrl) {
+        return {
+            available: available || [],
+            fetchBase: fetchBase,
+            executeUrl: executeUrl,
+            steps: [],
+            pickerOpen: false,
+            pickerSearch: '',
+            running: false,
+            refUI: { stepIdx: null, sourceStep: null, paths: [] },
+            _nextKey: 1,
+
+            init() {
+                this.load();
+            },
+
+            // ---------- persistence (browser-only) ----------
+            persist() {
+                try {
+                    localStorage.setItem('send-chain-v1', JSON.stringify(this.steps));
+                } catch (e) { /* storage full / disabled — ignore */ }
+            },
+            load() {
+                let raw = null;
+                try { raw = localStorage.getItem('send-chain-v1'); } catch (e) { raw = null; }
+                let parsed = [];
+                if (raw) {
+                    try { parsed = JSON.parse(raw) || []; } catch (e) { parsed = []; }
+                }
+                // Restore only the chain definition + edited bodies/responses;
+                // run results are ephemeral (re-run to regenerate them) so a reload
+                // never shows a stale error / response / resolved request.
+                this.steps = parsed.map((s) => {
+                    s.sending = false;
+                    s.error = '';
+                    s.response = null;
+                    s.resolvedRequestHtml = null;
+                    if (!s.key) s.key = 'k' + (this._nextKey++);
+                    return s;
+                });
+                this.steps.forEach((s) => {
+                    const n = parseInt(String(s.key).replace(/\D/g, ''), 10);
+                    if (!isNaN(n) && n >= this._nextKey) this._nextKey = n + 1;
+                });
+            },
+            reset() {
+                if (this.steps.length && !confirm('Очистить всю цепочку?')) return;
+                this.steps = [];
+                this.closeRefUI();
+                this.persist();
+            },
+
+            // ---------- step picker ----------
+            filteredAvailable() {
+                const q = this.pickerSearch.trim().toLowerCase();
+                if (!q) return this.available;
+                return this.available.filter((a) => (a.name || '').toLowerCase().includes(q));
+            },
+            async addStep(filledId) {
+                this.pickerOpen = false;
+                this.pickerSearch = '';
+                try {
+                    const r = await fetch(this.fetchBase + encodeURIComponent(filledId));
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    const d = await r.json();
+                    this.steps.push({
+                        key: 'k' + (this._nextKey++),
+                        filledId: d.id,
+                        name: d.name,
+                        method: d.method || '',
+                        url: d.url || '',
+                        headers: d.headers || [],
+                        format: d.format || 'json',
+                        body: d.body || '',
+                        editingBody: false,
+                        mockResponse: this.defaultMock(),
+                        response: null,
+                        resolvedRequestHtml: null,
+                        sending: false,
+                        error: '',
+                    });
+                    this.persist();
+                    this.toast('Шаг добавлен');
+                } catch (e) {
+                    this.toast('Не удалось загрузить шаблон', 'error');
+                }
+            },
+            defaultMock() {
+                return JSON.stringify({
+                    status: 'SUCCESS',
+                    transferId: 'TRF-' + Math.floor(100000 + Math.random() * 900000),
+                    processedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+                }, null, 2);
+            },
+            removeStep(idx) {
+                this.steps.splice(idx, 1);
+                // Indices shift on remove/reorder, so any open reference panel would
+                // now point at the wrong step — close it instead of tracking it.
+                this.closeRefUI();
+                this.persist();
+            },
+            moveStep(idx, delta) {
+                const j = idx + delta;
+                if (j < 0 || j >= this.steps.length) return;
+                const [s] = this.steps.splice(idx, 1);
+                this.steps.splice(j, 0, s);
+                this.closeRefUI();
+                this.persist();
+            },
+
+            // ---------- references / highlighting ----------
+            escapeHtml(s) {
+                return String(s == null ? '' : s)
+                    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            },
+            // Wrap {{ $N.path }} tokens in a purple span inside an escaped body.
+            // The pattern matches resolveBody's exactly — a token without a path
+            // (e.g. {{ $1 }}) is neither highlighted nor resolved, so the UI never
+            // implies something is a reference when it isn't.
+            highlightRefs(text) {
+                return this.escapeHtml(text).replace(/\{\{\s*\$\d+\.[^}\s]+\s*\}\}/g, (m) =>
+                    '<span class="placeholder reference" title="Ссылка на ответ предыдущего шага">' + m + '</span>');
+            },
+            priorSteps(idx) {
+                return this.steps.slice(0, idx).map((s, i) => ({
+                    num: i + 1, name: s.name, sent: !!s.response,
+                }));
+            },
+            openRefUI(idx) {
+                if (idx === 0) return;
+                this.refUI = { stepIdx: idx, sourceStep: null, paths: [] };
+            },
+            closeRefUI() {
+                this.refUI = { stepIdx: null, sourceStep: null, paths: [] };
+            },
+            // The JSON a reference reads from: the actual response once the step
+            // has been sent, otherwise its (editable) example response. Both the
+            // path picker and the resolver use this so they never disagree.
+            sourceBody(step) {
+                if (!step) return '';
+                return step.response ? step.response.body : (step.mockResponse || '');
+            },
+            selectRefSource(stepNum) {
+                const src = this.steps[stepNum - 1];
+                let paths = [];
+                if (src) {
+                    try { paths = this.leafPaths(JSON.parse(this.sourceBody(src))); } catch (e) { paths = []; }
+                }
+                this.refUI.sourceStep = stepNum;
+                this.refUI.paths = paths;
+            },
+            // Flatten a parsed JSON value to its leaf paths (a.b, a.c[0].d ...).
+            leafPaths(obj, prefix) {
+                prefix = prefix || '';
+                if (obj === null || typeof obj !== 'object') {
+                    return prefix ? [{ path: prefix }] : [];
+                }
+                let out = [];
+                if (Array.isArray(obj)) {
+                    if (obj.length === 0) return prefix ? [{ path: prefix }] : [];
+                    obj.forEach((v, i) => { out = out.concat(this.leafPaths(v, prefix + '[' + i + ']')); });
+                } else {
+                    const keys = Object.keys(obj);
+                    if (keys.length === 0) return prefix ? [{ path: prefix }] : [];
+                    keys.forEach((k) => {
+                        const p = prefix ? prefix + '.' + k : k;
+                        out = out.concat(this.leafPaths(obj[k], p));
+                    });
+                }
+                return out;
+            },
+            insertRef(stepNum, path) {
+                const idx = this.refUI.stepIdx;
+                if (idx === null) return;
+                const step = this.steps[idx];
+                const token = '{{ $' + stepNum + '.' + path + ' }}';
+                const ta = document.getElementById('body-ta-' + step.key);
+                if (step.editingBody && ta && typeof ta.selectionStart === 'number') {
+                    const start = ta.selectionStart;
+                    const end = ta.selectionEnd;
+                    const b = step.body || '';
+                    step.body = b.slice(0, start) + token + b.slice(end);
+                    this.$nextTick(() => {
+                        ta.focus();
+                        const pos = start + token.length;
+                        ta.setSelectionRange(pos, pos);
+                    });
+                } else {
+                    // Not editing: switch to edit mode and append so the user can
+                    // place the token where it belongs.
+                    step.editingBody = true;
+                    step.body = (step.body || '') + token;
+                }
+                this.closeRefUI();
+                this.persist();
+                this.toast('Ссылка вставлена');
+            },
+
+            // ---------- resolution ----------
+            getPath(obj, path) {
+                const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean);
+                let cur = obj;
+                for (const p of parts) {
+                    if (cur == null) return undefined;
+                    cur = cur[p];
+                }
+                return cur;
+            },
+            resolveValue(stepNum, path) {
+                const src = this.steps[stepNum - 1];
+                if (!src) return undefined;
+                let obj;
+                try { obj = JSON.parse(this.sourceBody(src)); } catch (e) { return undefined; }
+                return this.getPath(obj, path);
+            },
+            // Replace {{ $N.path }} tokens in a step's body; returns the resolved
+            // string, an HTML view (substitutions wrapped purple) and unresolved tokens.
+            // Advance a "currently inside a JSON string literal" flag across a chunk
+            // of template text, honouring backslash escapes. Only the template's own
+            // quotes matter, so we scan the literal text between tokens.
+            scanJsonStringState(inString, chunk) {
+                let i = 0;
+                while (i < chunk.length) {
+                    const ch = chunk[i];
+                    if (inString) {
+                        if (ch === '\\') { i += 2; continue; }
+                        if (ch === '"') inString = false;
+                    } else if (ch === '"') {
+                        inString = true;
+                    }
+                    i++;
+                }
+                return inString;
+            },
+            // Encode a resolved value for substitution so the result stays valid:
+            //  - JSON value position  -> JSON.stringify (string -> "...", number -> 123)
+            //  - inside a JSON string -> escaped characters WITHOUT the wrapping quotes
+            //    (so "TRF-{{ $1.id }}" -> "TRF-123", not "TRF-"123"")
+            //  - non-JSON body        -> raw string
+            encodeRef(val, isJson, inString) {
+                if (!isJson) {
+                    return (typeof val === 'string') ? val : JSON.stringify(val);
+                }
+                if (inString) {
+                    const s = (typeof val === 'string') ? val : JSON.stringify(val);
+                    return JSON.stringify(s).slice(1, -1);
+                }
+                return JSON.stringify(val);
+            },
+            resolveBody(idx) {
+                const step = this.steps[idx];
+                const src = step.body || '';
+                const isJson = (step.format || 'json') === 'json';
+                const re = /\{\{\s*\$(\d+)\.([^}\s]+)\s*\}\}/g;
+                const unresolved = [];
+                let html = '';
+                let resolved = '';
+                let last = 0;
+                let inString = false;
+                let m;
+                while ((m = re.exec(src)) !== null) {
+                    const before = src.slice(last, m.index);
+                    html += this.escapeHtml(before);
+                    resolved += before;
+                    if (isJson) inString = this.scanJsonStringState(inString, before);
+                    const val = this.resolveValue(parseInt(m[1], 10), m[2]);
+                    if (val === undefined) {
+                        unresolved.push(m[0]);
+                        html += '<span class="placeholder reference unresolved" title="Не удалось разрешить ссылку">'
+                            + this.escapeHtml(m[0]) + '</span>';
+                        resolved += m[0];
+                    } else {
+                        const strVal = this.encodeRef(val, isJson, inString);
+                        html += '<span class="placeholder reference" title="Из ответа шага ' + m[1] + '">'
+                            + this.escapeHtml(strVal) + '</span>';
+                        resolved += strVal;
+                    }
+                    last = re.lastIndex;
+                }
+                const tail = src.slice(last);
+                html += this.escapeHtml(tail);
+                resolved += tail;
+                return { resolved: resolved, html: html, unresolved: unresolved };
+            },
+
+            // ---------- "send" (mock) ----------
+            async send(idx) {
+                const step = this.steps[idx];
+                step.error = '';
+                step.sending = true;
+                const res = this.resolveBody(idx);
+                step.resolvedRequestHtml = res.html;
+                if (res.unresolved.length) {
+                    // Abort: don't "send" a request with dangling references and
+                    // don't keep a stale response that downstream steps could read.
+                    step.error = 'Не разрешены ссылки: ' + res.unresolved.join(', ');
+                    step.response = null;
+                    step.sending = false;
+                    this.persist();
+                    return;
+                }
+                try {
+                    const r = await fetch(this.executeUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            method: step.method,
+                            url: step.url,
+                            headers: step.headers,
+                            body: res.resolved,
+                            format: step.format,
+                            mock_response: step.mockResponse,
+                        }),
+                    });
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    const d = await r.json();
+                    step.response = {
+                        status: d.status,
+                        statusText: d.status_text,
+                        latencyMs: d.latency_ms,
+                        headers: d.headers,
+                        body: this.prettyJson(d.body),
+                    };
+                    this.persist();
+                } catch (e) {
+                    step.error = 'Ошибка отправки (мок)';
+                } finally {
+                    step.sending = false;
+                }
+            },
+            async sendAll() {
+                this.running = true;
+                try {
+                    for (let i = 0; i < this.steps.length; i++) {
+                        await this.send(i);
+                        // Stop the chain on the first failing step — later steps may
+                        // reference its (now absent) response.
+                        if (this.steps[i].error) break;
+                    }
+                } finally {
+                    this.running = false;
+                }
+            },
+            prettyJson(s) {
+                try { return JSON.stringify(JSON.parse(s), null, 2); } catch (e) { return s; }
+            },
+            // Editing the request body or the example response invalidates the last
+            // run: the resolved request / response shown belong to the old input.
+            invalidate(idx) {
+                const step = this.steps[idx];
+                step.response = null;
+                step.resolvedRequestHtml = null;
+                step.error = '';
+                this.persist();
+            },
+
+            toast(message, type) {
+                window.dispatchEvent(new CustomEvent('show-toast', {
+                    detail: { message: message, type: type || 'success' },
+                }));
+            },
+        };
+    }
+</script>
+{% endraw %}
 {% endblock %}
