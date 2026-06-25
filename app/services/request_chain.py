@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import random
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,12 +39,14 @@ def default_mock_response(now: datetime | None = None) -> str:
     demonstrate pulling fields (e.g. ``transferId``) into later requests.
     """
 
-    moment = now or datetime.utcnow()
+    moment = now or datetime.now(UTC)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
     return json.dumps(
         {
             "status": "SUCCESS",
             "transferId": f"TRF-{random.randint(100000, 999999)}",
-            "processedAt": moment.replace(microsecond=0).isoformat() + "Z",
+            "processedAt": moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
         ensure_ascii=False,
         indent=2,

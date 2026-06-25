@@ -46,12 +46,20 @@ class RequestChainRepository:
     async def get(
         self, chain_id: uuid.UUID, *, visible_group_ids: set[uuid.UUID] | None = None
     ) -> RequestChain | None:
-        """One chain with its steps eagerly loaded (ordered by position)."""
+        """One chain with its steps eagerly loaded (ordered by position).
+
+        ``populate_existing`` forces the eager collection to be refreshed from
+        the DB even when the chain is already in the identity map with a loaded
+        ``steps`` collection — the panel re-renders right after add/remove/reorder
+        (``expire_on_commit=False``), so without this a stale collection would be
+        served and the change wouldn't show until a full reload.
+        """
 
         stmt = (
             select(RequestChain)
             .options(selectinload(RequestChain.steps))
             .where(RequestChain.id == chain_id)
+            .execution_options(populate_existing=True)
         )
         cond = group_visibility_condition(RequestChain, visible_group_ids)
         if cond is not None:
@@ -77,17 +85,6 @@ class RequestChainRepository:
             )
         ).all()
         return [(row_id, list(path or [])) for row_id, path in rows]
-
-    async def list_by_folder(self, folder_path: list[str]) -> list[RequestChain]:
-        """Chains living exactly in ``folder_path`` — the sibling set for
-        drag-and-drop renumbering (steps not loaded)."""
-
-        stmt = (
-            select(RequestChain)
-            .where(RequestChain.folder_path == folder_path)
-            .order_by(RequestChain.display_order, RequestChain.created_at)
-        )
-        return list((await self.session.execute(stmt)).scalars().all())
 
     async def next_display_order(self, folder_path: list[str]) -> int:
         """1 + the highest ``display_order`` in ``folder_path`` (0 when empty)."""

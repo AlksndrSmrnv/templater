@@ -23,7 +23,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +36,24 @@ from app.services.request_chain import RequestChainService
 from app.utils.errors import DomainError
 
 router = APIRouter()
+
+
+def _toast_only(
+    message: str, toast_type: str = "success", *, refresh_filled_tree: bool = False
+) -> Response:
+    """A 200 with no body that shows a toast and swaps nothing (``HX-Reswap:
+    none``). Used on error paths where re-rendering the panel could itself fail
+    (e.g. the chain just became invisible), so HTMX must keep the current DOM."""
+
+    return Response(
+        status_code=200,
+        headers={
+            "HX-Trigger": toast_header(
+                message, toast_type=toast_type, refresh_filled_tree=refresh_filled_tree
+            ),
+            "HX-Reswap": "none",
+        },
+    )
 
 
 # ---------- serialization ----------
@@ -73,7 +91,9 @@ def _step_dependencies(steps: list[dict[str, Any]]) -> dict[int, list[int]]:
         found: list[int] = []
         for m in pattern.finditer(step.get("body") or ""):
             n = int(m.group(1))
-            if n not in found:
+            # Only prior steps are real dependencies; a self/forward reference
+            # ($N with N >= this step) can't resolve, so don't badge it.
+            if 1 <= n < idx and n not in found:
                 found.append(n)
         deps[idx] = sorted(found)
     return deps
@@ -226,11 +246,10 @@ async def htmx_delete_chain(
         await commit_or_409(session)
     except DomainError as exc:
         await session.rollback()
-        if redirect:
-            return Response(
-                status_code=200,
-                headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
-            )
+        # From the standalone page (redirect) or the inline panel (panel) there
+        # is no tree to swap into — show a toast and keep the current view.
+        if redirect or panel:
+            return _toast_only(exc.message, "error")
         return await _tree_response(
             request, templates, session, search=search,
             headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
@@ -272,9 +291,20 @@ async def htmx_chain_panel(
     session: AsyncSession = SessionDep,
     group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
-    return await _panel_response(
-        request, templates, session, chain_id, visible_group_ids=group_ids
-    )
+    try:
+        return await _panel_response(
+            request, templates, session, chain_id, visible_group_ids=group_ids
+        )
+    except DomainError as exc:
+        # The chain was deleted/hidden between the tree render and the click:
+        # swap the empty-state into the panel and refresh the tree to drop it,
+        # instead of letting the global handler swap raw JSON 404 into the panel.
+        return templates.TemplateResponse(
+            request,
+            "partials/filled_panel_empty.html",
+            {},
+            headers={"HX-Trigger": toast_header(exc.message, toast_type="error", refresh_filled_tree=True)},
+        )
 
 
 @router.get("/chains/{chain_id}")
@@ -285,7 +315,12 @@ async def page_chain(
     session: AsyncSession = SessionDep,
     group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
-    context = await _panel_context(session, chain_id, visible_group_ids=group_ids)
+    try:
+        context = await _panel_context(session, chain_id, visible_group_ids=group_ids)
+    except DomainError:
+        # Full-page nav to a missing/hidden chain — send the user to the
+        # workspace rather than rendering a raw JSON 404 in the browser.
+        return RedirectResponse("/templater/filled-templates", status_code=303)
     return templates.TemplateResponse(
         request,
         "chains/view.html",
@@ -311,11 +346,7 @@ async def htmx_add_step(
     try:
         filled_id = uuid.UUID(form_str(form, "filled_id"))
     except ValueError:
-        return await _panel_response(
-            request, templates, session, chain_id, standalone=standalone,
-            headers={"HX-Trigger": toast_header("Некорректный шаблон", toast_type="error")},
-            visible_group_ids=group_ids,
-        )
+        return _toast_only("Некорректный шаблон", "error")
     try:
         await RequestChainService(session).add_step(
             chain_id, filled_id, visible_group_ids=group_ids
@@ -323,11 +354,10 @@ async def htmx_add_step(
         await commit_or_409(session)
     except DomainError as exc:
         await session.rollback()
-        return await _panel_response(
-            request, templates, session, chain_id, standalone=standalone,
-            headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
-            visible_group_ids=group_ids,
-        )
+        # Toast and keep the current panel — re-rendering it here would re-fetch
+        # the chain and could raise again (e.g. the chain became invisible),
+        # swapping raw JSON into the panel.
+        return _toast_only(exc.message, "error")
     return await _panel_response(
         request, templates, session, chain_id, standalone=standalone,
         headers={"HX-Trigger": toast_header("Шаг добавлен", refresh_filled_tree=True)},

@@ -66,12 +66,13 @@ window.chainPanel = function (config) {
         async persistOrder() {
             const order = this.steps.map((s) => s.id).join(',');
             try {
-                await fetch(base + this.chainId + '/steps/reorder', {
+                const r = await fetch(base + this.chainId + '/steps/reorder', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: new URLSearchParams({ order: order }),
                 });
-            } catch (e) { /* ignore */ }
+                return r.ok;
+            } catch (e) { return false; }
         },
         refreshTree() {
             // Update the «N шагов» badge in the left tree after add/remove.
@@ -83,29 +84,40 @@ window.chainPanel = function (config) {
             const step = this.steps[idx];
             if (!step) return;
             if (!confirm('Удалить шаг из цепочки?')) return;
-            this.steps.splice(idx, 1);
-            this.closeRefUI();
+            // Persist first, then update the UI — a failed delete must not leave
+            // the step gone locally while it still exists on the server.
+            let ok = false;
             try {
-                await fetch(base + this.chainId + '/steps/' + step.id, { method: 'DELETE' });
-            } catch (e) { /* ignore */ }
+                const r = await fetch(base + this.chainId + '/steps/' + step.id, { method: 'DELETE' });
+                ok = r.ok;
+            } catch (e) { ok = false; }
+            if (!ok) { this.toast('Не удалось удалить шаг', 'error'); return; }
+            const pos = this.steps.findIndex((s) => s.id === step.id);
+            if (pos !== -1) this.steps.splice(pos, 1);
+            this.closeRefUI();
             this.refreshTree();
             this.toast('Шаг удалён');
         },
         async moveStep(idx, delta) {
             const j = idx + delta;
             if (j < 0 || j >= this.steps.length) return;
+            const prev = this.steps.slice();  // snapshot for rollback
             const [s] = this.steps.splice(idx, 1);
             this.steps.splice(j, 0, s);
             // Indices shift on reorder, so a reference panel would point at the
             // wrong step — close it.
             this.closeRefUI();
-            await this.persistOrder();
+            if (!await this.persistOrder()) {
+                this.steps = prev;  // server rejected — restore the old order
+                this.toast('Не удалось изменить порядок', 'error');
+            }
         },
 
         // ---------- references / dependencies / highlighting ----------
         escapeHtml(s) {
             return String(s == null ? '' : s)
-                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         },
         // Wrap {{ $N.path }} tokens in a purple span inside an escaped body. The
         // pattern matches resolveBody's exactly — a token without a path is
@@ -115,6 +127,8 @@ window.chainPanel = function (config) {
                 '<span class="placeholder reference" title="Ссылка на ответ предыдущего шага">' + m + '</span>');
         },
         // Prior step numbers (1-based) a step references — drives «зависит от шага N».
+        // Only steps before this one (1..idx) are real dependencies; a self or
+        // forward reference can't resolve, so it isn't badged.
         stepDeps(idx) {
             const body = (this.steps[idx] && this.steps[idx].body) || '';
             const re = /\{\{\s*\$(\d+)\.[^}\s]+\s*\}\}/g;
@@ -122,7 +136,7 @@ window.chainPanel = function (config) {
             let m;
             while ((m = re.exec(body)) !== null) {
                 const n = parseInt(m[1], 10);
-                if (!out.includes(n)) out.push(n);
+                if (n >= 1 && n <= idx && !out.includes(n)) out.push(n);
             }
             return out.sort((a, b) => a - b);
         },

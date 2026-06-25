@@ -177,10 +177,13 @@
                 <ul>
                     {% for c in chains | default([]) %}
                     <li>
+                        {# hx-swap="none": stay on this filled template and just
+                           toast + refresh the tree's step count, rather than
+                           replacing the panel with the chain editor. #}
                         <button type="button" @click="chainMenuOpen = false"
                                 hx-post="/templater/filled-templates-htmx/chains/{{ c.id }}/steps"
                                 hx-vals='{{ {"filled_id": (ft.id | string)} | tojson | forceescape }}'
-                                hx-target="#filled-panel" hx-swap="innerHTML">
+                                hx-swap="none">
                             <iconify-icon icon="lucide:workflow"></iconify-icon>
                             <span class="send-picker-name">{{ c.name }}</span>
                         </button>

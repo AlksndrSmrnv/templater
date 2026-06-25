@@ -65,3 +65,24 @@ async def test_execute_rejects_non_object_body() -> None:
 def test_execute_route_registered() -> None:
     paths = {r.path for r in chains.router.routes}
     assert "/send-htmx/execute" in paths
+
+
+def test_step_dependencies_only_counts_prior_steps() -> None:
+    steps = [
+        {"body": '{"a": 1}'},                                  # step 1: none
+        {"body": '{"id": "{{ $1.transferId }}"}'},             # step 2: -> 1
+        {"body": '{"x": "{{ $2.id }}", "self": "{{ $3.y }}", "fwd": "{{ $9.z }}"}'},
+    ]
+    deps = chains._step_dependencies(steps)
+    assert deps == {1: [], 2: [1], 3: [2]}  # self ($3) and forward ($9) dropped
+
+
+def test_default_mock_response_is_utc_z_json() -> None:
+    import json
+
+    from app.services.request_chain import default_mock_response
+
+    data = json.loads(default_mock_response())
+    assert data["status"] == "SUCCESS"
+    assert data["processedAt"].endswith("Z")
+    assert "transferId" in data
