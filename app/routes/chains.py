@@ -415,29 +415,6 @@ async def htmx_reorder_steps(
     return Response(status_code=204)
 
 
-@router.post("/filled-templates-htmx/chains/{chain_id}/steps/{step_id}")
-async def htmx_update_step(
-    chain_id: uuid.UUID,
-    step_id: uuid.UUID,
-    request: Request,
-    session: AsyncSession = SessionDep,
-    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
-) -> Response:
-    form = await request.form()
-    body = form_str(form, "body") if "body" in form else None
-    mock_response = form_str(form, "mock_response") if "mock_response" in form else None
-    try:
-        await RequestChainService(session).update_step(
-            chain_id, step_id, body=body, mock_response=mock_response,
-            visible_group_ids=group_ids,
-        )
-        await commit_or_409(session)
-    except DomainError as exc:
-        await session.rollback()
-        return JSONResponse(status_code=400, content={"message": exc.message})
-    return Response(status_code=204)
-
-
 def _step_body_json(step: RequestChainStep) -> JSONResponse:
     """The refreshed body + coloured markup for one step, for in-place client
     updates after a bind/unbind (no full-panel re-render, so other steps' sent

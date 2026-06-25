@@ -18,6 +18,7 @@ import json
 import random
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,28 +34,59 @@ from app.utils.errors import NotFoundError, ValidationFailed
 NAME_MAX_LEN = 255
 
 
-def _leaf_value(fmt: str, body: str, location: str) -> str | None:
-    """Current text value of the leaf at ``location`` in ``body``, or ``None``
-    if the body doesn't parse or the location is absent."""
+def _leaf_exists(fmt: str, body: str, location: str) -> bool:
+    """Whether a leaf at ``location`` is present in ``body``."""
 
     try:
-        leaves = walker.walk_json(body) if fmt == "json" else walker.walk_xml(body)
+        if fmt == "json":
+            leaves = walker.walk_json(body)
+        elif fmt == "xml":
+            leaves = walker.walk_xml(body)
+        else:
+            return False
     except Exception:
-        return None
-    for leaf in leaves:
-        if leaf.location == location:
-            return leaf.value
+        return False
+    return any(leaf.location == location for leaf in leaves)
+
+
+def _original_leaf(fmt: str, body: str, location: str) -> Any:
+    """The leaf's *typed* value (so a JSON number round-trips as a number on
+    reset, not a string), or ``None`` if the body doesn't parse / location is
+    absent. XML is text-only by nature."""
+
+    if fmt == "json":
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        node: Any = data
+        for tok in location.lstrip("/").split("/"):
+            tok = tok.replace("~1", "/").replace("~0", "~")
+            try:
+                node = node[int(tok)] if isinstance(node, list) else node[tok]
+            except (KeyError, IndexError, ValueError, TypeError):
+                return None
+        return node
+    if fmt == "xml":
+        try:
+            leaves = walker.walk_xml(body)
+        except Exception:
+            return None
+        return next((leaf.value for leaf in leaves if leaf.location == location), None)
     return None
 
 
-def _replace_leaf(fmt: str, body: str, location: str, new_value: str) -> str:
-    """Return ``body`` with the leaf at ``location`` set to ``new_value``."""
+def _replace_leaf(fmt: str, body: str, location: str, new_value: Any) -> str:
+    """Return ``body`` with the leaf at ``location`` set to ``new_value``.
+
+    ``new_value`` keeps its Python type for JSON (so resetting a number restores
+    a number); only ``json``/``xml`` bodies are supported."""
 
     if fmt == "json":
         return walker.replace_json(body, {location: new_value})
     if fmt == "xml":
-        return walker.replace_xml(body, {location: new_value})
-    return body
+        return walker.replace_xml(body, {location: str(new_value)})
+    raise ValidationFailed("Неподдерживаемый формат тела для привязки поля")
 
 
 def default_mock_response(now: datetime | None = None) -> str:
@@ -228,22 +260,6 @@ class RequestChainService:
         for position, remaining in enumerate(await self.repo.list_steps(chain_id)):
             remaining.position = position
 
-    async def update_step(
-        self,
-        chain_id: uuid.UUID,
-        step_id: uuid.UUID,
-        *,
-        body: str | None = None,
-        mock_response: str | None = None,
-        visible_group_ids: set[uuid.UUID] | None = None,
-    ) -> RequestChainStep:
-        step = await self._get_step(chain_id, step_id, visible_group_ids=visible_group_ids)
-        if body is not None:
-            step.body = body
-        if mock_response is not None:
-            step.mock_response = mock_response
-        return step
-
     async def bind_field(
         self,
         chain_id: uuid.UUID,
@@ -262,16 +278,22 @@ class RequestChainService:
         after the source is re-bound to a different field."""
 
         ref_path = (ref_path or "").strip()
-        if ref_step < 1 or not ref_path:
+        if not ref_path:
             raise ValidationFailed("Некорректная ссылка на поле ответа")
         step = await self._get_step(chain_id, step_id, visible_group_ids=visible_group_ids)
-        current = _leaf_value(step.format, step.body, location)
-        if current is None:
+        # A reference may only point at an *earlier* step (1-based ≤ this step's
+        # 0-based position). The UI already restricts this; enforce it server-side
+        # so a forged request can't store an unresolvable forward/self reference.
+        if not 1 <= ref_step <= step.position:
+            raise ValidationFailed("Ссылка может указывать только на предыдущий шаг")
+        if not _leaf_exists(step.format, step.body, location):
             raise NotFoundError("Поле не найдено в теле запроса")
         # Remember the first (true literal/dynamic) value only — a re-bind must
-        # not overwrite it with a previous reference token.
+        # not overwrite it with a previous reference token. Stored typed so a
+        # number resets to a number, not a string.
         if location not in (step.bindings or {}):
-            step.bindings = {**(step.bindings or {}), location: current}
+            original = _original_leaf(step.format, step.body, location)
+            step.bindings = {**(step.bindings or {}), location: original}
         token = f"{{{{ ${ref_step}.{ref_path} }}}}"
         step.body = _replace_leaf(step.format, step.body, location, token)
         return step

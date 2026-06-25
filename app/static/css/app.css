@@ -525,9 +525,14 @@ h3 { font-size: var(--fs-lg); line-height: 1.3; font-weight: 600; letter-spacing
 /* «plain» = untouched literal in a chain step: white, no fill, but still
    clickable so any field can be bound to a previous response. */
 .template-code .placeholder.plain { background: transparent; color: inherit; border-bottom: 1px dashed transparent; }
-/* In a bindable chain body every field hints at being clickable. */
-.chain-body-bindable .placeholder { cursor: pointer; }
+/* In a bindable chain body every field — including green «filled» ones, whose
+   base rule sets cursor:default — hints at being clickable. The .filled
+   override needs the matching specificity to win. */
+.chain-body-bindable .placeholder,
+.chain-body-bindable .placeholder.filled { cursor: pointer; }
 .chain-body-bindable .placeholder:hover { outline: 1px solid rgba(255, 255, 255, 0.35); outline-offset: 1px; }
+/* The first step isn't bindable (no previous response) — don't hint clickable. */
+.chain-body:not(.chain-body-bindable) .placeholder { cursor: default; }
 
 .role-panels {
     display: grid;

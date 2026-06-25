@@ -136,11 +136,9 @@ window.chainPanel = function (config) {
         onFieldClick(ev, idx) {
             const span = ev.target.closest && ev.target.closest('.placeholder[data-location]');
             if (!span) return;
-            if (idx === 0) {
-                // The first step has no previous response to pull from.
-                this.toast('У первого шага нет предыдущих ответов', 'error');
-                return;
-            }
+            // The first step has no previous response to pull from — its fields
+            // aren't bindable (and the cursor reflects that), so do nothing.
+            if (idx === 0) return;
             this.picker = {
                 stepIdx: idx,
                 location: span.dataset.location,
@@ -195,7 +193,7 @@ window.chainPanel = function (config) {
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: new URLSearchParams({ location: location, ref_step: stepNum, ref_path: path }),
                 });
-                if (!r.ok) throw new Error('HTTP ' + r.status);
+                if (!r.ok) throw new Error(await this.errorMessage(r, 'Не удалось привязать поле'));
                 const d = await r.json();
                 step.body = d.body;
                 step.bodyHtml = d.body_html;
@@ -203,7 +201,7 @@ window.chainPanel = function (config) {
                 this.closePicker();
                 this.toast('Поле привязано к ответу шага ' + stepNum);
             } catch (e) {
-                this.toast('Не удалось привязать поле', 'error');
+                this.toast(e.message || 'Не удалось привязать поле', 'error');
             }
         },
         async unbindField() {
@@ -217,7 +215,7 @@ window.chainPanel = function (config) {
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: new URLSearchParams({ location: location }),
                 });
-                if (!r.ok) throw new Error('HTTP ' + r.status);
+                if (!r.ok) throw new Error(await this.errorMessage(r, 'Не удалось сбросить привязку'));
                 const d = await r.json();
                 step.body = d.body;
                 step.bodyHtml = d.body_html;
@@ -225,8 +223,17 @@ window.chainPanel = function (config) {
                 this.closePicker();
                 this.toast('Привязка сброшена');
             } catch (e) {
-                this.toast('Не удалось сбросить привязку', 'error');
+                this.toast(e.message || 'Не удалось сбросить привязку', 'error');
             }
+        },
+        // Pull the server's {message: …} off a failed response, falling back to
+        // a generic label so the user sees the concrete reason (e.g. «Поле не
+        // найдено в теле запроса») instead of an opaque HTTP code.
+        async errorMessage(r, fallback) {
+            try {
+                const d = await r.json();
+                return (d && d.message) || fallback;
+            } catch (e) { return fallback; }
         },
 
         // ---------- resolution (for the stub send) ----------
@@ -379,12 +386,18 @@ window.chainPanel = function (config) {
         prettyJson(s) {
             try { return JSON.stringify(JSON.parse(s), null, 2); } catch (e) { return s; }
         },
-        // Binding a field changes the body, so the last run no longer matches.
+        // Binding a field changes this step's body, so its own last run no longer
+        // matches. Later steps may reference this step's response, so their
+        // resolved-request preview is now stale too — clear it (keep their
+        // responses, which the field picker still reads from).
         invalidate(idx) {
             const step = this.steps[idx];
             step.response = null;
             step.resolvedRequestHtml = null;
             step.error = '';
+            for (let j = idx + 1; j < this.steps.length; j++) {
+                this.steps[j].resolvedRequestHtml = null;
+            }
         },
 
         toast(message, type) {
