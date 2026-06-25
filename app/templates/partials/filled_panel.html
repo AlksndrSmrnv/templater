@@ -17,7 +17,47 @@
             .then(t => navigator.clipboard.writeText(t))
             .then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Скопировано' } })))
             .catch(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Не удалось скопировать', type: 'error' } })));
-    }
+    },
+
+    // Request envelope snapshotted on the filled template, for the one-off
+    // mock send below. Sending is a STUB — no network request is made; the
+    // example response is generated client-side and echoed by the seam.
+    envelope: {
+        method: {{ (ft.http_method_snapshot or '') | tojson | forceescape }},
+        url: {{ (ft.url_snapshot or '') | tojson | forceescape }},
+        headers: {{ (ft.headers_snapshot or []) | tojson | forceescape }},
+        format: {{ (ft.format or 'json') | tojson | forceescape }},
+    },
+    sending: false,
+    response: null,
+    chainMenuOpen: false,
+    exampleResponse() {
+        return JSON.stringify({
+            status: 'SUCCESS',
+            transferId: 'TRF-' + Math.floor(100000 + Math.random() * 900000),
+            processedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+        }, null, 2);
+    },
+    sendOnce() {
+        this.sending = true;
+        this.response = null;
+        fetch('/templater/send-htmx/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                method: this.envelope.method,
+                url: this.envelope.url,
+                headers: this.envelope.headers,
+                body: '',
+                format: this.envelope.format,
+                mock_response: this.exampleResponse(),
+            }),
+        })
+            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(d => { this.response = { status: d.status, statusText: d.status_text, latencyMs: d.latency_ms, body: d.body }; })
+            .catch(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Ошибка отправки (мок)', type: 'error' } })))
+            .finally(() => { this.sending = false; });
+    },
 }">
 
     {% if not standalone %}
@@ -125,7 +165,44 @@
 
     <div class="form-actions" style="margin-top:18px;">
         <button class="btn primary" type="button" @click="copy()"><iconify-icon icon="lucide:clipboard-copy"></iconify-icon> Копировать</button>
+        <button class="btn" type="button" @click="sendOnce()" :disabled="sending">
+            <iconify-icon icon="lucide:send"></iconify-icon>
+            <span x-text="sending ? 'Отправка…' : 'Отправить'"></span>
+        </button>
+        <div class="send-picker" @click.outside="chainMenuOpen = false" style="position:relative;">
+            <button class="btn" type="button" @click="chainMenuOpen = !chainMenuOpen">
+                <iconify-icon icon="lucide:workflow"></iconify-icon> В цепочку
+            </button>
+            <div class="send-picker-menu" x-show="chainMenuOpen" x-cloak>
+                <ul>
+                    {% for c in chains | default([]) %}
+                    <li>
+                        <button type="button" @click="chainMenuOpen = false"
+                                hx-post="/templater/filled-templates-htmx/chains/{{ c.id }}/steps"
+                                hx-vals='{{ {"filled_id": (ft.id | string)} | tojson | forceescape }}'
+                                hx-target="#filled-panel" hx-swap="innerHTML">
+                            <iconify-icon icon="lucide:workflow"></iconify-icon>
+                            <span class="send-picker-name">{{ c.name }}</span>
+                        </button>
+                    </li>
+                    {% endfor %}
+                    {% if not (chains | default([])) %}
+                    <li class="send-picker-empty muted">Нет цепочек. Создайте цепочку в дереве слева (иконка <iconify-icon icon="lucide:workflow"></iconify-icon>).</li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
     </div>
+
+    <section class="send-block send-response" x-show="response" x-cloak style="margin-top:14px;">
+        <h3>Пример ответа (мок)</h3>
+        <p class="muted send-sub">Реальная отправка не выполняется — показан пример JSON-ответа.</p>
+        <div class="send-status-line">
+            <span class="send-status-pill" x-text="(response?.status || '') + ' ' + (response?.statusText || '')"></span>
+            <span class="muted" x-text="(response?.latencyMs ?? '') + ' мс · мок'"></span>
+        </div>
+        <pre class="template-code" x-text="response?.body"></pre>
+    </section>
 
     <h3 style="margin-top:18px;">Результат</h3>
     <pre class="template-code">{{ rendered_html | safe }}</pre>

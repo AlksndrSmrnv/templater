@@ -1,7 +1,7 @@
 {% macro render_node(node, path) %}
     {% for folder_name, child in node.folders.items() %}
     {% set fpath = path + [folder_name] %}
-    <li class="tree-folder" x-data="{ open: true, editing: false, creating: false }">
+    <li class="tree-folder" x-data="{ open: true, editing: false, creating: false, creatingChain: false }">
         <div class="tree-folder-label">
             <span class="tree-caret" @click="open = !open" x-text="open ? '▾' : '▸'"></span>
             <span class="tree-folder-icon"><iconify-icon icon="lucide:folder"></iconify-icon></span>
@@ -21,6 +21,8 @@
                         @click.stop="editing = true; $nextTick(() => $refs.renameInput.focus())"><iconify-icon icon="lucide:pencil"></iconify-icon></button>
                 <button type="button" class="tree-act" title="Новая подпапка"
                         @click.stop="creating = !creating"><iconify-icon icon="lucide:folder-plus"></iconify-icon></button>
+                <button type="button" class="tree-act" title="Новая цепочка запросов"
+                        @click.stop="creatingChain = !creatingChain"><iconify-icon icon="lucide:workflow"></iconify-icon></button>
                 <button type="button" class="tree-act danger" title="Удалить папку (только пустую)"
                         hx-delete="/templater/filled-templates-htmx/folders"
                         hx-vals="{{ {'path': (fpath | tojson)} | tojson | forceescape }}"
@@ -36,6 +38,14 @@
             <input type="hidden" name="parent" value="{{ fpath | tojson | forceescape }}">
             <input type="text" name="name" placeholder="Имя подпапки" required @click.stop>
             <button type="submit" class="btn small" title="Создать">✓</button>
+        </form>
+        <form class="tree-inline-form tree-subfolder-form" x-show="creatingChain" x-cloak
+              hx-post="/templater/filled-templates-htmx/chains"
+              hx-include=".tree-search"
+              hx-target="#filled-tree" hx-swap="innerHTML">
+            <input type="hidden" name="parent" value="{{ fpath | tojson | forceescape }}">
+            <input type="text" name="name" placeholder="Имя цепочки" required @click.stop>
+            <button type="submit" class="btn small" title="Создать цепочку">✓</button>
         </form>
         <ul class="tree-list" x-show="open"
             data-folder-path="{{ fpath | tojson | forceescape }}">
@@ -59,9 +69,42 @@
         {% if f.unresolved %}<span class="tree-flag" title="Есть незаполненные плейсхолдеры"><iconify-icon icon="lucide:triangle-alert"></iconify-icon></span>{% endif %}
     </li>
     {% endfor %}
+    {% for ch in node.chains | default([]) %}
+    <li class="tree-chain"
+        :class="{ active: selected === '{{ ch.id }}' }"
+        @click="selected = '{{ ch.id }}'"
+        hx-get="/templater/filled-templates-htmx/chains/{{ ch.id }}/panel"
+        hx-target="#filled-panel"
+        hx-swap="innerHTML"
+        x-data="{ editing: false }">
+        <span class="tree-chain-icon" title="Цепочка запросов"><iconify-icon icon="lucide:workflow"></iconify-icon></span>
+        <span class="tree-name" x-show="!editing" title="{{ ch.name }}">{{ ch.name }}</span>
+        <span class="tree-chain-count" title="Шагов в цепочке">{{ ch.step_count }}</span>
+        <form class="tree-inline-form" x-show="editing" x-cloak @click.stop
+              hx-post="/templater/filled-templates-htmx/chains/{{ ch.id }}/rename"
+              hx-include=".tree-search"
+              hx-target="#filled-tree" hx-swap="innerHTML">
+            <input class="tree-rename-input" type="text" name="name" value="{{ ch.name }}"
+                   required x-ref="chainRename"
+                   @click.stop @keydown.escape.stop="editing = false">
+            <button type="submit" class="btn small" title="Сохранить">✓</button>
+        </form>
+        <span class="tree-chain-actions">
+            <a class="tree-act" href="/templater/chains/{{ ch.id }}" title="Открыть на отдельной странице" @click.stop><iconify-icon icon="lucide:external-link"></iconify-icon></a>
+            <button type="button" class="tree-act" title="Переименовать"
+                    @click.stop="editing = true; $nextTick(() => $refs.chainRename.focus())"><iconify-icon icon="lucide:pencil"></iconify-icon></button>
+            <button type="button" class="tree-act danger" title="Удалить цепочку"
+                    hx-delete="/templater/filled-templates-htmx/chains/{{ ch.id }}"
+                    hx-include=".tree-search"
+                    hx-confirm="Удалить цепочку «{{ ch.name }}»?"
+                    hx-target="#filled-tree" hx-swap="innerHTML"
+                    @click.stop><iconify-icon icon="lucide:trash-2"></iconify-icon></button>
+        </span>
+    </li>
+    {% endfor %}
 {% endmacro %}
 
-<div class="tree-collection" x-data="{ open: true, creating: false }">
+<div class="tree-collection" x-data="{ open: true, creating: false, creatingChain: false }">
     <div class="tree-collection-head">
         <div class="tree-collection-title" @click="open = !open">
             <span class="tree-caret" x-text="open ? '▾' : '▸'"></span>
@@ -72,6 +115,8 @@
         <div class="tree-collection-actions">
             <button class="btn small" title="Новая папка в корне"
                     @click.stop="creating = !creating"><iconify-icon icon="lucide:folder-plus"></iconify-icon></button>
+            <button class="btn small" title="Новая цепочка в корне"
+                    @click.stop="creatingChain = !creatingChain"><iconify-icon icon="lucide:workflow"></iconify-icon></button>
         </div>
     </div>
     <form class="tree-inline-form" x-show="creating" x-cloak
@@ -82,12 +127,20 @@
         <input type="text" name="name" placeholder="Имя папки" required>
         <button type="submit" class="btn small" title="Создать">✓</button>
     </form>
+    <form class="tree-inline-form" x-show="creatingChain" x-cloak
+          hx-post="/templater/filled-templates-htmx/chains"
+          hx-include=".tree-search"
+          hx-target="#filled-tree" hx-swap="innerHTML">
+        <input type="hidden" name="parent" value="[]">
+        <input type="text" name="name" placeholder="Имя цепочки" required>
+        <button type="submit" class="btn small" title="Создать цепочку">✓</button>
+    </form>
     <ul class="tree-list tree-root" x-show="open" data-folder-path="[]">
         {{ render_node(tree, []) }}
     </ul>
 </div>
 
-{% if not tree.folders and not tree.templates %}
+{% if not tree.folders and not tree.templates and not (tree.chains | default([])) %}
 <p class="muted tree-empty">
     {% if search %}Ничего не найдено.{% else %}Пока нет заполненных шаблонов. Откройте шаблон, заполните его и сохраните сюда.{% endif %}
 </p>

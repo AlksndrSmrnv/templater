@@ -9,7 +9,14 @@ from sqlalchemy import Text, func, or_, select
 from sqlalchemy import cast as sa_cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Account, Card, Client, FilledTemplate, MessageTemplate
+from app.db.models import (
+    Account,
+    Card,
+    Client,
+    FilledTemplate,
+    MessageTemplate,
+    RequestChain,
+)
 
 # Real columns (not JSONB attributes) the entity list may sort on.
 _REAL_SORT_COLUMNS = frozenset({"description", "created_at", "updated_at"})
@@ -45,9 +52,9 @@ def group_visibility_condition(
 
     if visible_group_ids is None:
         return None
-    # Models with their own ``group_id`` column (Client, FilledTemplate): public
-    # rows plus rows in an unlocked group.
-    if model is Client or model is FilledTemplate:
+    # Models with their own ``group_id`` column (Client, FilledTemplate,
+    # RequestChain): public rows plus rows in an unlocked group.
+    if model is Client or model is FilledTemplate or model is RequestChain:
         column = model.group_id
         cond: Any = column.is_(None)
         if visible_group_ids:

@@ -25,10 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import FilledTemplate, MessageTemplate
 from app.repositories.entity import AccountRepository, CardRepository, ClientRepository
 from app.repositories.filled_template import DEFAULT_LIST_LIMIT, FilledTemplateRepository
+from app.repositories.request_chain import RequestChainRepository
 from app.repositories.settings import SettingsRepository
 from app.routes.entities_htmx import entity_label
 from app.schemas.template import TemplateFillRequest
-from app.services.collections import _norm_path, _starts_with, build_folder_tree
+from app.services.collections import _new_node, _norm_path, _starts_with, build_folder_tree
 from app.utils.errors import NotFoundError, ValidationFailed
 
 NAME_MAX_LEN = 255
@@ -149,6 +150,9 @@ class FilledTemplateService:
         self.session = session
         self.repo = FilledTemplateRepository(session)
         self.settings = SettingsRepository(session)
+        # Request chains share this folder tree, so folder create/rename/delete
+        # and the tree build must account for their ``folder_path`` values too.
+        self.chains = RequestChainRepository(session)
 
     async def list_all(
         self,
@@ -204,13 +208,54 @@ class FilledTemplateService:
         items = await self.repo.list_all(search=query, visible_group_ids=visible_group_ids)
         explicit = list(await self.settings.get(FILLED_ROOT_FOLDERS_KEY) or [])
         tree = build_folder_tree(items, extra_folders=None if query else explicit)
+        chain_count = await self._graft_chains(
+            tree, search=query, visible_group_ids=visible_group_ids
+        )
         return {
             "tree": tree,
             "count": len(items),
+            "chain_count": chain_count,
             "search": search,
             "list_limit": DEFAULT_LIST_LIMIT,
             "truncated": len(items) >= DEFAULT_LIST_LIMIT,
         }
+
+    async def _graft_chains(
+        self,
+        tree: dict[str, Any],
+        *,
+        search: str = "",
+        visible_group_ids: set[uuid.UUID] | None = None,
+    ) -> int:
+        """Place request chains into the (already built) filled-template tree.
+
+        Each chain is appended to its folder node's ``chains`` list as a
+        lightweight dict (the ORM rows' ``steps`` are not loaded, so we never
+        touch the lazy relationship here). While searching, chains are filtered
+        by name — mirroring how filled templates collapse to matches. Returns the
+        number of chains placed.
+        """
+
+        chains = await self.chains.list_all(visible_group_ids=visible_group_ids)
+        query = search.strip().lower()
+        if query:
+            chains = [c for c in chains if query in (c.name or "").lower()]
+        counts = await self.chains.step_counts()
+        ordered = sorted(chains, key=lambda c: (c.display_order, c.created_at))
+        for chain in ordered:
+            node = tree
+            for folder in chain.folder_path or []:
+                node = node["folders"].setdefault(str(folder), _new_node())
+            node.setdefault("chains", []).append(
+                {
+                    "id": str(chain.id),
+                    "name": chain.name,
+                    "step_count": counts.get(chain.id, 0),
+                    "group_name_snapshot": getattr(chain, "group_name_snapshot", "") or "",
+                    "group_color_snapshot": getattr(chain, "group_color_snapshot", "") or "",
+                }
+            )
+        return len(ordered)
 
     async def create_folder(self, parent_path: list[str], name: str) -> list[str]:
         """Add an (initially empty) folder under ``parent_path``."""
@@ -221,7 +266,13 @@ class FilledTemplateService:
         if not clean_name:
             raise ValidationFailed("Имя папки не может быть пустым")
         new_path = [*parent, clean_name]
-        existing = _expand_prefixes([*folders, *await self.repo.list_folder_paths()])
+        existing = _expand_prefixes(
+            [
+                *folders,
+                *await self.repo.list_folder_paths(),
+                *await self.chains.list_folder_paths(),
+            ]
+        )
         if parent and tuple(parent) not in existing:
             raise ValidationFailed("Родительская папка не найдена")
         if tuple(new_path) in existing:
@@ -235,6 +286,7 @@ class FilledTemplateService:
 
         folders = await self._explicit_folders()
         pairs = await self.repo.list_ids_with_paths()
+        chain_pairs = await self.chains.list_ids_with_paths()
         old_path = _norm_path(path)
         if not old_path:
             raise ValidationFailed("Не указана папка для переименования")
@@ -243,7 +295,9 @@ class FilledTemplateService:
             raise ValidationFailed("Имя папки не может быть пустым")
         new_path = [*old_path[:-1], clean_name]
 
-        all_paths = _expand_prefixes([*folders, *[fp for _, fp in pairs]])
+        all_paths = _expand_prefixes(
+            [*folders, *[fp for _, fp in pairs], *[fp for _, fp in chain_pairs]]
+        )
         # Validate the folder exists *before* the no-op short-circuit, otherwise
         # renaming a missing folder to its own name would falsely report success.
         if tuple(old_path) not in all_paths:
@@ -263,6 +317,14 @@ class FilledTemplateService:
         for item in await self.repo.get_many(descendant_ids):
             fp = _norm_path(item.folder_path)
             item.folder_path = [*new_path, *fp[len(old_path):]]
+        # Chains share the namespace, so re-prefix the ones living under the
+        # renamed folder too.
+        chain_descendant_ids = [
+            row_id for row_id, fp in chain_pairs if _starts_with(_norm_path(fp), old_path)
+        ]
+        for chain in await self.chains.get_many(chain_descendant_ids):
+            fp = _norm_path(chain.folder_path)
+            chain.folder_path = [*new_path, *fp[len(old_path):]]
 
         updated_folders: list[list[str]] = []
         for raw in folders:
@@ -280,13 +342,14 @@ class FilledTemplateService:
 
         folders = await self._explicit_folders()
         item_paths = await self.repo.list_folder_paths()
+        chain_paths = await self.chains.list_folder_paths()
         target = _norm_path(path)
         if not target:
             raise ValidationFailed("Не указана папка для удаления")
-        if tuple(target) not in _expand_prefixes([*folders, *item_paths]):
+        if tuple(target) not in _expand_prefixes([*folders, *item_paths, *chain_paths]):
             raise ValidationFailed("Папка не найдена")
         has_items = any(
-            _starts_with(_norm_path(fp), target) for fp in item_paths
+            _starts_with(_norm_path(fp), target) for fp in (*item_paths, *chain_paths)
         )
         has_children = any(
             len(p := _norm_path(raw)) > len(target) and _starts_with(p, target)
@@ -351,7 +414,11 @@ class FilledTemplateService:
 
         folders = await self._explicit_folders()
         implied = await self.repo.list_folder_paths()
-        return [list(p) for p in sorted(_expand_prefixes([*folders, *implied]))]
+        chain_implied = await self.chains.list_folder_paths()
+        return [
+            list(p)
+            for p in sorted(_expand_prefixes([*folders, *implied, *chain_implied]))
+        ]
 
     async def _fill_group(
         self, fill_request: TemplateFillRequest

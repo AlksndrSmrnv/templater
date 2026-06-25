@@ -14,6 +14,7 @@ from app.db.session import shutdown_engine
 from app.routes import (
     access_groups,
     assistant,
+    chains,
     collections,
     entities_htmx,
     export_import,
@@ -72,6 +73,7 @@ def create_app() -> FastAPI:
     app.include_router(templates_reg.router, prefix=app_prefix)
     app.include_router(collections.router, prefix=app_prefix)
     app.include_router(filled_templates.router, prefix=app_prefix)
+    app.include_router(chains.router, prefix=app_prefix)
     app.include_router(send.router, prefix=app_prefix)
     app.include_router(settings_routes.router, prefix=app_prefix)
     app.include_router(settings_routes.edit_router, prefix=app_prefix)

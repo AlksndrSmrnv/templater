@@ -91,6 +91,31 @@ class _FakeFilledRepo:
         return (max(orders) + 1) if orders else 0
 
 
+class _FakeChainRepo:
+    """Minimal request-chain repo so folder ops (which now share the namespace
+    with chains) work without a live DB. Empty by default — these tests cover
+    filled-template folders, so the chain side just contributes no paths."""
+
+    def __init__(self, chains: list[SimpleNamespace] | None = None) -> None:
+        self.chains = list(chains or [])
+
+    async def list_folder_paths(self) -> list[list[str]]:
+        return [list(c.folder_path or []) for c in self.chains]
+
+    async def list_ids_with_paths(self) -> list[tuple[uuid.UUID, list[str]]]:
+        return [(c.id, list(c.folder_path or [])) for c in self.chains]
+
+    async def get_many(self, ids):  # type: ignore[no-untyped-def]
+        wanted = set(ids)
+        return [c for c in self.chains if c.id in wanted]
+
+    async def list_all(self, *, limit=200, visible_group_ids=None) -> list[SimpleNamespace]:
+        return list(self.chains)
+
+    async def step_counts(self) -> dict[uuid.UUID, int]:
+        return {}
+
+
 class _FakeSettingsRepo:
     def __init__(self, values: dict[str, object] | None = None) -> None:
         self.values = dict(values or {})
@@ -112,6 +137,18 @@ def _item(name: str, folder_path: list[str], order: int) -> SimpleNamespace:
     )
 
 
+def _chain(name: str, folder_path: list[str], order: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        name=name,
+        folder_path=folder_path,
+        display_order=order,
+        created_at=datetime(2026, 6, 11, 12, 0),
+        group_name_snapshot="",
+        group_color_snapshot="",
+    )
+
+
 def _service(
     items: list[SimpleNamespace],
     *,
@@ -123,6 +160,7 @@ def _service(
     svc = FilledTemplateService(cast(Any, session))
     svc.repo = repo  # type: ignore[assignment]
     svc.settings = settings or _FakeSettingsRepo()  # type: ignore[assignment]
+    svc.chains = _FakeChainRepo()  # type: ignore[assignment]
     return svc
 
 
@@ -344,6 +382,45 @@ async def test_build_tree_search_filters_items_and_drops_empty_folders() -> None
     assert tree["templates"] == []
     assert ctx["count"] == 1
     assert ctx["search"] == "перевод"
+
+
+@pytest.mark.asyncio
+async def test_build_tree_grafts_chains_into_folder_nodes() -> None:
+    settings = _FakeSettingsRepo({FILLED_ROOT_FOLDERS_KEY: [["Проект"]]})
+    grouped = _item("grouped", ["Проект"], 0)
+    svc = _service([grouped], settings=settings)
+    # Two chains: one at root, one inside the folder.
+    svc.chains = _FakeChainRepo([  # type: ignore[assignment]
+        _chain("Root chain", [], 0),
+        _chain("Folder chain", ["Проект"], 0),
+    ])
+
+    ctx = await svc.build_tree()
+    tree = ctx["tree"]
+    assert [c["name"] for c in tree["chains"]] == ["Root chain"]
+    assert [c["name"] for c in tree["folders"]["Проект"]["chains"]] == ["Folder chain"]
+    assert ctx["chain_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_rename_folder_reprefixes_chains() -> None:
+    settings = _FakeSettingsRepo({FILLED_ROOT_FOLDERS_KEY: [["Проект"]]})
+    chain_inside = _chain("c", ["Проект"], 0)
+    svc = _service([], settings=settings)
+    svc.chains = _FakeChainRepo([chain_inside])  # type: ignore[assignment]
+
+    await svc.rename_folder(["Проект"], "Проект v2")
+    assert chain_inside.folder_path == ["Проект v2"]
+
+
+@pytest.mark.asyncio
+async def test_delete_folder_refuses_when_chain_inside() -> None:
+    settings = _FakeSettingsRepo({FILLED_ROOT_FOLDERS_KEY: [["Проект"]]})
+    svc = _service([], settings=settings)
+    svc.chains = _FakeChainRepo([_chain("c", ["Проект"], 0)])  # type: ignore[assignment]
+
+    with pytest.raises(ValidationFailed):
+        await svc.delete_folder(["Проект"])  # NOT empty: holds a chain
 
 
 @pytest.mark.asyncio

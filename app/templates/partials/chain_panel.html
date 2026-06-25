@@ -1,0 +1,193 @@
+{# Chain builder/runner panel. Used inline in the «Заполненные шаблоны»
+   workspace (#filled-panel, standalone=false — own header with actions) and on
+   the standalone chain page (chains/view.html, standalone=true — the page
+   renders its own header). The component (window.chainPanel) is loaded once at
+   page level, so it survives HTMX swaps. Sending is a STUB — no real request. #}
+{% set standalone = standalone | default(false) %}
+<div id="chain-panel" class="chain-panel"
+     x-data="chainPanel({
+        chainId: {{ chain_data.id | tojson | forceescape }},
+        executeUrl: {{ execute_url | tojson | forceescape }},
+        steps: {{ chain_data.steps | tojson | forceescape }}
+     })">
+
+    {% if not standalone %}
+    <div class="panel-header">
+        <div class="panel-title">
+            <span class="tree-chain-icon"><iconify-icon icon="lucide:workflow"></iconify-icon></span>
+            <h2 title="{{ chain.name }}">{{ chain.name }}</h2>
+            <span class="muted">цепочка запросов</span>
+        </div>
+        <div class="panel-actions">
+            <a class="btn" href="/templater/chains/{{ chain.id }}" title="Открыть на отдельной странице"><iconify-icon icon="lucide:external-link"></iconify-icon></a>
+            <button class="btn danger" type="button"
+                    hx-delete="/templater/filled-templates-htmx/chains/{{ chain.id }}?panel=1"
+                    hx-target="#filled-panel" hx-swap="innerHTML"
+                    hx-confirm="Удалить цепочку «{{ chain.name }}»?">Удалить</button>
+        </div>
+    </div>
+    {% endif %}
+
+    <p class="muted send-hint">
+        Соберите цепочку запросов из заполненных шаблонов. Отправка имитируется —
+        реальные запросы не уходят, показывается пример ответа. В теле запроса можно
+        сослаться на поле ответа предыдущего шага (кнопка «Вставить ссылку») — такие
+        ссылки подсвечены <span class="placeholder reference">фиолетовым</span>.
+    </p>
+
+    <div class="chain-toolbar">
+        <div class="send-picker" @click.outside="pickerOpen = false">
+            <button class="btn primary" type="button" @click="pickerOpen = !pickerOpen">
+                <iconify-icon icon="lucide:plus"></iconify-icon> Добавить шаг
+            </button>
+            <div class="send-picker-menu" x-show="pickerOpen" x-cloak>
+                <input class="send-picker-search" type="search" placeholder="Поиск шаблона…" x-model="pickerSearch">
+                <ul>
+                    {% for a in available | default([]) %}
+                    <li x-show="matchPicker({{ a.name | tojson | forceescape }})">
+                        <button type="button" @click="pickerOpen = false"
+                                hx-post="/templater/filled-templates-htmx/chains/{{ chain.id }}/steps"
+                                hx-vals='{{ {"filled_id": a.id, "standalone": ("1" if standalone else "0")} | tojson | forceescape }}'
+                                hx-target="#chain-panel" hx-swap="outerHTML">
+                            <span class="tree-method method-{{ (a.method or '')|lower }}">{{ a.method or '·' }}</span>
+                            <span class="send-picker-name">{{ a.name }}</span>
+                            {% if a.project_name %}<span class="project-badge"><span class="project-dot" style="background: {{ a.project_color or '#9E9E9E' }}"></span>{{ a.project_name }}</span>{% endif %}
+                        </button>
+                    </li>
+                    {% endfor %}
+                    {% if not (available | default([])) %}
+                    <li class="send-picker-empty muted">Нет заполненных шаблонов.</li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+        <button class="btn" type="button" @click="sendAll()" x-show="steps.length" :disabled="running">
+            <iconify-icon icon="lucide:play"></iconify-icon> Запустить всё
+        </button>
+    </div>
+
+    <div class="send-empty" x-show="steps.length === 0" x-cloak>
+        <p class="muted">Пока нет шагов. Нажмите «Добавить шаг» и выберите заполненный шаблон.</p>
+    </div>
+
+    <div class="send-chain">
+        <template x-for="(step, idx) in steps" :key="step.id">
+            <section class="send-step">
+                <div class="send-step-header">
+                    <div class="send-step-title">
+                        <span class="send-step-num" x-text="idx + 1"></span>
+                        <span class="tree-method" :class="'method-' + (step.method || '').toLowerCase()" x-text="step.method || '·'"></span>
+                        <h2 x-text="step.name"></h2>
+                        <template x-for="n in stepDeps(idx)" :key="n">
+                            <span class="chain-dep-badge" title="Использует поля из ответа этого шага">
+                                <iconify-icon icon="lucide:link"></iconify-icon> зависит от шага <span x-text="n"></span>
+                            </span>
+                        </template>
+                    </div>
+                    <div class="send-step-actions">
+                        <button class="btn small" type="button" title="Выше" @click="moveStep(idx, -1)" :disabled="idx === 0"><iconify-icon icon="lucide:chevron-up"></iconify-icon></button>
+                        <button class="btn small" type="button" title="Ниже" @click="moveStep(idx, 1)" :disabled="idx === steps.length - 1"><iconify-icon icon="lucide:chevron-down"></iconify-icon></button>
+                        <button class="btn small danger" type="button" title="Удалить шаг" @click="removeStep(idx)"><iconify-icon icon="lucide:trash-2"></iconify-icon></button>
+                    </div>
+                </div>
+
+                <div class="panel-url" x-show="step.url">
+                    <span class="panel-url-method" x-text="step.method"></span> <code x-text="step.url"></code>
+                </div>
+
+                <div class="send-step-body">
+                    <section class="send-block" x-show="step.headers && step.headers.length">
+                        <h3>Заголовки</h3>
+                        <table class="headers-table">
+                            <tbody>
+                                <template x-for="(h, hi) in step.headers" :key="hi">
+                                    <tr :class="{ 'header-dynamic': h.mode === 'dynamic', 'header-disabled': h.disabled }">
+                                        <td class="header-key" x-text="h.key"></td>
+                                        <td class="header-value">
+                                            <code x-text="h.value"></code>
+                                            <span class="tag" x-show="h.mode === 'dynamic'">динамический</span>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </section>
+
+                    <section class="send-block">
+                        <div class="send-block-title">
+                            <h3>Тело сообщения</h3>
+                            <div class="send-block-tools">
+                                <button class="btn small" type="button" @click="openRefUI(idx)" :disabled="idx === 0"
+                                        :title="idx === 0 ? 'У первого шага нет предыдущих ответов' : 'Подставить значение из ответа предыдущего шага'">
+                                    <iconify-icon icon="lucide:link"></iconify-icon> Вставить ссылку
+                                </button>
+                                <button class="btn small" type="button" @click="step.editingBody = !step.editingBody">
+                                    <iconify-icon icon="lucide:pencil"></iconify-icon>
+                                    <span x-text="step.editingBody ? 'Готово' : 'Редактировать тело'"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="send-ref-ui" x-show="refUI.stepIdx === idx" x-cloak>
+                            <div class="send-ref-row">
+                                <span class="muted">Из шага:</span>
+                                <template x-for="ps in priorSteps(idx)" :key="ps.num">
+                                    <button type="button" class="btn small" :class="{ primary: refUI.sourceStep === ps.num }" @click="selectRefSource(ps.num)">
+                                        <span x-text="'#' + ps.num + ' ' + ps.name"></span>
+                                        <span class="muted" x-show="!ps.sent"> · не отправлен</span>
+                                    </button>
+                                </template>
+                            </div>
+                            <div class="send-ref-row" x-show="refUI.sourceStep !== null">
+                                <span class="muted">Поле:</span>
+                                <template x-for="p in refUI.paths" :key="p.path">
+                                    <button type="button" class="btn small" @click="insertRef(refUI.sourceStep, p.path)">
+                                        <code x-text="p.path"></code>
+                                    </button>
+                                </template>
+                                <span class="muted" x-show="refUI.paths.length === 0">
+                                    В ответе нет полей — отправьте шаг-источник или впишите валидный JSON в «Пример ответа».
+                                </span>
+                            </div>
+                        </div>
+
+                        <pre class="template-code" x-show="!step.editingBody" x-html="highlightRefs(step.body)"></pre>
+                        <textarea x-show="step.editingBody" x-cloak class="send-body-edit template-code"
+                                  :id="'body-ta-' + step.id" x-model="step.body"
+                                  @input.debounce.500ms="invalidate(idx)" spellcheck="false" rows="10"></textarea>
+                    </section>
+
+                    <div class="send-actions">
+                        <button class="btn primary" type="button" @click="send(idx)" :disabled="step.sending">
+                            <iconify-icon icon="lucide:send"></iconify-icon> Отправить
+                        </button>
+                        <span class="muted" x-show="step.sending">Отправка…</span>
+                        <span class="send-error" x-show="step.error" x-text="step.error"></span>
+                    </div>
+
+                    <section class="send-block">
+                        <h3>Пример ответа</h3>
+                        <p class="muted send-sub">Отредактируйте пример ответа — из его полей берутся ссылки для следующих шагов.</p>
+                        <textarea class="send-body-edit template-code" x-model="step.mockResponse"
+                                  @input.debounce.500ms="invalidate(idx)" spellcheck="false" rows="6"></textarea>
+                    </section>
+
+                    <section class="send-block send-response" x-show="step.response" x-cloak>
+                        <h3>Итоговый ответ (мок)</h3>
+                        <div class="send-status-line">
+                            <span class="send-status-pill" x-text="(step.response?.status || '') + ' ' + (step.response?.statusText || '')"></span>
+                            <span class="muted" x-text="(step.response?.latencyMs ?? '') + ' мс · мок'"></span>
+                        </div>
+                        <pre class="template-code" x-text="step.response?.body"></pre>
+                    </section>
+
+                    <section class="send-block" x-show="step.resolvedRequestHtml" x-cloak>
+                        <h3>Итоговый запрос</h3>
+                        <p class="muted send-sub">Тело с подставленными значениями ссылок (подсвечены фиолетовым).</p>
+                        <pre class="template-code" x-html="step.resolvedRequestHtml"></pre>
+                    </section>
+                </div>
+            </section>
+        </template>
+    </div>
+</div>
