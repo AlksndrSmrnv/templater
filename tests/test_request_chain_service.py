@@ -331,3 +331,22 @@ async def test_bind_field_unknown_location_and_unbind_unbound() -> None:
     # Unbinding a field that was never bound is a clean error.
     with pytest.raises(NotFoundError):
         await svc.unbind_field(chain.id, s2.id, location="/amount")
+
+
+@pytest.mark.asyncio
+async def test_bind_field_rejects_root_scalar() -> None:
+    # A bare-scalar body has no replaceable field — walker can't set the root,
+    # so binding the root must be rejected, not buffered-then-no-op'd.
+    ft1 = _filled(name="a")
+    ft2 = _filled(name="b")
+    ft2.filled_content = "100"
+    ft2.changed_locations = []
+    svc = _service([ft1, ft2])
+    chain = await svc.create_chain([], "Цепочка")
+    await svc.add_step(chain.id, ft1.id)
+    s2 = await svc.add_step(chain.id, ft2.id)
+
+    for loc in ("/", ""):
+        with pytest.raises(NotFoundError):
+            await svc.bind_field(chain.id, s2.id, location=loc, ref_step=1, ref_path="x")
+    assert s2.bindings == {}

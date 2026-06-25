@@ -35,8 +35,14 @@ NAME_MAX_LEN = 255
 
 
 def _leaf_exists(fmt: str, body: str, location: str) -> bool:
-    """Whether a leaf at ``location`` is present in ``body``."""
+    """Whether a *replaceable* leaf at ``location`` is present in ``body``.
 
+    The document root (``""``/``"/"``) is excluded: ``walker.replace_*`` can't
+    set the root, so a bare-scalar body has no bindable field — reporting it as
+    present would buffer an original and then no-op the replace."""
+
+    if location in ("", "/"):
+        return False
     try:
         if fmt == "json":
             leaves = walker.walk_json(body)
