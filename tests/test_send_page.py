@@ -115,7 +115,9 @@ async def test_page_send_seeds_lightweight_filled_list(monkeypatch: pytest.Monke
         def __init__(self, session: object) -> None:
             pass
 
-        async def list_all(self, *, visible_group_ids: object = None) -> list[object]:
+        async def list_all(
+            self, *, limit: object = None, visible_group_ids: object = None
+        ) -> list[object]:
             return [item]
 
     monkeypatch.setattr(send, "FilledTemplateService", FakeService)
@@ -140,6 +142,7 @@ async def test_page_send_seeds_lightweight_filled_list(monkeypatch: pytest.Monke
             "project_color": "#112233",
         }
     ]
+    assert resp.context["picker_truncated"] is False
 
 
 @pytest.mark.asyncio
@@ -198,3 +201,14 @@ async def test_htmx_execute_is_a_stub_that_echoes_mock_response() -> None:
     assert data["headers"]["X-Mock-Send"] == "true"
     # The "response" is exactly the editable mock body the client sent.
     assert data["body"] == '{"transferId": "TRF-1"}'
+
+
+@pytest.mark.asyncio
+async def test_htmx_execute_rejects_invalid_json() -> None:
+    class FakeRequest:
+        async def json(self) -> object:
+            raise json.JSONDecodeError("Expecting value", "", 0)
+
+    resp = await send.htmx_execute(cast(Any, FakeRequest()))
+    assert resp.status_code == 422
+    assert json.loads(resp.body)["error"] == "invalid_json"

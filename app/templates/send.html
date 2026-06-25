@@ -31,6 +31,9 @@
                         <li class="send-picker-empty muted" x-show="filteredAvailable().length === 0">
                             Нет заполненных шаблонов.
                         </li>
+                        {% if picker_truncated %}
+                        <li class="send-picker-empty muted">Показаны не все шаблоны — список усечён.</li>
+                        {% endif %}
                     </ul>
                 </div>
             </div>
@@ -144,7 +147,7 @@
                         <pre class="template-code" x-show="!step.editingBody" x-html="highlightRefs(step.body)"></pre>
                         <textarea x-show="step.editingBody" x-cloak class="send-body-edit template-code"
                                   :id="'body-ta-' + step.key" x-model="step.body"
-                                  @input.debounce.500ms="persist()" spellcheck="false" rows="10"></textarea>
+                                  @input.debounce.500ms="invalidate(idx)" spellcheck="false" rows="10"></textarea>
                     </section>
 
                     <div class="send-actions">
@@ -161,7 +164,7 @@
                             Отредактируйте пример ответа — из его полей берутся ссылки для следующих шагов.
                         </p>
                         <textarea class="send-body-edit template-code" x-model="step.mockResponse"
-                                  @input.debounce.500ms="persist()" spellcheck="false" rows="6"></textarea>
+                                  @input.debounce.500ms="invalidate(idx)" spellcheck="false" rows="6"></textarea>
                     </section>
 
                     <section class="send-block send-response" x-show="step.response" x-cloak>
@@ -220,9 +223,14 @@
                 if (raw) {
                     try { parsed = JSON.parse(raw) || []; } catch (e) { parsed = []; }
                 }
-                // Reset transient flags and make sure every step has a unique key.
+                // Restore only the chain definition + edited bodies/responses;
+                // run results are ephemeral (re-run to regenerate them) so a reload
+                // never shows a stale error / response / resolved request.
                 this.steps = parsed.map((s) => {
                     s.sending = false;
+                    s.error = '';
+                    s.response = null;
+                    s.resolvedRequestHtml = null;
                     if (!s.key) s.key = 'k' + (this._nextKey++);
                     return s;
                 });
@@ -234,7 +242,7 @@
             reset() {
                 if (this.steps.length && !confirm('Очистить всю цепочку?')) return;
                 this.steps = [];
-                this.refUI = { stepIdx: null, sourceStep: null, paths: [] };
+                this.closeRefUI();
                 this.persist();
             },
 
@@ -282,7 +290,9 @@
             },
             removeStep(idx) {
                 this.steps.splice(idx, 1);
-                if (this.refUI.stepIdx === idx) this.refUI = { stepIdx: null, sourceStep: null, paths: [] };
+                // Indices shift on remove/reorder, so any open reference panel would
+                // now point at the wrong step — close it instead of tracking it.
+                this.closeRefUI();
                 this.persist();
             },
             moveStep(idx, delta) {
@@ -290,6 +300,7 @@
                 if (j < 0 || j >= this.steps.length) return;
                 const [s] = this.steps.splice(idx, 1);
                 this.steps.splice(j, 0, s);
+                this.closeRefUI();
                 this.persist();
             },
 
@@ -299,8 +310,11 @@
                     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             },
             // Wrap {{ $N.path }} tokens in a purple span inside an escaped body.
+            // The pattern matches resolveBody's exactly — a token without a path
+            // (e.g. {{ $1 }}) is neither highlighted nor resolved, so the UI never
+            // implies something is a reference when it isn't.
             highlightRefs(text) {
-                return this.escapeHtml(text).replace(/\{\{\s*\$\d+[^}]*\}\}/g, (m) =>
+                return this.escapeHtml(text).replace(/\{\{\s*\$\d+\.[^}\s]+\s*\}\}/g, (m) =>
                     '<span class="placeholder reference" title="Ссылка на ответ предыдущего шага">' + m + '</span>');
             },
             priorSteps(idx) {
@@ -312,12 +326,21 @@
                 if (idx === 0) return;
                 this.refUI = { stepIdx: idx, sourceStep: null, paths: [] };
             },
+            closeRefUI() {
+                this.refUI = { stepIdx: null, sourceStep: null, paths: [] };
+            },
+            // The JSON a reference reads from: the actual response once the step
+            // has been sent, otherwise its (editable) example response. Both the
+            // path picker and the resolver use this so they never disagree.
+            sourceBody(step) {
+                if (!step) return '';
+                return step.response ? step.response.body : (step.mockResponse || '');
+            },
             selectRefSource(stepNum) {
                 const src = this.steps[stepNum - 1];
                 let paths = [];
                 if (src) {
-                    const body = src.response ? src.response.body : src.mockResponse;
-                    try { paths = this.leafPaths(JSON.parse(body)); } catch (e) { paths = []; }
+                    try { paths = this.leafPaths(JSON.parse(this.sourceBody(src))); } catch (e) { paths = []; }
                 }
                 this.refUI.sourceStep = stepNum;
                 this.refUI.paths = paths;
@@ -364,7 +387,7 @@
                     step.editingBody = true;
                     step.body = (step.body || '') + token;
                 }
-                this.refUI = { stepIdx: null, sourceStep: null, paths: [] };
+                this.closeRefUI();
                 this.persist();
                 this.toast('Ссылка вставлена');
             },
@@ -381,11 +404,10 @@
             },
             resolveValue(stepNum, path) {
                 const src = this.steps[stepNum - 1];
-                if (!src || !src.response) return undefined;
+                if (!src) return undefined;
                 let obj;
-                try { obj = JSON.parse(src.response.body); } catch (e) { return undefined; }
-                const v = this.getPath(obj, path);
-                return v;
+                try { obj = JSON.parse(this.sourceBody(src)); } catch (e) { return undefined; }
+                return this.getPath(obj, path);
             },
             // Replace {{ $N.path }} tokens in a step's body; returns the resolved
             // string, an HTML view (substitutions wrapped purple) and unresolved tokens.
@@ -408,7 +430,10 @@
                             + this.escapeHtml(m[0]) + '</span>';
                         resolved += m[0];
                     } else {
-                        const strVal = (typeof val === 'object') ? JSON.stringify(val) : String(val);
+                        // JSON-encode every value (string -> "...", number -> 123,
+                        // object -> {...}) so a bare {{ $N.path }} in a JSON value
+                        // position stays valid JSON after substitution.
+                        const strVal = JSON.stringify(val);
                         html += '<span class="placeholder reference" title="Из ответа шага ' + m[1] + '">'
                             + this.escapeHtml(strVal) + '</span>';
                         resolved += strVal;
@@ -429,7 +454,13 @@
                 const res = this.resolveBody(idx);
                 step.resolvedRequestHtml = res.html;
                 if (res.unresolved.length) {
+                    // Abort: don't "send" a request with dangling references and
+                    // don't keep a stale response that downstream steps could read.
                     step.error = 'Не разрешены ссылки: ' + res.unresolved.join(', ');
+                    step.response = null;
+                    step.sending = false;
+                    this.persist();
+                    return;
                 }
                 try {
                     const r = await fetch(this.executeUrl, {
@@ -465,6 +496,9 @@
                 try {
                     for (let i = 0; i < this.steps.length; i++) {
                         await this.send(i);
+                        // Stop the chain on the first failing step — later steps may
+                        // reference its (now absent) response.
+                        if (this.steps[i].error) break;
                     }
                 } finally {
                     this.running = false;
@@ -472,6 +506,15 @@
             },
             prettyJson(s) {
                 try { return JSON.stringify(JSON.parse(s), null, 2); } catch (e) { return s; }
+            },
+            // Editing the request body or the example response invalidates the last
+            // run: the resolved request / response shown belong to the old input.
+            invalidate(idx) {
+                const step = this.steps[idx];
+                step.response = null;
+                step.resolvedRequestHtml = null;
+                step.error = '';
+                this.persist();
             },
 
             toast(message, type) {

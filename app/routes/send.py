@@ -15,6 +15,8 @@ in later requests. The chain itself lives entirely in the browser
 
 from __future__ import annotations
 
+import asyncio
+import json
 import random
 import uuid
 
@@ -28,6 +30,11 @@ from app.services.filled_templates import FilledTemplateService
 
 router = APIRouter()
 
+# The picker loads its whole list up front (it filters client-side), so allow a
+# generous cap and flag truncation when it is hit instead of silently dropping
+# templates past the default list limit.
+PICKER_LIMIT = 1000
+
 
 @router.get("/send")
 async def page_send(
@@ -36,7 +43,9 @@ async def page_send(
     session: AsyncSession = SessionDep,
     group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
-    items = await FilledTemplateService(session).list_all(visible_group_ids=group_ids)
+    items = await FilledTemplateService(session).list_all(
+        limit=PICKER_LIMIT, visible_group_ids=group_ids
+    )
     filled_templates = [
         {
             "id": str(item.id),
@@ -50,7 +59,11 @@ async def page_send(
     return templates.TemplateResponse(
         request,
         "send.html",
-        {"active": "send", "filled_templates": filled_templates},
+        {
+            "active": "send",
+            "filled_templates": filled_templates,
+            "picker_truncated": len(items) >= PICKER_LIMIT,
+        },
     )
 
 
@@ -91,13 +104,28 @@ async def htmx_execute(request: Request) -> JSONResponse:
     method/url/headers/body/format — is already provided by the client).
     """
 
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "invalid_json",
+                "message": "Тело запроса должно быть корректным JSON",
+            },
+        )
+    if not isinstance(payload, dict):
+        payload = {}
+
     mock_response = payload.get("mock_response", "")
+    # Simulate a little network latency so the reported value reflects a real wait.
+    latency_ms = random.randint(35, 220)
+    await asyncio.sleep(latency_ms / 1000)
     return JSONResponse(
         {
             "status": 200,
             "status_text": "OK",
-            "latency_ms": random.randint(35, 220),
+            "latency_ms": latency_ms,
             "headers": {
                 "Content-Type": "application/json; charset=utf-8",
                 "X-Mock-Send": "true",
