@@ -522,6 +522,12 @@ h3 { font-size: var(--fs-lg); line-height: 1.3; font-weight: 600; letter-spacing
 .template-code .placeholder.literal { background: rgba(255, 200, 0, 0.14); }
 .template-code .placeholder.dynamic { background: rgba(88, 166, 255, 0.22); color: #79c0ff; border-bottom-color: #79c0ff; }
 .template-code .placeholder.filled { background: rgba(80, 200, 120, 0.30); color: #8aef9f; border-bottom-color: #8aef9f; cursor: default; }
+/* «plain» = untouched literal in a chain step: white, no fill, but still
+   clickable so any field can be bound to a previous response. */
+.template-code .placeholder.plain { background: transparent; color: inherit; border-bottom: 1px dashed transparent; }
+/* In a bindable chain body every field hints at being clickable. */
+.chain-body-bindable .placeholder { cursor: pointer; }
+.chain-body-bindable .placeholder:hover { outline: 1px solid rgba(255, 255, 255, 0.35); outline-offset: 1px; }
 
 .role-panels {
     display: grid;
@@ -1214,6 +1220,20 @@ input[type="file"]::-webkit-file-upload-button:hover { background: var(--surface
     display: flex; flex-direction: column; gap: 8px;
 }
 .send-ref-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* Click-to-bind field picker (same surface as .send-ref-ui). */
+.chain-field-picker {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 10px; margin-bottom: 10px;
+    display: flex; flex-direction: column; gap: 8px;
+}
+.chain-field-picker .send-ref-row:first-child { justify-content: space-between; }
+.chain-picker-close { margin-left: auto; }
+
+/* Collapse chevron in the step header. */
+.chain-collapse-toggle { padding: 2px 6px; }
+.chain-collapse-toggle iconify-icon { transition: transform 0.15s ease; }
+.chain-collapse-toggle iconify-icon.chain-collapse-open { transform: rotate(90deg); }
 
 .send-status-line { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .send-status-pill {

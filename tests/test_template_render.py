@@ -7,6 +7,7 @@ from typing import Any, cast
 from app.db.models import MessageTemplate
 from app.services.template_render import (
     RenderableTemplate,
+    render_chain_step_html,
     render_filled_html,
     render_template_html,
 )
@@ -65,6 +66,41 @@ def test_render_filled_html_marks_changed_xml_leaves() -> None:
     assert ">Иванов</span>" in html
     assert "{{sender.unknown.path}}" in html
     assert "{{sender.unknown.path}}</span>" not in html
+
+
+def test_render_chain_step_html_colours_each_leaf_by_role() -> None:
+    content = json.dumps(
+        {
+            "amount": "100",            # filled with test data -> green
+            "rqUID": "{{rqUID}}",       # dynamic by default -> blue
+            "transferId": "{{ $1.transferId }}",  # reference -> purple
+            "note": "static",           # untouched literal -> white/plain
+        },
+        ensure_ascii=False,
+    )
+    html = render_chain_step_html("json", content, ["/amount"])
+    # Every leaf carries its location for the click-to-bind handler.
+    assert 'data-location="/amount"' in html
+    assert 'data-location="/note"' in html
+    # Roles map to the expected colour classes.
+    assert 'class="placeholder filled" data-idx="0" data-location="/amount"' in html
+    assert 'class="placeholder dynamic"' in html
+    assert 'class="placeholder reference"' in html
+    assert 'class="placeholder plain"' in html
+
+
+def test_render_chain_step_html_reference_beats_filled() -> None:
+    # A location both marked changed and now holding a reference reads purple.
+    content = json.dumps({"id": "{{ $1.id }}"}, ensure_ascii=False)
+    html = render_chain_step_html("json", content, ["/id"])
+    assert 'class="placeholder reference"' in html
+    assert 'class="placeholder filled"' not in html
+
+
+def test_render_chain_step_html_falls_back_for_invalid_json() -> None:
+    html = render_chain_step_html("json", "not json {", [])
+    assert "placeholder" not in html
+    assert "not json" in html
 
 
 def test_regenerate_content_skips_stale_paths() -> None:

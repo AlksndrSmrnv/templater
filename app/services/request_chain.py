@@ -27,9 +27,34 @@ from app.repositories.request_chain import RequestChainRepository
 from app.repositories.settings import SettingsRepository
 from app.services.collections import _norm_path
 from app.services.filled_templates import FILLED_ROOT_FOLDERS_KEY, _expand_prefixes
+from app.utils import walker
 from app.utils.errors import NotFoundError, ValidationFailed
 
 NAME_MAX_LEN = 255
+
+
+def _leaf_value(fmt: str, body: str, location: str) -> str | None:
+    """Current text value of the leaf at ``location`` in ``body``, or ``None``
+    if the body doesn't parse or the location is absent."""
+
+    try:
+        leaves = walker.walk_json(body) if fmt == "json" else walker.walk_xml(body)
+    except Exception:
+        return None
+    for leaf in leaves:
+        if leaf.location == location:
+            return leaf.value
+    return None
+
+
+def _replace_leaf(fmt: str, body: str, location: str, new_value: str) -> str:
+    """Return ``body`` with the leaf at ``location`` set to ``new_value``."""
+
+    if fmt == "json":
+        return walker.replace_json(body, {location: new_value})
+    if fmt == "xml":
+        return walker.replace_xml(body, {location: new_value})
+    return body
 
 
 def default_mock_response(now: datetime | None = None) -> str:
@@ -166,6 +191,12 @@ class RequestChainService:
             headers_snapshot=list(getattr(filled, "headers_snapshot", []) or []),
             body=getattr(filled, "filled_content", "") or "",
             mock_response=default_mock_response(),
+            # Green-colour markers in the chain UI: the locations this filled
+            # template replaced with concrete test data. The other colours
+            # (blue dynamic tokens, purple references, white literals) derive
+            # from the body text itself.
+            changed_locations=list(getattr(filled, "changed_locations", []) or []),
+            bindings={},
         )
         return await self.repo.add_step(step)
 
@@ -211,6 +242,56 @@ class RequestChainService:
             step.body = body
         if mock_response is not None:
             step.mock_response = mock_response
+        return step
+
+    async def bind_field(
+        self,
+        chain_id: uuid.UUID,
+        step_id: uuid.UUID,
+        *,
+        location: str,
+        ref_step: int,
+        ref_path: str,
+        visible_group_ids: set[uuid.UUID] | None = None,
+    ) -> RequestChainStep:
+        """Bind the leaf at ``location`` to ``{{ $ref_step.ref_path }}``.
+
+        The reference lives inline in ``body`` (so send/resolve/dependency logic
+        keeps reading it from there); the leaf's pre-bind value is buffered in
+        ``bindings`` once, so «Сбросить» can restore the original literal even
+        after the source is re-bound to a different field."""
+
+        ref_path = (ref_path or "").strip()
+        if ref_step < 1 or not ref_path:
+            raise ValidationFailed("Некорректная ссылка на поле ответа")
+        step = await self._get_step(chain_id, step_id, visible_group_ids=visible_group_ids)
+        current = _leaf_value(step.format, step.body, location)
+        if current is None:
+            raise NotFoundError("Поле не найдено в теле запроса")
+        # Remember the first (true literal/dynamic) value only — a re-bind must
+        # not overwrite it with a previous reference token.
+        if location not in (step.bindings or {}):
+            step.bindings = {**(step.bindings or {}), location: current}
+        token = f"{{{{ ${ref_step}.{ref_path} }}}}"
+        step.body = _replace_leaf(step.format, step.body, location, token)
+        return step
+
+    async def unbind_field(
+        self,
+        chain_id: uuid.UUID,
+        step_id: uuid.UUID,
+        *,
+        location: str,
+        visible_group_ids: set[uuid.UUID] | None = None,
+    ) -> RequestChainStep:
+        """Restore the leaf at ``location`` to its buffered pre-bind value."""
+
+        step = await self._get_step(chain_id, step_id, visible_group_ids=visible_group_ids)
+        bindings = dict(step.bindings or {})
+        if location not in bindings:
+            raise NotFoundError("Это поле не привязано к ответу")
+        step.body = _replace_leaf(step.format, step.body, location, bindings.pop(location))
+        step.bindings = bindings
         return step
 
     async def reorder_steps(

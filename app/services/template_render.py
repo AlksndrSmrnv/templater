@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import html as html_mod
 import json
+import re
 from collections.abc import Iterable
 from types import SimpleNamespace
 from typing import Any, Protocol
 from xml.etree import ElementTree as ET
+
+from app.utils import walker
+
+# A {{ $N.path }} token referencing a field of an earlier step's response.
+_REFERENCE_RE = re.compile(r"\{\{\s*\$\d+\.[^}\s]+\s*\}\}")
 
 
 class RenderableTemplate(Protocol):
@@ -24,7 +30,11 @@ def _span(idx: int, placeholder: dict[str, Any], text: str, *, quoted: bool = Fa
     mode = placeholder.get("mode", "literal")
     safe = html_mod.escape(text)
     location = str(placeholder.get("location", ""))
-    inner = f'<span class="placeholder {mode}" data-idx="{idx}" title="{html_mod.escape(location)}">{safe}</span>'
+    esc_loc = html_mod.escape(location)
+    inner = (
+        f'<span class="placeholder {mode}" data-idx="{idx}" '
+        f'data-location="{esc_loc}" title="{esc_loc}">{safe}</span>'
+    )
     if quoted:
         return f'"{inner}"'
     return inner
@@ -163,4 +173,50 @@ def render_filled_html(fmt: str, content: str, changed_locations: Iterable[str])
     placeholders = [{"location": loc, "mode": "filled"} for loc in changed_locations]
     return render_template_html(
         SimpleNamespace(format=fmt, content=content, placeholders=placeholders)
+    )
+
+
+def _classify_leaf(value: str, location: str, changed: set[str]) -> str:
+    """Colour mode for a chain-step body leaf.
+
+    Precedence matters: a reference token wins over a leftover dynamic token,
+    and an explicit dynamic token wins over the «filled» snapshot (a value the
+    user re-bound back to a token should read dynamic, not green)."""
+
+    if _REFERENCE_RE.search(value):
+        return "reference"  # purple — bound to a previous step's response
+    if "{{" in value:
+        return "dynamic"  # blue — dynamic-by-default envelope token (rqUID, …)
+    if location in changed:
+        return "filled"  # green — filled with concrete test data
+    return "plain"  # white — untouched literal, still clickable to bind
+
+
+def render_chain_step_html(
+    fmt: str, body: str, changed_locations: Iterable[str]
+) -> str:
+    """Render a chain step's body with every leaf wrapped in a coloured,
+    clickable ``<span data-location=…>``.
+
+    Reuses :func:`render_template_html`: we build one placeholder per leaf with
+    its computed colour mode, so each value gets a span carrying its
+    JSON-pointer / XML-path location for the click-to-bind UI. On a parse error
+    the body is shown escaped (no spans), matching the other renderers."""
+
+    changed = set(changed_locations or [])
+    try:
+        if fmt == "json":
+            leaves = walker.walk_json(body)
+        elif fmt == "xml":
+            leaves = walker.walk_xml(body)
+        else:
+            return html_mod.escape(body)
+    except Exception:
+        return html_mod.escape(body)
+    placeholders = [
+        {"location": leaf.location, "mode": _classify_leaf(leaf.value, leaf.location, changed)}
+        for leaf in leaves
+    ]
+    return render_template_html(
+        SimpleNamespace(format=fmt, content=body, placeholders=placeholders)
     )
