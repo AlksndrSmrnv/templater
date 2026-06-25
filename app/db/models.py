@@ -479,3 +479,110 @@ class FilledTemplate(Base):
 
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
+
+
+class RequestChain(Base):
+    """An ordered chain of REST requests built from filled templates.
+
+    A chain lives in the same folder tree as filled templates (it carries a
+    materialised ``folder_path`` and a ``display_order``) and is shown in the
+    «Заполненные шаблоны» workspace as a distinct node type. Each step
+    (:class:`RequestChainStep`) snapshots one filled template's request so the
+    chain stays runnable after the source is edited or deleted. Later steps may
+    reference fields of earlier steps' responses via ``{{ $N.path }}`` tokens
+    stored inline in the step body — there is no real sending yet, a stub seam
+    echoes an editable example response.
+    """
+
+    __tablename__ = "request_chains"
+    __table_args__ = (
+        Index("ix_request_chains_group_id", "group_id"),
+        Index("ix_request_chains_created_at", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Materialised folder path on the «Заполненные шаблоны» page, shared with
+    # filled templates (explicit folders live in the ``filled_root_folders`` app
+    # setting). ``display_order`` orders chains among their folder siblings.
+    folder_path: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Access-group visibility, mirroring ``FilledTemplate.group_id``: ``NULL`` =
+    # public. A chain may hold public steps freely; the first step from a private
+    # group sets this, and a step from a conflicting group is rejected (so a
+    # single ``group_id`` never has to hide one group's data from another).
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("access_groups.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    group_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    group_color_snapshot: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+
+    steps: Mapped[list[RequestChainStep]] = relationship(
+        back_populates="chain",
+        order_by="RequestChainStep.position",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
+class RequestChainStep(Base):
+    """One request in a :class:`RequestChain`, snapshotted from a filled template.
+
+    The request envelope (method/url/headers/body/format) is copied at add time
+    so the step survives the source filled template being edited or deleted.
+    ``body`` may contain ``{{ $N.path }}`` reference tokens; ``mock_response`` is
+    the editable JSON example the stub send echoes back.
+    """
+
+    __tablename__ = "request_chain_steps"
+    __table_args__ = (
+        Index("ix_request_chain_steps_chain_id", "chain_id"),
+        # ``position`` drives the {{ $N.path }} reference numbering, so a
+        # duplicate would silently corrupt which step a reference points at.
+        # DEFERRABLE INITIALLY DEFERRED lets reorder/remove renumber the whole
+        # chain to 0..n-1 within one transaction (positions may collide
+        # mid-flush); the check runs at COMMIT, when they are unique again. A
+        # concurrent add racing on max(position)+1 then surfaces as a clean 409.
+        UniqueConstraint(
+            "chain_id",
+            "position",
+            name="uq_request_chain_steps_chain_position",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    chain_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("request_chains.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Audit link to the source filled template (SET NULL so deleting it never
+    # blocks); the snapshot columns keep the step runnable regardless.
+    filled_template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("filled_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    format: Mapped[str] = mapped_column(String(16), nullable=False, default="json")
+    http_method_snapshot: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    url_snapshot: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    headers_snapshot: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    mock_response: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    chain: Mapped[RequestChain] = relationship(back_populates="steps")
+
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()

@@ -43,6 +43,9 @@
 {% endblock %}
 
 {% block scripts %}
+{# Loaded once at page level so HTMX-swapped chain panels (#filled-panel) can
+   reference window.chainPanel without a per-swap <script> race. #}
+<script src="/templater/static/js/chain_panel.js" defer></script>
 <script>
     // ?saved=1 lands here from the fill-save redirect: show the toast and
     // scrub the param so a reload doesn't re-announce it.

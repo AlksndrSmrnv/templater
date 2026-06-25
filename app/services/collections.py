@@ -47,7 +47,10 @@ def _haystack(template: MessageTemplate) -> str:
 
 
 def _new_node() -> dict[str, Any]:
-    return {"folders": {}, "templates": []}
+    # ``chains`` is only populated for the «Заполненные шаблоны» tree (request
+    # chains live alongside filled templates); the collections tree leaves it
+    # empty and its macro never reads it.
+    return {"folders": {}, "templates": [], "chains": []}
 
 
 def build_folder_tree(

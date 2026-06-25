@@ -31,6 +31,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.entity import ClientRepository
+from app.repositories.request_chain import RequestChainRepository
 from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.htmx_utils import form_str, parse_json_path, parse_uuid_list, toast_header
 from app.routes.uow import commit_or_409
@@ -95,12 +96,15 @@ async def _detail_context(
         "accountOwner": item.account_owner_client_id,
     }
     alive = await _alive_client_ids(session, list(role_client_ids.values()))
+    # Existing chains the «В цепочку» dropdown can target (id + name only).
+    chains = await RequestChainRepository(session).list_all(visible_group_ids=visible_group_ids)
     return {
         "ft": item,
         "rendered_html": rendered_html,
         "role_rows": iter_role_labels(item),
         "role_client_ids": role_client_ids,
         "alive_client_ids": alive,
+        "chains": [{"id": str(c.id), "name": c.name} for c in chains],
     }
 
 
