@@ -36,6 +36,14 @@ router = APIRouter()
 PICKER_LIMIT = 1000
 
 
+async def _simulate_latency(latency_ms: int) -> None:
+    """Mock network latency for the stub send. A module-local indirection so tests
+    can patch it out without touching the global ``asyncio.sleep``; the real send
+    tool will replace this with an actual call."""
+
+    await asyncio.sleep(latency_ms / 1000)
+
+
 @router.get("/send")
 async def page_send(
     request: Request,
@@ -107,20 +115,26 @@ async def htmx_execute(request: Request) -> JSONResponse:
     try:
         payload = await request.json()
     except (json.JSONDecodeError, ValueError):
-        payload = None
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "invalid_json",
+                "message": "Тело запроса не является корректным JSON",
+            },
+        )
     if not isinstance(payload, dict):
         return JSONResponse(
             status_code=422,
             content={
                 "error": "invalid_json",
-                "message": "Тело запроса должно быть объектом JSON",
+                "message": "Тело запроса должно быть JSON-объектом",
             },
         )
 
     mock_response = payload.get("mock_response", "")
     # Simulate a little network latency so the reported value reflects a real wait.
     latency_ms = random.randint(35, 220)
-    await asyncio.sleep(latency_ms / 1000)
+    await _simulate_latency(latency_ms)
     return JSONResponse(
         {
             "status": 200,

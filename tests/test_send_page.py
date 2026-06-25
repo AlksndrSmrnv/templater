@@ -187,11 +187,12 @@ async def test_htmx_filled_snapshot_returns_request_envelope(
 async def test_htmx_execute_is_a_stub_that_echoes_mock_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The handler awaits a mock latency; don't actually wait in tests.
-    async def _no_sleep(_seconds: float) -> None:
+    # The handler awaits a mock latency; don't actually wait in tests. Patch the
+    # module-local indirection rather than the global asyncio.sleep.
+    async def _no_delay(_latency_ms: int) -> None:
         return None
 
-    monkeypatch.setattr(send.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(send, "_simulate_latency", _no_delay)
 
     class FakeRequest:
         async def json(self) -> dict[str, object]:
