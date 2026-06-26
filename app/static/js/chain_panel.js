@@ -29,8 +29,10 @@ window.chainPanel = function (config) {
         pickerOpen: false,
         pickerSearch: '',
         running: false,
-        // Field-binding picker, anchored to the clicked body field.
-        picker: { stepIdx: null, location: null, isRef: false, sourceStep: null, paths: [], anchor: { top: 0, left: 0 }, fieldSearch: '' },
+        // Field-binding picker, anchored to the clicked body field. `paths` is
+        // the source step's full leaf list; `filtered` is `paths` narrowed by
+        // `query` (recomputed only on change, not per render).
+        picker: { stepIdx: null, location: null, isRef: false, sourceStep: null, paths: [], filtered: [], query: '', anchor: { top: 0, left: 0, above: false } },
 
         init() {
             // Seed run-time/ephemeral fields onto the server-provided steps.
@@ -139,36 +141,47 @@ window.chainPanel = function (config) {
             // The first step has no previous response to pull from — its fields
             // aren't bindable (and the cursor reflects that), so do nothing.
             if (idx === 0) return;
-            // Anchor the popover just below the clicked field, relative to the
-            // body wrapper — so it opens right at the click, no scrolling up.
-            const wrap = span.closest('.chain-body-wrap');
-            let anchor = { top: 0, left: 0 };
-            if (wrap) {
-                const wr = wrap.getBoundingClientRect();
-                const sr = span.getBoundingClientRect();
-                // Keep the (≈360px) popover within the body width so it doesn't
-                // spill off the right edge when a field sits far to the right.
-                const left = Math.max(0, Math.min(sr.left - wr.left, wr.width - 360));
-                anchor = { top: sr.bottom - wr.top + 4, left: left };
+            // Re-clicking another field of the same step just re-anchors: keep
+            // the chosen source step / field search so the user doesn't drop
+            // back to stage 1.
+            const same = this.picker.stepIdx === idx;
+            this.picker.stepIdx = idx;
+            this.picker.location = span.dataset.location;
+            this.picker.isRef = span.classList.contains('reference');
+            this.picker.anchor = this.anchorFor(span);
+            if (!same) {
+                this.picker.sourceStep = null;
+                this.picker.paths = [];
+                this.picker.filtered = [];
+                this.picker.query = '';
             }
-            this.picker = {
-                stepIdx: idx,
-                location: span.dataset.location,
-                isRef: span.classList.contains('reference'),
-                sourceStep: null,
-                paths: [],
-                anchor: anchor,
-                fieldSearch: '',
-            };
+        },
+        // Position the popover next to the clicked field, relative to the body
+        // wrapper. Clamps to the body width (no right-edge spill) and flips above
+        // the field when there isn't room below.
+        anchorFor(span) {
+            const wrap = span.closest('.chain-body-wrap');
+            if (!wrap) return { top: 0, left: 0, above: false };
+            const wr = wrap.getBoundingClientRect();
+            const sr = span.getBoundingClientRect();
+            const POPOVER_W = 360;
+            const POPOVER_H = 320;
+            const left = Math.max(0, Math.min(sr.left - wr.left, wr.width - POPOVER_W));
+            const spaceBelow = window.innerHeight - sr.bottom;
+            const above = spaceBelow < POPOVER_H + 12 && sr.top > spaceBelow;
+            const top = above ? (sr.top - wr.top) : (sr.bottom - wr.top + 4);
+            return { top: top, left: left, above: above };
         },
         closePicker() {
-            this.picker = { stepIdx: null, location: null, isRef: false, sourceStep: null, paths: [], anchor: { top: 0, left: 0 }, fieldSearch: '' };
+            this.picker = { stepIdx: null, location: null, isRef: false, sourceStep: null, paths: [], filtered: [], query: '', anchor: { top: 0, left: 0, above: false } };
         },
-        // Response fields filtered by the in-popover search box (stage 2).
-        filteredPaths() {
-            const q = (this.picker.fieldSearch || '').trim().toLowerCase();
-            if (!q) return this.picker.paths;
-            return this.picker.paths.filter((p) => p.path.toLowerCase().includes(q));
+        // Narrow the stage-2 field list by the search box; stored so the list
+        // isn't re-filtered on every unrelated reactive tick.
+        applyFieldFilter() {
+            const q = (this.picker.query || '').trim().toLowerCase();
+            this.picker.filtered = q
+                ? this.picker.paths.filter((p) => p.path.toLowerCase().includes(q))
+                : this.picker.paths;
         },
         // Fields offered for a source step come from its *sent* response only —
         // until the step is sent there is nothing to parse (per the spec, the
@@ -181,7 +194,8 @@ window.chainPanel = function (config) {
             }
             this.picker.sourceStep = stepNum;
             this.picker.paths = paths;
-            this.picker.fieldSearch = '';
+            this.picker.filtered = paths;
+            this.picker.query = '';
         },
         // Flatten a parsed JSON value to its leaf paths (a.b, a.c[0].d ...).
         leafPaths(obj, prefix) {

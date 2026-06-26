@@ -130,10 +130,13 @@
 
                         <div class="chain-body-wrap">
                             <pre class="template-code chain-body" :class="{ 'chain-body-bindable': idx > 0 }"
-                                 x-html="step.bodyHtml" @click="onFieldClick($event, idx)"></pre>
+                                 x-html="step.bodyHtml" @click="onFieldClick($event, idx)"
+                                 @scroll="if (picker.stepIdx === idx) closePicker()"></pre>
 
                             <div class="chain-field-popover" x-show="picker.stepIdx === idx" x-cloak
-                                 :style="'top:' + picker.anchor.top + 'px; left:' + picker.anchor.left + 'px'">
+                                 :class="{ 'chain-field-popover--above': picker.anchor.above }"
+                                 :style="'top:' + picker.anchor.top + 'px; left:' + picker.anchor.left + 'px'"
+                                 @keydown.escape.window="closePicker()">
                                 <div class="chain-field-popover-head">
                                     <span class="muted">Привязать поле <code x-text="picker.location"></code></span>
                                     <button type="button" class="btn small chain-picker-close" @click="closePicker()" title="Закрыть">
@@ -142,7 +145,7 @@
                                 </div>
 
                                 <!-- Стадия 1: выбор сообщения-источника -->
-                                <div x-show="picker.sourceStep === null">
+                                <div class="chain-popover-stage" x-show="picker.sourceStep === null">
                                     <p class="muted chain-popover-sub">Из ответа какого шага взять значение?</p>
                                     <ul class="chain-popover-list">
                                         <template x-for="ps in priorSteps(idx)" :key="ps.num">
@@ -159,7 +162,7 @@
                                 </div>
 
                                 <!-- Стадия 2: выбор поля ответа -->
-                                <div x-show="picker.sourceStep !== null">
+                                <div class="chain-popover-stage" x-show="picker.sourceStep !== null">
                                     <div class="chain-popover-back-row">
                                         <button type="button" class="btn small chain-popover-back" @click="picker.sourceStep = null">
                                             <iconify-icon icon="lucide:chevron-left"></iconify-icon> Назад
@@ -167,9 +170,9 @@
                                         <span class="muted chain-popover-sub">Поле ответа шага <span x-text="picker.sourceStep"></span></span>
                                     </div>
                                     <input class="send-picker-search" type="search" placeholder="Поиск поля…"
-                                           x-model="picker.fieldSearch" x-show="picker.paths.length">
+                                           x-model="picker.query" @input="applyFieldFilter()" x-show="picker.paths.length">
                                     <ul class="chain-popover-list">
-                                        <template x-for="p in filteredPaths()" :key="p.path">
+                                        <template x-for="p in picker.filtered" :key="p.path">
                                             <li>
                                                 <button type="button" class="chain-popover-item" @click="bindField(picker.sourceStep, p.path)">
                                                     <code x-text="p.path"></code>
@@ -180,7 +183,7 @@
                                     <p class="muted chain-popover-empty" x-show="picker.paths.length === 0">
                                         Отправьте шаг <span x-text="picker.sourceStep"></span>, чтобы получить список полей его ответа.
                                     </p>
-                                    <p class="muted chain-popover-empty" x-show="picker.paths.length && filteredPaths().length === 0">
+                                    <p class="muted chain-popover-empty" x-show="picker.paths.length && picker.filtered.length === 0">
                                         Ничего не найдено.
                                     </p>
                                 </div>
@@ -213,7 +216,9 @@
 
                     <section class="send-block" x-show="step.resolvedRequestHtml && idx > 0" x-cloak>
                         <h3>Итоговый запрос</h3>
-                        <p class="muted send-sub">Тело с подставленными значениями ссылок (подсвечены фиолетовым).</p>
+                        <p class="muted send-sub" x-text="stepDeps(idx).length
+                            ? 'Тело с подставленными значениями ссылок (подсвечены фиолетовым).'
+                            : 'Тело запроса, которое будет отправлено.'"></p>
                         <pre class="template-code" x-html="step.resolvedRequestHtml"></pre>
                     </section>
                 </div>
