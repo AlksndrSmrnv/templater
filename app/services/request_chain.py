@@ -48,6 +48,14 @@ from app.utils.errors import NotFoundError, ValidationFailed
 
 NAME_MAX_LEN = 255
 
+# Shared wording for the chain's single-group invariant — used both when adding a
+# step and when recomputing the group after a client switch, so the user sees the
+# same message regardless of how the conflict arose.
+_CROSS_GROUP_MSG = (
+    "Нельзя смешивать в одной цепочке данные из разных групп доступа — "
+    "это раскрыло бы данные одной группы держателям другой."
+)
+
 
 def _leaf_exists(fmt: str, body: str, location: str) -> bool:
     """Whether a *replaceable* leaf at ``location`` is present in ``body``.
@@ -220,6 +228,11 @@ class RequestChainService:
         if filled is None:
             raise NotFoundError("Заполненный шаблон не найден")
 
+        # NB: add_step derives the chain group from the filled template's group
+        # *snapshot* (taken at fill time), whereas ``_apply_chain_group`` (run on a
+        # later client switch) recomputes from the clients' *current* groups. The
+        # snapshot can lag if a client was moved between groups after the fill was
+        # saved — that's the long-standing snapshot contract; a switch reconciles it.
         filled_group = getattr(filled, "group_id", None)
         # Public steps (filled_group is None) fall through untouched — see the
         # docstring: allowing them into a private chain only narrows visibility.
@@ -229,9 +242,7 @@ class RequestChainService:
                 chain.group_name_snapshot = getattr(filled, "group_name_snapshot", "") or ""
                 chain.group_color_snapshot = getattr(filled, "group_color_snapshot", "") or ""
             elif chain.group_id != filled_group:
-                raise ValidationFailed(
-                    "Нельзя смешивать в одной цепочке шаги из разных групп доступа"
-                )
+                raise ValidationFailed(_CROSS_GROUP_MSG)
 
         step = RequestChainStep(
             chain_id=chain.id,
@@ -450,10 +461,7 @@ class RequestChainService:
                 await collect_request_groups(self.session, _fill_request_from_roles(step))
             )
         if len(groups) > 1:
-            raise ValidationFailed(
-                "Нельзя смешивать в одной цепочке данные из разных групп доступа — "
-                "это раскрыло бы данные одной группы держателям другой."
-            )
+            raise ValidationFailed(_CROSS_GROUP_MSG)
         if not groups:
             chain.group_id = None
             chain.group_name_snapshot = ""
@@ -477,8 +485,13 @@ class RequestChainService:
 
         if new_ids.client_id is None:
             raise ValidationFailed("Выберите клиента для замены")
+        # ``get`` already loads chain.steps; take the step from there (rather than
+        # a second ``_get_step`` query) so the mutated object is exactly the one
+        # ``_apply_chain_group`` will re-scan below.
         chain = await self.get(chain_id, visible_group_ids=visible_group_ids)
-        step = await self._get_step(chain_id, step_id, visible_group_ids=visible_group_ids)
+        step = next((s for s in chain.steps if s.id == step_id), None)
+        if step is None:
+            raise NotFoundError("Шаг не найден")
         regenerated = await self._rerender_step(
             step, {role: new_ids}, visible_group_ids=visible_group_ids
         )
