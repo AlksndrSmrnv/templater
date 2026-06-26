@@ -1,0 +1,89 @@
+{# Reusable «Заменить клиента» popover — a one-role client/account/card picker.
+   Reuses the fill endpoints and list partials. Driven by window.roleSwitch.
+
+   Context params:
+   - role         : "sender" | "receiver" | "accountOwner"
+   - title        : popover heading (defaults to the role title)
+   - trigger_label: text on the toggle button (default «Заменить»)
+   - template_id  : message template id for the fill endpoints ("" disables it)
+   - current      : {"clientId": .., "accountId": .., "cardId": ..} preselection
+   - post_url     : where «Применить» POSTs the chosen role + ids
+   - target       : hx-target for the response (e.g. "#filled-panel-body")
+   - swap         : hx-swap (default "outerHTML")
+   - standalone   : truthy → sends standalone=1 (keeps the re-rendered header)
+   - extra_fields : extra hidden inputs to POST (e.g. {"old_client_id": ".."}) #}
+{% set _swap = swap | default("outerHTML") %}
+<div class="role-switch"
+     x-data="roleSwitch({
+        role: {{ role | tojson | forceescape }},
+        templateId: {{ (template_id or '') | tojson | forceescape }},
+        current: {{ (current | default({})) | tojson | forceescape }}
+     })">
+    <button type="button" class="btn small role-switch-toggle" @click="toggle()"
+            {% if not template_id %}disabled title="Исходный шаблон удалён — замена недоступна"{% endif %}>
+        <iconify-icon icon="lucide:user-pen"></iconify-icon> {{ trigger_label | default("Заменить") }}
+    </button>
+    <div class="role-switch-popover" x-show="open" x-cloak
+         @click.outside="open = false" @keydown.escape.window="open = false">
+        <div class="role-switch-head">
+            <span class="muted">{{ title | default("Выбор клиента") }}</span>
+            <button type="button" class="btn small" @click="close()" title="Закрыть">
+                <iconify-icon icon="lucide:x"></iconify-icon>
+            </button>
+        </div>
+
+        {# Hidden inputs: posted on «Применить» and (client_id) included by the
+           cascading account/card lists. #}
+        <input type="hidden" name="role" value="{{ role }}">
+        <input type="hidden" name="client_id" :value="state[{{ role | tojson | forceescape }}].clientId">
+        <input type="hidden" name="account_id" :value="state[{{ role | tojson | forceescape }}].accountId">
+        <input type="hidden" name="card_id" :value="state[{{ role | tojson | forceescape }}].cardId">
+        {% if standalone %}<input type="hidden" name="standalone" value="1">{% endif %}
+        {% for key, value in (extra_fields | default({})).items() %}
+        <input type="hidden" name="{{ key }}" value="{{ value }}">
+        {% endfor %}
+
+        <div class="picker-group">
+            <label>Клиенты</label>
+            <input class="picker-search" type="search" name="q" placeholder="Поиск"
+                   hx-get="/templater/templates-htmx/{{ template_id }}/fill/clients?role={{ role }}"
+                   hx-trigger="input changed delay:200ms"
+                   hx-target="next .role-switch-clients" hx-swap="innerHTML">
+            <div class="picker-list role-switch-clients" data-list="clients" role="listbox"
+                 @click="pickFromList($event, 'client')">
+                <div class="picker-empty">Загрузка…</div>
+            </div>
+        </div>
+        <div class="role-switch-choices">
+            <div class="picker-group">
+                <label>Счета</label>
+                <div class="picker-list picker-list--stacked role-switch-accounts" role="listbox"
+                     @click="pickFromList($event, 'account')"
+                     hx-get="/templater/templates-htmx/{{ template_id }}/fill/accounts?role={{ role }}"
+                     hx-trigger="client-changed from:closest .role-switch"
+                     hx-include="closest .role-switch" hx-params="client_id" hx-swap="innerHTML">
+                    {% set client_id = none %}{% set accounts = [] %}
+                    {% include "partials/fill_accounts_list.html" %}
+                </div>
+            </div>
+            <div class="picker-group">
+                <label>Карты</label>
+                <div class="picker-list picker-list--stacked role-switch-cards" role="listbox"
+                     @click="pickFromList($event, 'card')"
+                     hx-get="/templater/templates-htmx/{{ template_id }}/fill/cards?role={{ role }}"
+                     hx-trigger="client-changed from:closest .role-switch"
+                     hx-include="closest .role-switch" hx-params="client_id" hx-swap="innerHTML">
+                    {% set client_id = none %}{% set cards = [] %}
+                    {% include "partials/fill_cards_list.html" %}
+                </div>
+            </div>
+        </div>
+        <div class="role-switch-actions">
+            <button class="btn primary small" type="button"
+                    hx-post="{{ post_url }}"
+                    hx-include="closest .role-switch"
+                    hx-target="{{ target }}" hx-swap="{{ _swap }}"
+                    @click="open = false">Применить</button>
+        </div>
+    </div>
+</div>

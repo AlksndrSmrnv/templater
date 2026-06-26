@@ -70,6 +70,70 @@
         </button>
     </div>
 
+    {# «Клиенты цепочки» — switch the client of one step's role, or replace a
+       client across every step. Server-rendered (not part of the Alpine step
+       list); each «Применить» re-renders the whole #chain-panel. #}
+    {% if manage_steps %}
+    <section class="chain-clients">
+        <div class="send-block-title">
+            <h3><iconify-icon icon="lucide:users"></iconify-icon> Клиенты цепочки</h3>
+            <span class="muted send-sub">Смена клиента перегенерирует тело затронутых шагов.</span>
+        </div>
+
+        {% if used_clients %}
+        <div class="chain-clients-global">
+            <span class="muted">Заменить во всех шагах:</span>
+            {% for c in used_clients %}
+            <div class="chain-clients-global-row">
+                <span class="role-cell-label">{{ c.label }}</span>
+                {% with role="sender",
+                        title="Заменить «" ~ c.label ~ "» во всей цепочке",
+                        trigger_label="Заменить везде",
+                        template_id=manage_template_id,
+                        current={},
+                        post_url="/templater/filled-templates-htmx/chains/" ~ (chain.id | string) ~ "/replace-client",
+                        target="#chain-panel",
+                        swap="outerHTML",
+                        standalone=standalone,
+                        extra_fields={"old_client_id": c.id} %}
+                    {% include "partials/role_switch_popover.html" %}
+                {% endwith %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="chain-clients-steps">
+            {% for s in manage_steps %}
+            <div class="chain-clients-step">
+                <span class="send-step-num">{{ s.num }}</span>
+                <span class="chain-clients-step-name">{{ s.name }}</span>
+                <div class="chain-clients-roles">
+                    {% for r in s.roles %}
+                    <div class="role-cell">
+                        <span class="role-chip">{{ r.title }}: <span class="muted">{{ r.label }}</span></span>
+                        {% with role=r.role,
+                                title=r.title,
+                                template_id=s.template_id,
+                                current={"clientId": r.client_id, "accountId": r.account_id, "cardId": r.card_id},
+                                post_url="/templater/filled-templates-htmx/chains/" ~ (chain.id | string) ~ "/steps/" ~ s.id ~ "/switch-role",
+                                target="#chain-panel",
+                                swap="outerHTML",
+                                standalone=standalone %}
+                            {% include "partials/role_switch_popover.html" %}
+                        {% endwith %}
+                    </div>
+                    {% endfor %}
+                    {% if not s.roles %}
+                    <span class="muted">Роли неизвестны — шаг добавлен до обновления; пересоздайте шаг.</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
     <div class="send-empty" x-show="steps.length === 0" x-cloak>
         <p class="muted">Пока нет шагов. Нажмите «Добавить шаг» и выберите заполненный шаблон.</p>
     </div>

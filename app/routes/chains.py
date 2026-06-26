@@ -28,10 +28,18 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import RequestChain, RequestChainStep
+from app.repositories.entity import ClientRepository
+from app.repositories.filled_template import FilledTemplateRepository
 from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
+from app.routes.entities_htmx import entity_label
 from app.routes.htmx_utils import form_str, parse_json_path, parse_uuid_list, toast_header
+from app.routes.role_switch_utils import role_ids_from_form
 from app.routes.uow import commit_or_409
-from app.services.filled_templates import FilledTemplateService
+from app.services.filled_templates import (
+    _ROLE_COLUMNS,
+    ROLE_TITLES,
+    FilledTemplateService,
+)
 from app.services.request_chain import RequestChainService
 from app.services.template_render import render_chain_step_html
 from app.utils.errors import DomainError
@@ -60,7 +68,9 @@ def _toast_only(
 # ---------- serialization ----------
 
 
-def _serialize_step(step: RequestChainStep) -> dict[str, Any]:
+def _serialize_step(
+    step: RequestChainStep, message_template_id: uuid.UUID | None = None
+) -> dict[str, Any]:
     body = step.body or ""
     fmt = step.format or "json"
     changed = step.changed_locations or []
@@ -78,14 +88,88 @@ def _serialize_step(step: RequestChainStep) -> dict[str, Any]:
         "body_html": render_chain_step_html(fmt, body, changed),
         "changed_locations": changed,
         "mock_response": step.mock_response or "",
+        # Source template of this step's body (via its filled template), so the
+        # «Заменить клиента» picker can target its fill endpoints. Empty when the
+        # filled template / source template was deleted (switch then disabled).
+        "message_template_id": str(message_template_id) if message_template_id else "",
     }
 
 
-def _serialize_chain(chain: RequestChain) -> dict[str, Any]:
+def _serialize_chain(
+    chain: RequestChain, tpl_by_filled: dict[uuid.UUID, uuid.UUID | None] | None = None
+) -> dict[str, Any]:
+    tpl_by_filled = tpl_by_filled or {}
     return {
         "id": str(chain.id),
         "name": chain.name,
-        "steps": [_serialize_step(s) for s in chain.steps],
+        "steps": [
+            _serialize_step(
+                s,
+                tpl_by_filled.get(s.filled_template_id) if s.filled_template_id else None,
+            )
+            for s in chain.steps
+        ],
+    }
+
+
+async def _manage_context(
+    session: AsyncSession,
+    chain: RequestChain,
+    tpl_by_filled: dict[uuid.UUID, uuid.UUID | None],
+) -> dict[str, Any]:
+    """Build the «Клиенты цепочки» management data: per-step role rows (with
+    current ids + a picker template id) and the distinct clients used across the
+    chain (for the chain-wide replace popovers)."""
+
+    used: dict[uuid.UUID, dict[str, Any]] = {}
+    # A template id for the chain-wide replace picker. The fill endpoints use it
+    # only for role validation (``_check_fill_role``) — the client/account/card
+    # lists are global, NOT filtered by template — so any reachable step's
+    # template works even when the chain spans several templates; each step is
+    # re-rendered against its own source template in ``_rerender_step``.
+    any_template_id = ""
+    manage_steps: list[dict[str, Any]] = []
+    for idx, step in enumerate(chain.steps, start=1):
+        tpl_id = tpl_by_filled.get(step.filled_template_id) if step.filled_template_id else None
+        tpl_str = str(tpl_id) if tpl_id else ""
+        if tpl_str and not any_template_id:
+            any_template_id = tpl_str
+        labels = step.role_labels_snapshot or {}
+        roles: list[dict[str, Any]] = []
+        for role, (client_col, account_col, card_col) in _ROLE_COLUMNS.items():
+            cid = getattr(step, client_col)
+            if cid is None:
+                continue
+            roles.append(
+                {
+                    "role": role,
+                    "title": ROLE_TITLES[role],
+                    "label": labels.get(role) or "—",
+                    "client_id": str(cid),
+                    "account_id": str(getattr(step, account_col) or ""),
+                    "card_id": str(getattr(step, card_col) or ""),
+                }
+            )
+            used.setdefault(cid, {"id": str(cid), "label": labels.get(role) or str(cid)})
+        manage_steps.append(
+            {
+                "id": str(step.id),
+                "num": idx,
+                "name": step.name_snapshot,
+                "template_id": tpl_str,
+                "roles": roles,
+            }
+        )
+    # Prefer a clean client display label over the combined role label.
+    if used:
+        rows = await ClientRepository(session).get_many(list(used.keys()))
+        for row in rows:
+            if row.id in used:
+                used[row.id]["label"] = entity_label("client", row)
+    return {
+        "manage_steps": manage_steps,
+        "used_clients": list(used.values()),
+        "manage_template_id": any_template_id,
     }
 
 
@@ -137,7 +221,15 @@ async def _panel_context(
     chain = await RequestChainService(session).get(
         chain_id, visible_group_ids=visible_group_ids
     )
-    data = _serialize_chain(chain)
+    # Map each step's source filled template to its message template, so the
+    # «Заменить клиента» picker can target the right fill endpoints.
+    filled_ids = [s.filled_template_id for s in chain.steps if s.filled_template_id]
+    tpl_by_filled: dict[uuid.UUID, uuid.UUID | None] = {}
+    if filled_ids:
+        for row in await FilledTemplateRepository(session).get_many(filled_ids):
+            tpl_by_filled[row.id] = row.message_template_id
+    data = _serialize_chain(chain, tpl_by_filled)
+    manage = await _manage_context(session, chain, tpl_by_filled)
     # Filled templates the «Добавить шаг» picker can choose from (id/name/method).
     filled = await FilledTemplateService(session).list_all(visible_group_ids=visible_group_ids)
     available = [
@@ -156,6 +248,7 @@ async def _panel_context(
         "available": available,
         "dependencies": _step_dependencies(data["steps"]),
         "execute_url": "/templater/send-htmx/execute",
+        **manage,
     }
 
 
@@ -478,6 +571,84 @@ async def htmx_unbind_field(
         await session.rollback()
         return JSONResponse(status_code=400, content={"message": exc.message})
     return _step_body_json(step)
+
+
+# ---------- client switching (return the chain panel) ----------
+
+
+@router.post("/filled-templates-htmx/chains/{chain_id}/steps/{step_id}/switch-role")
+async def htmx_switch_step_role(
+    chain_id: uuid.UUID,
+    step_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
+) -> Response:
+    form = await request.form()
+    standalone = form_str(form, "standalone") == "1"
+    role = form_str(form, "role")
+    if role not in ROLE_TITLES:
+        return _toast_only("Неизвестная роль", "error")
+    try:
+        new_ids = role_ids_from_form(form)
+    except ValueError:
+        return _toast_only("Некорректный выбор", "error")
+    try:
+        _, regenerated = await RequestChainService(session).switch_step_client(
+            chain_id, step_id, role, new_ids, visible_group_ids=group_ids
+        )
+        await commit_or_409(session)
+    except DomainError as exc:
+        await session.rollback()
+        return _toast_only(exc.message, "error")
+    message = (
+        "Клиент заменён"
+        if regenerated
+        else "Исходный шаблон удалён — тело не перегенерировано, обновлены роли и имя"
+    )
+    return await _panel_response(
+        request, templates, session, chain_id, standalone=standalone,
+        headers={"HX-Trigger": toast_header(
+            message, toast_type="success" if regenerated else "warning",
+            refresh_filled_tree=True,
+        )},
+        visible_group_ids=group_ids,
+    )
+
+
+@router.post("/filled-templates-htmx/chains/{chain_id}/replace-client")
+async def htmx_replace_client(
+    chain_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
+) -> Response:
+    form = await request.form()
+    standalone = form_str(form, "standalone") == "1"
+    try:
+        old_client_id = uuid.UUID(form_str(form, "old_client_id"))
+        new_ids = role_ids_from_form(form)
+    except ValueError:
+        return _toast_only("Некорректный выбор", "error")
+    try:
+        changed = await RequestChainService(session).replace_client_everywhere(
+            chain_id, old_client_id, new_ids, visible_group_ids=group_ids
+        )
+        await commit_or_409(session)
+    except DomainError as exc:
+        await session.rollback()
+        return _toast_only(exc.message, "error")
+    if not changed:
+        return _toast_only("Этот клиент не используется в цепочке", "error")
+    return await _panel_response(
+        request, templates, session, chain_id, standalone=standalone,
+        headers={"HX-Trigger": toast_header(
+            f"Клиент заменён в {len(changed)} шаг(ах)", refresh_filled_tree=True
+        )},
+        visible_group_ids=group_ids,
+    )
 
 
 # ---------- stub «send» seam (NO real network request) ----------

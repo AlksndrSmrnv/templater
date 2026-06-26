@@ -8,11 +8,13 @@ from typing import Any, cast
 
 import pytest
 
-from app.db.models import FilledTemplate
+from app.db.models import FilledTemplate, RequestChainStep
 from app.routes import templates_reg
 from app.services.filled_templates import (
     NAME_MAX_LEN,
+    _surname,
     build_auto_name,
+    build_short_name,
     iter_role_labels,
 )
 
@@ -111,6 +113,75 @@ def test_build_auto_name_truncates_to_max_len() -> None:
     )
     assert len(name) <= NAME_MAX_LEN
     assert name.endswith("…")
+
+
+def test_surname_takes_first_word() -> None:
+    assert _surname("Иванов Иван Иванович") == "Иванов"
+    assert _surname("ООО Ромашка") == "ООО"
+    assert _surname("  Петров  ") == "Петров"
+    assert _surname("") == ""
+    assert _surname("   ") == ""
+
+
+def test_build_short_name_sender_and_receiver() -> None:
+    name = build_short_name(
+        "Перевод",
+        {"sender": ("Иванов", "ACC-001"), "receiver": ("Петров", "ACC-002")},
+    )
+    assert name == "Перевод Иванов ACC-001 Петров ACC-002"
+    assert "—" not in name  # no date / separators of the old format
+    assert "→" not in name
+
+
+def test_build_short_name_only_sender_without_number() -> None:
+    name = build_short_name("Tpl", {"sender": ("Иванов", "")})
+    assert name == "Tpl Иванов"
+
+
+def test_build_short_name_appends_owner_last() -> None:
+    name = build_short_name(
+        "Tpl",
+        {
+            "sender": ("Иванов", "ACC-1"),
+            "receiver": ("Петров", "ACC-2"),
+            "accountOwner": ("Сидоров", "ACC-3"),
+        },
+    )
+    assert name == "Tpl Иванов ACC-1 Петров ACC-2 Сидоров ACC-3"
+
+
+def test_build_short_name_without_roles_is_just_template() -> None:
+    assert build_short_name("Tpl", {}) == "Tpl"
+
+
+def test_build_short_name_falls_back_when_template_empty() -> None:
+    assert build_short_name("", {}) == "Шаблон"
+
+
+def test_build_short_name_truncates_to_max_len() -> None:
+    name = build_short_name("X" * 400, {"sender": ("Y" * 100, "Z" * 100)})
+    assert len(name) <= NAME_MAX_LEN
+    assert name.endswith("…")
+
+
+def test_chain_step_model_has_role_columns_set_null() -> None:
+    cols = {c.name for c in RequestChainStep.__table__.columns}
+    expected = {
+        "sender_client_id",
+        "sender_account_id",
+        "sender_card_id",
+        "receiver_client_id",
+        "receiver_account_id",
+        "receiver_card_id",
+        "account_owner_client_id",
+        "account_owner_account_id",
+        "account_owner_card_id",
+        "role_labels_snapshot",
+    }
+    assert not (expected - cols), f"missing on RequestChainStep: {expected - cols}"
+    fkmap = {fk.parent.name: fk.ondelete for fk in RequestChainStep.__table__.foreign_keys}
+    for col in ("sender_client_id", "receiver_client_id", "account_owner_client_id"):
+        assert fkmap.get(col) == "SET NULL", f"{col} should be SET NULL, got {fkmap.get(col)}"
 
 
 def test_iter_role_labels_returns_only_roles_present_in_snapshot() -> None:
@@ -491,7 +562,6 @@ async def test_save_from_fill_snapshots_project_name_and_color() -> None:
         rendered="{}",
         changed=[],
         unresolved=[],
-        now=_now(),
     )
     assert saved.project_name_snapshot == "Альфа"
     assert saved.project_color_snapshot == "#112233"
@@ -508,7 +578,6 @@ async def test_save_from_fill_tolerates_template_without_project() -> None:
         rendered="{}",
         changed=[],
         unresolved=[],
-        now=_now(),
     )
     assert saved.project_name_snapshot == ""
     assert saved.project_color_snapshot == ""
@@ -539,7 +608,6 @@ async def test_save_from_fill_snapshots_http_request_and_folder() -> None:
         changed=[],
         unresolved=[],
         folder_path=["Проект", "Релиз", "Фича"],
-        now=_now(),
     )
     assert saved.folder_path == ["Проект", "Релиз", "Фича"]
     assert saved.http_method_snapshot == "POST"
@@ -564,7 +632,6 @@ async def test_save_from_fill_appends_after_ordered_siblings() -> None:
         changed=[],
         unresolved=[],
         folder_path=["Проект"],
-        now=_now(),
     )
     assert saved.display_order == 5
 
@@ -579,7 +646,6 @@ async def test_save_from_fill_defaults_when_http_fields_and_folder_absent() -> N
         rendered="{}",
         changed=[],
         unresolved=[],
-        now=_now(),
     )
     assert saved.folder_path == []
     assert saved.http_method_snapshot == ""

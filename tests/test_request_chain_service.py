@@ -14,6 +14,8 @@ from typing import Any, cast
 
 import pytest
 
+from app.services import request_chain as rc_module
+from app.services.filled_templates import _RoleIds
 from app.services.request_chain import RequestChainService
 from app.utils.errors import NotFoundError, ValidationFailed
 
@@ -350,3 +352,220 @@ async def test_bind_field_rejects_root_scalar() -> None:
         with pytest.raises(NotFoundError):
             await svc.bind_field(chain.id, s2.id, location=loc, ref_step=1, ref_path="x")
     assert s2.bindings == {}
+
+
+# ---- client switching ---------------------------------------------------------
+
+
+def _filled_with_role(
+    *, client_id: uuid.UUID, mtid: uuid.UUID | None = None
+) -> SimpleNamespace:
+    ft = _filled(name="Создать перевод")
+    ft.sender_client_id = client_id
+    ft.sender_account_id = None
+    ft.sender_card_id = None
+    ft.receiver_client_id = None
+    ft.receiver_account_id = None
+    ft.receiver_card_id = None
+    ft.account_owner_client_id = None
+    ft.account_owner_account_id = None
+    ft.account_owner_card_id = None
+    ft.role_labels_snapshot = {"sender": "Иванов"}
+    ft.message_template_id = mtid
+    ft.template_name_snapshot = "Перевод"
+    return ft
+
+
+def _patch_rerender(monkeypatch: Any, *, body: str = '{"new": 1}', changed: list[str] | None = None) -> None:
+    """Stub the re-render collaborators so the step body comes from a fake fill
+    and labels/name don't hit the DB."""
+
+    class _FakeTemplateService:
+        def __init__(self, session: Any) -> None:
+            pass
+
+        async def get(self, tid: Any) -> SimpleNamespace:
+            return SimpleNamespace(id=tid, format="json")
+
+    class _FakeFiller:
+        def __init__(self, session: Any) -> None:
+            pass
+
+        async def fill_template(self, template: Any, **ids: Any) -> tuple[str, list[str], list[str]]:
+            return body, [], list(changed or ["/new"])
+
+    async def _labels(session: Any, req: Any) -> dict[str, str]:
+        return {"sender": "Сидоров"}
+
+    async def _bits(session: Any, req: Any) -> dict[str, tuple[str, str]]:
+        return {"sender": ("Сидоров", "ACC-9")}
+
+    async def _groups(session: Any, req: Any) -> dict[uuid.UUID, Any]:
+        return {}  # public by default — no cross-group conflict
+
+    monkeypatch.setattr(rc_module, "TemplateService", _FakeTemplateService)
+    monkeypatch.setattr(rc_module, "PlaceholderFiller", _FakeFiller)
+    monkeypatch.setattr(rc_module, "collect_role_labels", _labels)
+    monkeypatch.setattr(rc_module, "collect_role_short_bits", _bits)
+    monkeypatch.setattr(rc_module, "collect_request_groups", _groups)
+
+
+@pytest.mark.asyncio
+async def test_add_step_copies_role_ids_and_labels() -> None:
+    cid = uuid.uuid4()
+    ft = _filled_with_role(client_id=cid, mtid=uuid.uuid4())
+    svc = _service([ft])
+    chain = await svc.create_chain([], "Цепочка")
+    step = await svc.add_step(chain.id, ft.id)
+    assert step.sender_client_id == cid
+    assert step.role_labels_snapshot == {"sender": "Иванов"}
+
+
+@pytest.mark.asyncio
+async def test_switch_step_client_regenerates_body(monkeypatch: Any) -> None:
+    cid, new_cid = uuid.uuid4(), uuid.uuid4()
+    ft = _filled_with_role(client_id=cid, mtid=uuid.uuid4())
+    svc = _service([ft])
+    chain = await svc.create_chain([], "Цепочка")
+    step = await svc.add_step(chain.id, ft.id)
+    _patch_rerender(monkeypatch)
+
+    returned, regenerated = await svc.switch_step_client(
+        chain.id, step.id, "sender", _RoleIds(new_cid, None, None)
+    )
+    assert regenerated is True
+    assert returned.body == '{"new": 1}'
+    assert returned.sender_client_id == new_cid
+    assert returned.changed_locations == ["/new"]
+    assert returned.role_labels_snapshot == {"sender": "Сидоров"}
+    assert "Сидоров" in returned.name_snapshot
+
+
+@pytest.mark.asyncio
+async def test_switch_step_client_without_source_template_keeps_body(monkeypatch: Any) -> None:
+    cid, new_cid = uuid.uuid4(), uuid.uuid4()
+    ft = _filled_with_role(client_id=cid, mtid=None)  # source template deleted
+    svc = _service([ft])
+    chain = await svc.create_chain([], "Цепочка")
+    step = await svc.add_step(chain.id, ft.id)
+    original_body = step.body
+    _patch_rerender(monkeypatch)
+
+    returned, regenerated = await svc.switch_step_client(
+        chain.id, step.id, "sender", _RoleIds(new_cid, None, None)
+    )
+    assert regenerated is False
+    assert returned.body == original_body  # not re-rendered
+    assert returned.sender_client_id == new_cid  # roles still updated
+    assert returned.role_labels_snapshot == {"sender": "Сидоров"}
+
+
+@pytest.mark.asyncio
+async def test_switch_step_preserves_surviving_binding(monkeypatch: Any) -> None:
+    cid, new_cid = uuid.uuid4(), uuid.uuid4()
+    ft = _filled_with_role(client_id=cid, mtid=uuid.uuid4())
+    svc = _service([ft])
+    chain = await svc.create_chain([], "Цепочка")
+    s1 = await svc.add_step(chain.id, ft.id)
+    svc.filled.filled.append(ft)  # type: ignore[attr-defined]
+    s2 = await svc.add_step(chain.id, ft.id)
+    # Bind /amount on the 2nd step to step 1's response, then switch its client.
+    await svc.bind_field(chain.id, s2.id, location="/amount", ref_step=1, ref_path="transferId")
+    assert "{{ $1.transferId }}" in s2.body
+    # Re-render keeps the leaf /amount present so the reference must survive.
+    _patch_rerender(monkeypatch, body='{"amount": 999}', changed=["/amount"])
+
+    await svc.switch_step_client(chain.id, s2.id, "sender", _RoleIds(new_cid, None, None))
+    assert "{{ $1.transferId }}" in s2.body  # binding re-applied
+    assert s2.bindings.get("/amount") == 999  # reset buffer refreshed to new literal
+
+
+@pytest.mark.asyncio
+async def test_replace_client_everywhere_touches_only_matching_steps(monkeypatch: Any) -> None:
+    target, other, new_cid = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    ft_a = _filled_with_role(client_id=target, mtid=uuid.uuid4())
+    ft_b = _filled_with_role(client_id=other, mtid=uuid.uuid4())
+    svc = _service([ft_a, ft_b])
+    chain = await svc.create_chain([], "Цепочка")
+    sa = await svc.add_step(chain.id, ft_a.id)
+    sb = await svc.add_step(chain.id, ft_b.id)
+    _patch_rerender(monkeypatch)
+
+    changed = await svc.replace_client_everywhere(
+        chain.id, target, _RoleIds(new_cid, None, None)
+    )
+    assert [s.id for s in changed] == [sa.id]
+    assert sa.sender_client_id == new_cid
+    assert sb.sender_client_id == other  # untouched
+
+
+@pytest.mark.asyncio
+async def test_replace_client_in_two_roles_rerenders_step_once(monkeypatch: Any) -> None:
+    # A step whose sender AND receiver are the same client must be re-rendered a
+    # single time with both roles overridden (no mixed intermediate body).
+    old, new_cid = uuid.uuid4(), uuid.uuid4()
+    ft = _filled_with_role(client_id=old, mtid=uuid.uuid4())
+    ft.receiver_client_id = old
+    svc = _service([ft])
+    chain = await svc.create_chain([], "Цепочка")
+    step = await svc.add_step(chain.id, ft.id)
+
+    calls: list[dict[str, Any]] = []
+
+    class _CountingFiller:
+        def __init__(self, session: Any) -> None:
+            pass
+
+        async def fill_template(self, template: Any, **ids: Any) -> tuple[str, list[str], list[str]]:
+            calls.append(ids)
+            return '{"x": 1}', [], []
+
+    _patch_rerender(monkeypatch)
+    monkeypatch.setattr(rc_module, "PlaceholderFiller", _CountingFiller)
+
+    await svc.replace_client_everywhere(chain.id, old, _RoleIds(new_cid, None, None))
+    assert len(calls) == 1  # one re-render, not one per matching role
+    assert calls[0]["sender_client_id"] == new_cid
+    assert calls[0]["receiver_client_id"] == new_cid
+    assert step.sender_client_id == new_cid
+    assert step.receiver_client_id == new_cid
+
+
+@pytest.mark.asyncio
+async def test_switch_step_client_requires_a_client(monkeypatch: Any) -> None:
+    ft = _filled_with_role(client_id=uuid.uuid4(), mtid=uuid.uuid4())
+    svc = _service([ft])
+    chain = await svc.create_chain([], "Цепочка")
+    step = await svc.add_step(chain.id, ft.id)
+    _patch_rerender(monkeypatch)
+    with pytest.raises(ValidationFailed):
+        await svc.switch_step_client(chain.id, step.id, "sender", _RoleIds(None, None, None))
+
+
+@pytest.mark.asyncio
+async def test_switch_step_client_rejects_cross_group(monkeypatch: Any) -> None:
+    # Two steps start in group A; switching one step's client into group B must
+    # be rejected so the chain's single group_id can't hide B's data from A.
+    g_a, g_b = uuid.uuid4(), uuid.uuid4()
+    c_a, c_b = uuid.uuid4(), uuid.uuid4()
+    ft1 = _filled_with_role(client_id=c_a, mtid=uuid.uuid4())
+    ft2 = _filled_with_role(client_id=c_a, mtid=uuid.uuid4())
+    svc = _service([ft1, ft2])
+    chain = await svc.create_chain([], "Цепочка")
+    await svc.add_step(chain.id, ft1.id)
+    svc.filled.filled.append(ft2)  # type: ignore[attr-defined]
+    s2 = await svc.add_step(chain.id, ft2.id)
+
+    _patch_rerender(monkeypatch)
+    group_of = {
+        c_a: {g_a: SimpleNamespace(name="A", color="#a")},
+        c_b: {g_b: SimpleNamespace(name="B", color="#b")},
+    }
+
+    async def _groups(session: Any, req: Any) -> dict[uuid.UUID, Any]:
+        return dict(group_of.get(req.sender_client_id, {}))
+
+    monkeypatch.setattr(rc_module, "collect_request_groups", _groups)
+
+    with pytest.raises(ValidationFailed):
+        await svc.switch_step_client(chain.id, s2.id, "sender", _RoleIds(c_b, None, None))

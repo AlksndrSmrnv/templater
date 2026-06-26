@@ -30,6 +30,9 @@ from app.repositories.settings import SettingsRepository
 from app.routes.entities_htmx import entity_label
 from app.schemas.template import TemplateFillRequest
 from app.services.collections import _new_node, _norm_path, _starts_with, build_folder_tree
+from app.services.fill_access import assert_fill_visible
+from app.services.placeholders import PlaceholderFiller
+from app.services.templates import TemplateService
 from app.utils.errors import NotFoundError, ValidationFailed
 
 NAME_MAX_LEN = 255
@@ -93,6 +96,37 @@ def build_auto_name(
     return _truncate(" — ".join(parts))
 
 
+def _surname(label: str) -> str:
+    """First word of a client label, used as the surname.
+
+    Client data has no dedicated surname field — ``entity_label`` yields a
+    display string like ``"Иванов Иван Иванович"`` or ``"ООО Ромашка"``; the
+    first token is the surname (or the lead word for orgs). Empty in, empty out.
+    """
+
+    cleaned = (label or "").strip()
+    return cleaned.split(maxsplit=1)[0] if cleaned else ""
+
+
+def build_short_name(template_name: str, role_bits: dict[str, tuple[str, str]]) -> str:
+    """Build ``«<template> <senderSurname> <senderNum> <receiverSurname> <receiverNum>»``.
+
+    ``role_bits`` maps each role to ``(surname, account_or_card_number)``; either
+    element may be empty and is then dropped. The account/card number trails the
+    surname of the same role. Owner, if present, is appended last. Segments are
+    space-joined and the result is clamped to :data:`NAME_MAX_LEN`.
+    """
+
+    parts: list[str] = [template_name or "Шаблон"]
+    for role in _ROLES:
+        surname, number = role_bits.get(role, ("", ""))
+        if surname:
+            parts.append(surname)
+        if number:
+            parts.append(number)
+    return _truncate(" ".join(parts))
+
+
 @dataclass(frozen=True)
 class _RoleIds:
     client_id: uuid.UUID | None
@@ -143,6 +177,95 @@ async def collect_role_labels(
                 bits.append(entity_label("card", card))
         labels[role] = " · ".join(bits)
     return labels
+
+
+async def collect_role_short_bits(
+    session: AsyncSession, req: TemplateFillRequest
+) -> dict[str, tuple[str, str]]:
+    """Build ``{"sender": ("Иванов", "ACC-001"), ...}`` for :func:`build_short_name`.
+
+    ``surname`` is the first word of the client label; ``number`` is the account
+    number if an account was chosen, else the card number, else ``""`` (the
+    account and card are mutually exclusive per role in the fill UI). Roles with
+    no resolved client are skipped.
+    """
+
+    clients = ClientRepository(session)
+    accounts = AccountRepository(session)
+    cards = CardRepository(session)
+    bits: dict[str, tuple[str, str]] = {}
+    for role, ids in _role_ids(req).items():
+        if ids.client_id is None:
+            continue
+        client = await clients.get(ids.client_id)
+        if client is None:
+            continue
+        surname = _surname(entity_label("client", client))
+        number = ""
+        if ids.account_id is not None:
+            account = await accounts.get(ids.account_id)
+            if account is not None:
+                number = entity_label("account", account)
+        elif ids.card_id is not None:
+            card = await cards.get(ids.card_id)
+            if card is not None:
+                number = entity_label("card", card)
+        bits[role] = (surname, number)
+    return bits
+
+
+async def collect_request_groups(
+    session: AsyncSession, req: TemplateFillRequest
+) -> dict[uuid.UUID, Any]:
+    """Distinct private access groups referenced by ``req``, as ``{group_id: group_row}``.
+
+    Resolves the *owning client* of every referenced entity — a client directly,
+    an account via its client, a card via its account's client — so a private
+    account/card counts even when the request carries no explicit ``*_client_id``
+    (a crafted save could otherwise slip private data through as public). Public
+    clients (``group_id is None``) contribute nothing. getattr-safe so test
+    doubles without the ``group`` relationship work.
+    """
+
+    clients_repo = ClientRepository(session)
+    accounts_repo = AccountRepository(session)
+    cards_repo = CardRepository(session)
+
+    client_ids: set[uuid.UUID] = set()
+    for cid in (req.sender_client_id, req.receiver_client_id, req.account_owner_client_id):
+        if cid is not None:
+            client_ids.add(cid)
+    for aid in (req.sender_account_id, req.receiver_account_id, req.account_owner_account_id):
+        if aid is not None:
+            account = await accounts_repo.get(aid)
+            if account is not None:
+                client_ids.add(account.client_id)
+    for kid in (req.sender_card_id, req.receiver_card_id, req.account_owner_card_id):
+        if kid is not None:
+            card = await cards_repo.get(kid)
+            if card is not None:
+                account = await accounts_repo.get(card.account_id)
+                if account is not None:
+                    client_ids.add(account.client_id)
+
+    groups: dict[uuid.UUID, Any] = {}  # group_id → group row (for name/color)
+    for cid in client_ids:
+        client = await clients_repo.get(cid)
+        if client is None:
+            continue
+        gid = getattr(client, "group_id", None)
+        if gid is not None:
+            groups[gid] = getattr(client, "group", None)
+    return groups
+
+
+# Human-readable role titles, the single source of truth shared by the panel
+# (:func:`iter_role_labels`) and the chain management UI.
+ROLE_TITLES: dict[str, str] = {
+    "sender": "Отправитель",
+    "receiver": "Получатель",
+    "accountOwner": "Владелец счёта",
+}
 
 
 class FilledTemplateService:
@@ -426,65 +549,17 @@ class FilledTemplateService:
         """Resolve ``(group_id, name, color)`` for a fill across *all* its roles.
 
         A saved snapshot is a single artifact with one ``group_id``, so it can
-        only safely represent one access group. We resolve the *owning client* of
-        every referenced entity — a client directly, an account via its client, a
-        card via its account's client — so a private account/card protects the
-        snapshot even when the request carries no explicit ``*_client_id`` (a
-        crafted save could otherwise persist private data as public). Then over
-        the distinct private groups of those clients:
+        only safely represent one access group. Over the distinct private groups
+        of all referenced clients (see :func:`collect_request_groups`):
 
         - none → public (``None``);
         - exactly one → that group (name/color snapshotted for the badge);
         - two or more → reject. A single ``group_id`` cannot be hidden from
           holders of group A while shown to holders of group B, so persisting the
           mix would leak one group's data to the other.
-
-        getattr-safe so test doubles without the ``group`` relationship work.
         """
 
-        clients_repo = ClientRepository(self.session)
-        accounts_repo = AccountRepository(self.session)
-        cards_repo = CardRepository(self.session)
-
-        client_ids: set[uuid.UUID] = set()
-        for cid in (
-            fill_request.sender_client_id,
-            fill_request.receiver_client_id,
-            fill_request.account_owner_client_id,
-        ):
-            if cid is not None:
-                client_ids.add(cid)
-        for aid in (
-            fill_request.sender_account_id,
-            fill_request.receiver_account_id,
-            fill_request.account_owner_account_id,
-        ):
-            if aid is not None:
-                account = await accounts_repo.get(aid)
-                if account is not None:
-                    client_ids.add(account.client_id)
-        for kid in (
-            fill_request.sender_card_id,
-            fill_request.receiver_card_id,
-            fill_request.account_owner_card_id,
-        ):
-            if kid is not None:
-                card = await cards_repo.get(kid)
-                if card is not None:
-                    account = await accounts_repo.get(card.account_id)
-                    if account is not None:
-                        client_ids.add(account.client_id)
-
-        if not client_ids:
-            return None, "", ""
-        groups: dict[uuid.UUID, Any] = {}  # group_id → group row (for name/color)
-        for cid in client_ids:
-            client = await clients_repo.get(cid)
-            if client is None:
-                continue
-            gid = getattr(client, "group_id", None)
-            if gid is not None:
-                groups[gid] = getattr(client, "group", None)
+        groups = await collect_request_groups(self.session, fill_request)
         if not groups:
             return None, "", ""
         if len(groups) > 1:
@@ -505,11 +580,9 @@ class FilledTemplateService:
         changed: list[str],
         unresolved: list[str],
         folder_path: list[str] | None = None,
-        now: datetime | None = None,
     ) -> FilledTemplate:
         role_labels = await collect_role_labels(self.session, fill_request)
-        moment = now or datetime.utcnow()
-        name = build_auto_name(template.name, role_labels, moment)
+        name = await self._compose_name(template.name, fill_request)
         # getattr-safe: test doubles may not carry the project relationship.
         project = getattr(template, "project", None)
         # The snapshot's access group is derived from all involved role clients
@@ -553,6 +626,124 @@ class FilledTemplateService:
         )
         return await self.repo.add(item)
 
+    async def _compose_name(
+        self, template_name: str, fill_request: TemplateFillRequest
+    ) -> str:
+        """Short name from the live role ids — shared by save and role switch."""
+
+        bits = await collect_role_short_bits(self.session, fill_request)
+        return build_short_name(template_name, bits)
+
+    async def switch_role(
+        self,
+        filled_id: uuid.UUID,
+        role: str,
+        new_ids: _RoleIds,
+        *,
+        visible_group_ids: set[uuid.UUID] | None = None,
+    ) -> tuple[FilledTemplate, bool]:
+        """Re-point ``role`` to ``new_ids`` and refresh the snapshot.
+
+        Re-renders ``filled_content`` from the source message template, then
+        recomputes the role FK columns, ``role_labels_snapshot``, the access
+        group, and the short ``name``. Returns ``(item, regenerated)`` where
+        ``regenerated`` is ``False`` when the source template was deleted
+        (``message_template_id is None``): the body is then left untouched and
+        only the roles/labels/group/name are updated.
+
+        Raises ``ValidationFailed`` if the new entities are invisible to the
+        caller or mix access groups (the route rolls back, leaving the row
+        unchanged).
+        """
+
+        if role not in _ROLES:
+            raise ValidationFailed("Неизвестная роль")
+        if new_ids.client_id is None:
+            raise ValidationFailed("Выберите клиента для замены")
+        item = await self.get(filled_id, visible_group_ids=visible_group_ids)
+        req = _override_role(_fill_request_from_roles(item), role, new_ids)
+        await assert_fill_visible(self.session, req, visible_group_ids)
+
+        regenerated = False
+        if item.message_template_id is not None:
+            template = await TemplateService(self.session).get(item.message_template_id)
+            rendered, unresolved, changed = await PlaceholderFiller(self.session).fill_template(
+                template,
+                sender_client_id=req.sender_client_id,
+                sender_account_id=req.sender_account_id,
+                sender_card_id=req.sender_card_id,
+                receiver_client_id=req.receiver_client_id,
+                receiver_account_id=req.receiver_account_id,
+                receiver_card_id=req.receiver_card_id,
+                account_owner_client_id=req.account_owner_client_id,
+                account_owner_account_id=req.account_owner_account_id,
+                account_owner_card_id=req.account_owner_card_id,
+            )
+            item.filled_content = rendered
+            item.unresolved = list(unresolved or [])
+            item.changed_locations = list(changed or [])
+            regenerated = True
+
+        _apply_roles_to(item, req)
+        item.role_labels_snapshot = await collect_role_labels(self.session, req)
+        group_id, group_name, group_color = await self._fill_group(req)
+        item.group_id = group_id
+        item.group_name_snapshot = _truncate(group_name, limit=255)
+        item.group_color_snapshot = group_color
+        item.name = await self._compose_name(
+            item.template_name_snapshot or "", req
+        )
+        return item, regenerated
+
+
+# Role-column accessors shared by the filled-template and chain-step switch flows.
+# Each role maps to its (client, account, card) FK column names; the same names
+# exist on FilledTemplate and RequestChainStep.
+_ROLE_COLUMNS: dict[str, tuple[str, str, str]] = {
+    "sender": ("sender_client_id", "sender_account_id", "sender_card_id"),
+    "receiver": ("receiver_client_id", "receiver_account_id", "receiver_card_id"),
+    "accountOwner": (
+        "account_owner_client_id",
+        "account_owner_account_id",
+        "account_owner_card_id",
+    ),
+}
+
+
+def _fill_request_from_roles(row: Any) -> TemplateFillRequest:
+    """Build a ``TemplateFillRequest`` from a row's current role FK columns."""
+
+    values: dict[str, uuid.UUID | None] = {}
+    for client_col, account_col, card_col in _ROLE_COLUMNS.values():
+        values[client_col] = getattr(row, client_col, None)
+        values[account_col] = getattr(row, account_col, None)
+        values[card_col] = getattr(row, card_col, None)
+    return TemplateFillRequest(**values)
+
+
+def _override_role(
+    req: TemplateFillRequest, role: str, new_ids: _RoleIds
+) -> TemplateFillRequest:
+    """Return a copy of ``req`` with ``role``'s triple replaced by ``new_ids``."""
+
+    client_col, account_col, card_col = _ROLE_COLUMNS[role]
+    return req.model_copy(
+        update={
+            client_col: new_ids.client_id,
+            account_col: new_ids.account_id,
+            card_col: new_ids.card_id,
+        }
+    )
+
+
+def _apply_roles_to(row: Any, req: TemplateFillRequest) -> None:
+    """Write all nine role FK columns from ``req`` back onto ``row``."""
+
+    for client_col, account_col, card_col in _ROLE_COLUMNS.values():
+        setattr(row, client_col, getattr(req, client_col))
+        setattr(row, account_col, getattr(req, account_col))
+        setattr(row, card_col, getattr(req, card_col))
+
 
 def role_client_id(item: FilledTemplate, role: str) -> uuid.UUID | None:
     """Helper for templates: current client_id for the named role, if any."""
@@ -572,10 +763,9 @@ def iter_role_labels(item: FilledTemplate) -> list[tuple[str, str, str | None]]:
     filled (no entry in ``role_labels_snapshot``) are skipped.
     """
 
-    titles = {"sender": "Отправитель", "receiver": "Получатель", "accountOwner": "Владелец счёта"}
     snap = item.role_labels_snapshot or {}
     out: list[tuple[str, str, str | None]] = []
     for role in _ROLES:
         if role in snap:
-            out.append((role, titles[role], snap.get(role)))
+            out.append((role, ROLE_TITLES[role], snap.get(role)))
     return out

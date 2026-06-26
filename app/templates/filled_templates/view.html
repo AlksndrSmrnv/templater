@@ -19,3 +19,8 @@
 
 {% include "partials/filled_panel.html" %}
 {% endblock %}
+
+{% block scripts %}
+{# window.roleSwitch backs the «Заменить клиента» popover in filled_panel.html. #}
+<script src="/templater/static/js/role_switch.js" defer></script>
+{% endblock %}

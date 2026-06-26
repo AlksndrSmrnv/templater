@@ -32,6 +32,7 @@ from app.schemas.template import TemplateCreate, TemplateFillRequest, TemplateUp
 from app.services.collections import CollectionService
 from app.services.dynamic_fields import dynamic_token_catalog
 from app.services.entities import AccountService, CardService, ClientService
+from app.services.fill_access import assert_fill_visible
 from app.services.header_presets import HeaderPresetService
 from app.services.placeholders import PlaceholderFiller
 from app.services.template_render import render_filled_html, render_template_html
@@ -305,34 +306,10 @@ async def _fill_labels(
     }
 
 
-async def _assert_fill_visible(
-    session: AsyncSession,
-    data: TemplateFillRequest,
-    visible_group_ids: set[uuid.UUID] | None,
-) -> None:
-    """Reject a fill referencing entities the caller cannot see.
-
-    The pickers are already filtered, but a hand-crafted POST could name a
-    private client/account/card; without this check its attribute values would
-    leak into the rendered output. ``visible_group_ids=None`` skips the check
-    (internal callers)."""
-
-    if visible_group_ids is None:
-        return
-    checks = (
-        (ClientService, (data.sender_client_id, data.receiver_client_id, data.account_owner_client_id)),
-        (AccountService, (data.sender_account_id, data.receiver_account_id, data.account_owner_account_id)),
-        (CardService, (data.sender_card_id, data.receiver_card_id, data.account_owner_card_id)),
-    )
-    for service_cls, ids in checks:
-        wanted = {i for i in ids if i is not None}
-        if not wanted:
-            continue
-        rows = await service_cls(session).get_many(
-            list(wanted), visible_group_ids=visible_group_ids
-        )
-        if wanted - {row.id for row in rows}:
-            raise ValidationFailed("Выбраны недоступные записи — разблокируйте нужную группу паролем")
+# ``assert_fill_visible`` lives in ``app.services.fill_access`` so the filled-
+# template / chain services can reuse it without a routes→routes cycle. Kept as a
+# module-local alias for the existing call sites below.
+_assert_fill_visible = assert_fill_visible
 
 
 def _require_fillable(template: Any) -> None:
