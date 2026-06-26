@@ -30,10 +30,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import RequestChain, RequestChainStep
 from app.repositories.entity import ClientRepository
 from app.repositories.filled_template import FilledTemplateRepository
+from app.routes.client_switch_utils import role_ids_from_form
 from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.entities_htmx import entity_label
 from app.routes.htmx_utils import form_str, parse_json_path, parse_uuid_list, toast_header
-from app.routes.role_switch_utils import role_ids_from_form
 from app.routes.uow import commit_or_409
 from app.services.filled_templates import (
     _ROLE_COLUMNS,
@@ -92,7 +92,33 @@ def _serialize_step(
         # «Заменить клиента» picker can target its fill endpoints. Empty when the
         # filled template / source template was deleted (switch then disabled).
         "message_template_id": str(message_template_id) if message_template_id else "",
+        # Roles bound on this step — drives the per-step «Заменить» buttons inside
+        # the Alpine step card.
+        "roles": _step_roles(step),
     }
+
+
+def _step_roles(step: RequestChainStep) -> list[dict[str, Any]]:
+    """``[{role, title, label, clientId, accountId, cardId}]`` for each role the
+    step has populated (sender → receiver → accountOwner order)."""
+
+    labels = step.role_labels_snapshot or {}
+    out: list[dict[str, Any]] = []
+    for role, (client_col, account_col, card_col) in _ROLE_COLUMNS.items():
+        cid = getattr(step, client_col)
+        if cid is None:
+            continue
+        out.append(
+            {
+                "role": role,
+                "title": ROLE_TITLES[role],
+                "label": labels.get(role) or "—",
+                "clientId": str(cid),
+                "accountId": str(getattr(step, account_col) or ""),
+                "cardId": str(getattr(step, card_col) or ""),
+            }
+        )
+    return out
 
 
 def _serialize_chain(
@@ -117,60 +143,58 @@ async def _manage_context(
     chain: RequestChain,
     tpl_by_filled: dict[uuid.UUID, uuid.UUID | None],
 ) -> dict[str, Any]:
-    """Build the «Клиенты цепочки» management data: per-step role rows (with
-    current ids + a picker template id) and the distinct clients used across the
-    chain (for the chain-wide replace popovers)."""
+    """Build the «Клиенты всей цепочки» top controls: the roles present across the
+    chain (sender → receiver → accountOwner), each with a label that shows the
+    common client when every step agrees (else «разные»), plus the (account/card)
+    ids to preselect in that uniform case, and a picker template id.
 
-    used: dict[uuid.UUID, dict[str, Any]] = {}
-    # A template id for the chain-wide replace picker. The fill endpoints use it
-    # only for role validation (``_check_fill_role``) — the client/account/card
-    # lists are global, NOT filtered by template — so any reachable step's
-    # template works even when the chain spans several templates; each step is
-    # re-rendered against its own source template in ``_rerender_step``.
+    The fill endpoints use ``manage_template_id`` only for role validation
+    (``_check_fill_role``) — the client/account/card lists are global, NOT
+    filtered by template — so any reachable step's template works even when the
+    chain spans several; each step is re-rendered against its own source template.
+    """
+
     any_template_id = ""
-    manage_steps: list[dict[str, Any]] = []
-    for idx, step in enumerate(chain.steps, start=1):
+    for step in chain.steps:
         tpl_id = tpl_by_filled.get(step.filled_template_id) if step.filled_template_id else None
-        tpl_str = str(tpl_id) if tpl_id else ""
-        if tpl_str and not any_template_id:
-            any_template_id = tpl_str
-        labels = step.role_labels_snapshot or {}
-        roles: list[dict[str, Any]] = []
-        for role, (client_col, account_col, card_col) in _ROLE_COLUMNS.items():
-            cid = getattr(step, client_col)
-            if cid is None:
-                continue
-            roles.append(
-                {
-                    "role": role,
-                    "title": ROLE_TITLES[role],
-                    "label": labels.get(role) or "—",
-                    "client_id": str(cid),
-                    "account_id": str(getattr(step, account_col) or ""),
-                    "card_id": str(getattr(step, card_col) or ""),
-                }
+        if tpl_id:
+            any_template_id = str(tpl_id)
+            break
+
+    chain_roles: list[dict[str, Any]] = []
+    for role, (client_col, account_col, card_col) in _ROLE_COLUMNS.items():
+        # Steps that have this role populated.
+        present = [s for s in chain.steps if getattr(s, client_col) is not None]
+        if not present:
+            continue
+        triples = {
+            (
+                getattr(s, client_col),
+                getattr(s, account_col),
+                getattr(s, card_col),
             )
-            used.setdefault(cid, {"id": str(cid), "label": labels.get(role) or str(cid)})
-        manage_steps.append(
+            for s in present
+        }
+        uniform = len(triples) == 1
+        client_id, account_id, card_id = next(iter(triples)) if uniform else (None, None, None)
+        label = ""
+        if uniform and client_id is not None:
+            row = await ClientRepository(session).get(client_id)
+            label = entity_label("client", row) if row is not None else ""
+        chain_roles.append(
             {
-                "id": str(step.id),
-                "num": idx,
-                "name": step.name_snapshot,
-                "template_id": tpl_str,
-                "roles": roles,
+                "role": role,
+                "title": ROLE_TITLES[role],
+                "label": label,  # "" → render «разные» / «—» in the template
+                "uniform": uniform,
+                "current": {
+                    "clientId": str(client_id or ""),
+                    "accountId": str(account_id or ""),
+                    "cardId": str(card_id or ""),
+                },
             }
         )
-    # Prefer a clean client display label over the combined role label.
-    if used:
-        rows = await ClientRepository(session).get_many(list(used.keys()))
-        for row in rows:
-            if row.id in used:
-                used[row.id]["label"] = entity_label("client", row)
-    return {
-        "manage_steps": manage_steps,
-        "used_clients": list(used.values()),
-        "manage_template_id": any_template_id,
-    }
+    return {"chain_roles": chain_roles, "manage_template_id": any_template_id}
 
 
 def _step_dependencies(steps: list[dict[str, Any]]) -> dict[int, list[int]]:
@@ -617,35 +641,46 @@ async def htmx_switch_step_role(
     )
 
 
-@router.post("/filled-templates-htmx/chains/{chain_id}/replace-client")
-async def htmx_replace_client(
+@router.post("/filled-templates-htmx/chains/{chain_id}/replace-role")
+async def htmx_replace_role(
     chain_id: uuid.UUID,
     request: Request,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
     group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
+    """Replace one role's client across every step of the chain that has it."""
+
     form = await request.form()
     standalone = form_str(form, "standalone") == "1"
+    role = form_str(form, "role")
+    if role not in ROLE_TITLES:
+        return _toast_only("Неизвестная роль", "error")
     try:
-        old_client_id = uuid.UUID(form_str(form, "old_client_id"))
         new_ids = role_ids_from_form(form)
     except ValueError:
         return _toast_only("Некорректный выбор", "error")
     try:
-        changed = await RequestChainService(session).replace_client_everywhere(
-            chain_id, old_client_id, new_ids, visible_group_ids=group_ids
+        changed, regenerated = await RequestChainService(session).replace_role_everywhere(
+            chain_id, role, new_ids, visible_group_ids=group_ids
         )
         await commit_or_409(session)
     except DomainError as exc:
         await session.rollback()
         return _toast_only(exc.message, "error")
     if not changed:
-        return _toast_only("Этот клиент не используется в цепочке", "error")
+        return _toast_only("Эта роль не используется ни в одном шаге", "error")
+    message = f"{ROLE_TITLES[role]} заменён в {len(changed)} шаг(ах)"
+    toast_type = "success"
+    # Some steps lost their source template — their role updated but body not
+    # regenerated; say so rather than implying every body was rebuilt.
+    if regenerated < len(changed):
+        message += f" (тело перегенерировано в {regenerated})"
+        toast_type = "warning"
     return await _panel_response(
         request, templates, session, chain_id, standalone=standalone,
         headers={"HX-Trigger": toast_header(
-            f"Клиент заменён в {len(changed)} шаг(ах)", refresh_filled_tree=True
+            message, toast_type=toast_type, refresh_filled_tree=True
         )},
         visible_group_ids=group_ids,
     )
