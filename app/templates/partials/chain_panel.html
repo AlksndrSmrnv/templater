@@ -136,7 +136,7 @@
                             <div class="chain-field-popover" x-show="picker.stepIdx === idx" x-cloak
                                  :class="{ 'chain-field-popover--above': picker.anchor.above }"
                                  :style="'top:' + picker.anchor.top + 'px; left:' + picker.anchor.left + 'px'"
-                                 @keydown.escape.window="closePicker()">
+                                 @keydown.escape.window="if (picker.stepIdx === idx) closePicker()">
                                 <div class="chain-field-popover-head">
                                     <span class="muted">Привязать поле <code x-text="picker.location"></code></span>
                                     <button type="button" class="btn small chain-picker-close" @click="closePicker()" title="Закрыть">

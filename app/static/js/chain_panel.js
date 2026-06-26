@@ -22,8 +22,11 @@
  */
 window.chainPanel = function (config) {
     const base = '/templater/filled-templates-htmx/chains/';
-    // Sticky topbar height — kept clear when flipping the popover upward.
+    // Kept clear when flipping the popover upward. TOPBAR_H mirrors
+    // .topbar { height } and FLIP_GAP the .chain-field-popover--above translateY
+    // offset — both in app.css; keep in sync if those change.
     const TOPBAR_H = 64;
+    const FLIP_GAP = 4;
     const emptyPicker = () => ({
         stepIdx: null, location: null, isRef: false, sourceStep: null,
         paths: [], filtered: [], query: '', anchor: { top: 0, left: 0, above: false },
@@ -184,9 +187,11 @@ window.chainPanel = function (config) {
             const POPOVER_H = 380;
             const left = Math.max(0, Math.min(sr.left - wr.left, wr.width - POPOVER_W));
             const spaceBelow = window.innerHeight - sr.bottom;
-            const fitsAbove = (sr.top - POPOVER_H) > TOPBAR_H;
+            // The flipped popover's visible top sits FLIP_GAP higher (CSS
+            // translateY), so account for it when checking topbar clearance.
+            const fitsAbove = (sr.top - POPOVER_H - FLIP_GAP) > TOPBAR_H;
             const above = spaceBelow < POPOVER_H + 12 && fitsAbove;
-            const top = above ? (sr.top - wr.top) : (sr.bottom - wr.top + 4);
+            const top = above ? (sr.top - wr.top) : (sr.bottom - wr.top + FLIP_GAP);
             return { top: top, left: left, above: above };
         },
         closePicker() {

@@ -1228,7 +1228,8 @@ input[type="file"]::-webkit-file-upload-button:hover { background: var(--surface
     border-radius: var(--radius); padding: 10px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
-/* Flipped above the field when there isn't room below. */
+/* Flipped above the field when there isn't room below. The 4px gap mirrors
+   FLIP_GAP in chain_panel.js (topbar-clearance check) — keep in sync. */
 .chain-field-popover--above { transform: translateY(calc(-100% - 4px)); }
 .chain-field-popover-head {
     display: flex; align-items: center; justify-content: space-between;
