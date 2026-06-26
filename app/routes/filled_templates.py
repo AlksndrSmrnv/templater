@@ -32,9 +32,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.entity import ClientRepository
 from app.repositories.request_chain import RequestChainRepository
+from app.routes.client_switch_utils import SWITCH_ROLES, role_ids_from_form
 from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.htmx_utils import form_str, parse_json_path, parse_uuid_list, toast_header
-from app.routes.role_switch_utils import SWITCH_ROLES, role_ids_from_form
 from app.routes.uow import commit_or_409
 from app.services.filled_templates import FilledTemplateService, iter_role_labels
 from app.services.template_render import render_filled_html

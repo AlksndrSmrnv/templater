@@ -30,10 +30,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import RequestChain, RequestChainStep
 from app.repositories.entity import ClientRepository
 from app.repositories.filled_template import FilledTemplateRepository
+from app.routes.client_switch_utils import role_ids_from_form
 from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.entities_htmx import entity_label
 from app.routes.htmx_utils import form_str, parse_json_path, parse_uuid_list, toast_header
-from app.routes.role_switch_utils import role_ids_from_form
 from app.routes.uow import commit_or_409
 from app.services.filled_templates import (
     _ROLE_COLUMNS,
@@ -661,7 +661,7 @@ async def htmx_replace_role(
     except ValueError:
         return _toast_only("Некорректный выбор", "error")
     try:
-        changed = await RequestChainService(session).replace_role_everywhere(
+        changed, regenerated = await RequestChainService(session).replace_role_everywhere(
             chain_id, role, new_ids, visible_group_ids=group_ids
         )
         await commit_or_409(session)
@@ -670,10 +670,17 @@ async def htmx_replace_role(
         return _toast_only(exc.message, "error")
     if not changed:
         return _toast_only("Эта роль не используется ни в одном шаге", "error")
+    message = f"{ROLE_TITLES[role]} заменён в {len(changed)} шаг(ах)"
+    toast_type = "success"
+    # Some steps lost their source template — their role updated but body not
+    # regenerated; say so rather than implying every body was rebuilt.
+    if regenerated < len(changed):
+        message += f" (тело перегенерировано в {regenerated})"
+        toast_type = "warning"
     return await _panel_response(
         request, templates, session, chain_id, standalone=standalone,
         headers={"HX-Trigger": toast_header(
-            f"{ROLE_TITLES[role]} заменён в {len(changed)} шаг(ах)", refresh_filled_tree=True
+            message, toast_type=toast_type, refresh_filled_tree=True
         )},
         visible_group_ids=group_ids,
     )

@@ -508,13 +508,16 @@ class RequestChainService:
         new_ids: _RoleIds,
         *,
         visible_group_ids: set[uuid.UUID] | None = None,
-    ) -> list[RequestChainStep]:
+    ) -> tuple[list[RequestChainStep], int]:
         """Re-point ``role`` to ``new_ids`` on *every* step that has it, re-rendering
         each. «Заменить отправителя/получателя/владельца во всей цепочке».
 
         Only steps where the role is populated (``<role>_client_id is not None``)
         are touched — a step whose template doesn't use the role keeps it empty.
-        Returns the changed steps; an empty list means no step has the role.
+        Returns ``(changed, regenerated)``: the list of steps whose role was
+        re-pointed, and how many of those had their body actually re-rendered
+        (steps whose source template was deleted update the role/labels only). An
+        empty list means no step has the role.
         """
 
         if role not in _ROLE_COLUMNS:
@@ -524,16 +527,18 @@ class RequestChainService:
         client_col = _ROLE_COLUMNS[role][0]
         chain = await self.get(chain_id, visible_group_ids=visible_group_ids)
         changed: list[RequestChainStep] = []
+        regenerated = 0
         for step in chain.steps:
             if getattr(step, client_col) is None:
                 continue
-            await self._rerender_step(
+            if await self._rerender_step(
                 step, {role: new_ids}, visible_group_ids=visible_group_ids
-            )
+            ):
+                regenerated += 1
             changed.append(step)
         if changed:
             await self._apply_chain_group(chain)
-        return changed
+        return changed, regenerated
 
     async def reorder_steps(
         self,

@@ -493,10 +493,11 @@ async def test_replace_role_everywhere_touches_only_steps_with_role(monkeypatch:
     sb = await svc.add_step(chain.id, ft_b.id)
     _patch_rerender(monkeypatch)
 
-    changed = await svc.replace_role_everywhere(
+    changed, regenerated = await svc.replace_role_everywhere(
         chain.id, "sender", _RoleIds(new_cid, None, None)
     )
     assert [s.id for s in changed] == [sa.id]
+    assert regenerated == 1
     assert sa.sender_client_id == new_cid
     assert sb.sender_client_id is None  # step without the role is untouched
 
@@ -512,12 +513,33 @@ async def test_replace_role_everywhere_updates_all_steps_with_role(monkeypatch: 
     sb = await svc.add_step(chain.id, ft_b.id)
     _patch_rerender(monkeypatch)
 
-    changed = await svc.replace_role_everywhere(
+    changed, regenerated = await svc.replace_role_everywhere(
         chain.id, "sender", _RoleIds(new_cid, None, None)
     )
     assert {s.id for s in changed} == {sa.id, sb.id}
+    assert regenerated == 2
     assert sa.sender_client_id == new_cid
     assert sb.sender_client_id == new_cid  # both senders set to the new client
+
+
+@pytest.mark.asyncio
+async def test_replace_role_everywhere_counts_only_regenerated(monkeypatch: Any) -> None:
+    # A step whose source template was deleted has its role updated but body NOT
+    # regenerated — it counts in ``changed`` but not in the regenerated count.
+    c_a, c_b, new_cid = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    ft_a = _filled_with_role(client_id=c_a, mtid=uuid.uuid4())
+    ft_b = _filled_with_role(client_id=c_b, mtid=None)  # source template gone
+    svc = _service([ft_a, ft_b])
+    chain = await svc.create_chain([], "Цепочка")
+    sa = await svc.add_step(chain.id, ft_a.id)
+    sb = await svc.add_step(chain.id, ft_b.id)
+    _patch_rerender(monkeypatch)
+
+    changed, regenerated = await svc.replace_role_everywhere(
+        chain.id, "sender", _RoleIds(new_cid, None, None)
+    )
+    assert {s.id for s in changed} == {sa.id, sb.id}  # both role-updated
+    assert regenerated == 1  # only the one with a live source template
 
 
 @pytest.mark.asyncio
@@ -529,6 +551,38 @@ async def test_replace_role_everywhere_requires_a_client(monkeypatch: Any) -> No
     _patch_rerender(monkeypatch)
     with pytest.raises(ValidationFailed):
         await svc.replace_role_everywhere(chain.id, "sender", _RoleIds(None, None, None))
+
+
+@pytest.mark.asyncio
+async def test_replace_role_everywhere_rejects_cross_group(monkeypatch: Any) -> None:
+    # Two steps in group A; replacing the sender role with a group-B client must
+    # be rejected so the chain's single group_id can't hide B's data from A.
+    g_a, g_b = uuid.uuid4(), uuid.uuid4()
+    c_a, c_b = uuid.uuid4(), uuid.uuid4()
+    ft1 = _filled_with_role(client_id=c_a, mtid=uuid.uuid4())
+    ft2 = _filled_with_role(client_id=c_a, mtid=uuid.uuid4())
+    ft2.receiver_client_id = c_a  # a second role keeps the chain anchored in A
+    svc = _service([ft1, ft2])
+    chain = await svc.create_chain([], "Цепочка")
+    await svc.add_step(chain.id, ft1.id)
+    await svc.add_step(chain.id, ft2.id)
+    _patch_rerender(monkeypatch)
+
+    group_of = {
+        c_a: {g_a: SimpleNamespace(name="A", color="#a")},
+        c_b: {g_b: SimpleNamespace(name="B", color="#b")},
+    }
+
+    async def _groups(session: Any, req: Any) -> dict[uuid.UUID, Any]:
+        out: dict[uuid.UUID, Any] = {}
+        for cid in (req.sender_client_id, req.receiver_client_id):
+            out.update(group_of.get(cid, {}))
+        return out
+
+    monkeypatch.setattr(rc_module, "collect_request_groups", _groups)
+
+    with pytest.raises(ValidationFailed):
+        await svc.replace_role_everywhere(chain.id, "sender", _RoleIds(c_b, None, None))
 
 
 @pytest.mark.asyncio
