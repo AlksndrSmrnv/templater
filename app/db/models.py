@@ -574,6 +574,41 @@ class RequestChainStep(Base):
         ForeignKey("filled_templates.id", ondelete="SET NULL"),
         nullable=True,
     )
+
+    # Role bindings copied from the source filled template at add time. They let
+    # the «Заменить клиента» menu re-point a role and re-render this step's body
+    # from the source message template (reached via ``filled_template_id`` →
+    # ``message_template_id``). All ``ON DELETE SET NULL`` like FilledTemplate.
+    sender_client_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="SET NULL"), nullable=True
+    )
+    sender_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    sender_card_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cards.id", ondelete="SET NULL"), nullable=True
+    )
+    receiver_client_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="SET NULL"), nullable=True
+    )
+    receiver_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    receiver_card_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cards.id", ondelete="SET NULL"), nullable=True
+    )
+    account_owner_client_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="SET NULL"), nullable=True
+    )
+    account_owner_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    account_owner_card_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cards.id", ondelete="SET NULL"), nullable=True
+    )
+    # {"sender": "Иванов · ACC-001", ...} — same shape as FilledTemplate's.
+    role_labels_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
     name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     format: Mapped[str] = mapped_column(String(16), nullable=False, default="json")
     http_method_snapshot: Mapped[str] = mapped_column(String(16), nullable=False, default="")

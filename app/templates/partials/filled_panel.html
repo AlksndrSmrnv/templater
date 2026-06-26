@@ -4,7 +4,7 @@
    - the standalone page (filled_templates/view.html), standalone=true —
      the page renders its own header, delete redirects to the workspace. #}
 {% set standalone = standalone | default(false) %}
-<div x-data="{
+<div id="filled-panel-body" x-data="{
     /*
      * Copy the *original* filled body from /raw, NOT textContent of the
      * highlighted <pre>: render_filled_html() re-serializes JSON/XML for
@@ -140,14 +140,30 @@
                     <tr>
                         <td>{{ title }}</td>
                         <td>
-                            {% set cid = role_client_ids.get(role) %}
-                            {% if cid and cid in alive_client_ids %}
-                                <a href="/templater/clients/{{ cid }}">{{ label or '—' }}</a>
-                            {% elif cid %}
-                                <span class="muted">{{ label or '—' }} (удалён)</span>
-                            {% else %}
-                                <span class="muted">{{ label or '—' }}</span>
-                            {% endif %}
+                            <div class="role-cell">
+                                <span class="role-cell-label">
+                                    {% set cid = role_client_ids.get(role) %}
+                                    {% if cid and cid in alive_client_ids %}
+                                        <a href="/templater/clients/{{ cid }}">{{ label or '—' }}</a>
+                                    {% elif cid %}
+                                        <span class="muted">{{ label or '—' }} (удалён)</span>
+                                    {% else %}
+                                        <span class="muted">{{ label or '—' }}</span>
+                                    {% endif %}
+                                </span>
+                                {% if ft.message_template_id %}
+                                    {% with role=role,
+                                            title=title,
+                                            template_id=(ft.message_template_id | string),
+                                            current=role_current.get(role, {}),
+                                            post_url="/templater/filled-templates-htmx/" ~ (ft.id | string) ~ "/switch-role",
+                                            target="#filled-panel-body",
+                                            swap="outerHTML",
+                                            standalone=standalone %}
+                                        {% include "partials/role_switch_popover.html" %}
+                                    {% endwith %}
+                                {% endif %}
+                            </div>
                         </td>
                     </tr>
                 {% endfor %}

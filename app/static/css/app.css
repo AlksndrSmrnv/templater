@@ -1284,3 +1284,39 @@ input[type="file"]::-webkit-file-upload-button:hover { background: var(--surface
 .chain-deps-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .chain-deps-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .chain-dep-name { font-weight: 500; }
+
+/* ---- «Заменить клиента» popover (filled panel + chain «Клиенты цепочки») ---- */
+.role-cell { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.role-cell-label { min-width: 0; }
+.role-switch { position: relative; display: inline-block; }
+.role-switch-toggle { white-space: nowrap; }
+.role-switch-popover {
+    position: absolute; z-index: 60; top: 100%; left: 0; margin-top: 4px;
+    width: 460px; max-width: 92vw;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.role-switch-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 8px;
+}
+.role-switch-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.role-switch-actions { margin-top: 10px; display: flex; justify-content: flex-end; }
+.role-switch .picker-list { --picker-row-height: 38px; max-height: calc(38px * 6); }
+
+/* ---- chain «Клиенты цепочки» management section ---- */
+.chain-clients {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px; margin: 14px 0;
+}
+.chain-clients-global { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.chain-clients-global-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.chain-clients-steps { display: flex; flex-direction: column; gap: 10px; }
+.chain-clients-step {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding-top: 10px; border-top: 1px solid var(--border); flex-wrap: wrap;
+}
+.chain-clients-step-name { font-weight: 500; min-width: 120px; }
+.chain-clients-roles { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.role-chip { font-size: var(--fs-sm); }

@@ -27,7 +27,21 @@ from app.repositories.filled_template import FilledTemplateRepository
 from app.repositories.request_chain import RequestChainRepository
 from app.repositories.settings import SettingsRepository
 from app.services.collections import _norm_path
-from app.services.filled_templates import FILLED_ROOT_FOLDERS_KEY, _expand_prefixes
+from app.services.fill_access import assert_fill_visible
+from app.services.filled_templates import (
+    _ROLE_COLUMNS,
+    FILLED_ROOT_FOLDERS_KEY,
+    _apply_roles_to,
+    _expand_prefixes,
+    _fill_request_from_roles,
+    _override_role,
+    _RoleIds,
+    build_short_name,
+    collect_role_labels,
+    collect_role_short_bits,
+)
+from app.services.placeholders import PlaceholderFiller
+from app.services.templates import TemplateService
 from app.utils import walker
 from app.utils.errors import NotFoundError, ValidationFailed
 
@@ -222,6 +236,19 @@ class RequestChainService:
             chain_id=chain.id,
             position=await self.repo.next_position(chain.id),
             filled_template_id=filled.id,
+            # Role bindings copied from the source so «Заменить клиента» can later
+            # re-point a role and re-render this step's body. getattr-safe for the
+            # lightweight test doubles used in the service tests.
+            sender_client_id=getattr(filled, "sender_client_id", None),
+            sender_account_id=getattr(filled, "sender_account_id", None),
+            sender_card_id=getattr(filled, "sender_card_id", None),
+            receiver_client_id=getattr(filled, "receiver_client_id", None),
+            receiver_account_id=getattr(filled, "receiver_account_id", None),
+            receiver_card_id=getattr(filled, "receiver_card_id", None),
+            account_owner_client_id=getattr(filled, "account_owner_client_id", None),
+            account_owner_account_id=getattr(filled, "account_owner_account_id", None),
+            account_owner_card_id=getattr(filled, "account_owner_card_id", None),
+            role_labels_snapshot=dict(getattr(filled, "role_labels_snapshot", {}) or {}),
             name_snapshot=(getattr(filled, "name", "") or "")[:NAME_MAX_LEN],
             format=getattr(filled, "format", "json") or "json",
             http_method_snapshot=(getattr(filled, "http_method_snapshot", "") or "")[:16],
@@ -321,6 +348,131 @@ class RequestChainService:
         step.body = _replace_leaf(step.format, step.body, location, bindings.pop(location))
         step.bindings = bindings
         return step
+
+    # ---- client switching ----
+
+    async def _rerender_step(
+        self,
+        step: RequestChainStep,
+        role: str,
+        new_ids: _RoleIds,
+        *,
+        visible_group_ids: set[uuid.UUID] | None = None,
+    ) -> bool:
+        """Re-point ``role`` of ``step`` to ``new_ids`` and re-render its body.
+
+        Rebuilds ``body`` from the source message template (reached via
+        ``filled_template_id`` → ``message_template_id``) with the step's role
+        ids. Existing ``{{ $N.path }}`` field bindings are re-applied where their
+        leaf still exists in the new body (the reset buffer is refreshed to the
+        new literal); bindings whose leaf vanished are dropped. ``changed_locations``
+        is reset to the fresh fill. Returns whether the body was regenerated —
+        ``False`` when the source template/filled template is unreachable, in
+        which case only the role columns and labels are updated.
+        """
+
+        if role not in _ROLE_COLUMNS:
+            raise ValidationFailed("Неизвестная роль")
+        req = _override_role(_fill_request_from_roles(step), role, new_ids)
+        await assert_fill_visible(self.session, req, visible_group_ids)
+
+        # step → filled template → message template; either hop may be NULL
+        # (ON DELETE SET NULL), in which case we can't re-render the body.
+        filled = (
+            await self.filled.get(step.filled_template_id)
+            if step.filled_template_id is not None
+            else None
+        )
+        template = None
+        mtid = getattr(filled, "message_template_id", None) if filled is not None else None
+        if mtid is not None:
+            template = await TemplateService(self.session).get(mtid)
+
+        regenerated = False
+        if template is not None:
+            # Snapshot active reference tokens before the re-render wipes them.
+            preserved = {
+                loc: _original_leaf(step.format, step.body, loc)
+                for loc in (step.bindings or {})
+            }
+            rendered, _unresolved, changed = await PlaceholderFiller(self.session).fill_template(
+                template,
+                sender_client_id=req.sender_client_id,
+                sender_account_id=req.sender_account_id,
+                sender_card_id=req.sender_card_id,
+                receiver_client_id=req.receiver_client_id,
+                receiver_account_id=req.receiver_account_id,
+                receiver_card_id=req.receiver_card_id,
+                account_owner_client_id=req.account_owner_client_id,
+                account_owner_account_id=req.account_owner_account_id,
+                account_owner_card_id=req.account_owner_card_id,
+            )
+            new_bindings: dict[str, Any] = {}
+            for loc, token in preserved.items():
+                if not _leaf_exists(step.format, rendered, loc):
+                    continue  # leaf gone after re-render — drop the stale binding
+                # Refresh the reset buffer to the new client's literal, then
+                # overlay the reference token so the binding survives.
+                new_bindings[loc] = _original_leaf(step.format, rendered, loc)
+                rendered = _replace_leaf(step.format, rendered, loc, token)
+            step.body = rendered
+            step.bindings = new_bindings
+            step.changed_locations = list(changed or [])
+            regenerated = True
+
+        _apply_roles_to(step, req)
+        step.role_labels_snapshot = await collect_role_labels(self.session, req)
+        if filled is not None:
+            template_name = getattr(filled, "template_name_snapshot", "") or ""
+            bits = await collect_role_short_bits(self.session, req)
+            step.name_snapshot = build_short_name(template_name, bits)[:NAME_MAX_LEN]
+        return regenerated
+
+    async def switch_step_client(
+        self,
+        chain_id: uuid.UUID,
+        step_id: uuid.UUID,
+        role: str,
+        new_ids: _RoleIds,
+        *,
+        visible_group_ids: set[uuid.UUID] | None = None,
+    ) -> tuple[RequestChainStep, bool]:
+        """Switch one role of one step. Returns ``(step, regenerated)``."""
+
+        step = await self._get_step(chain_id, step_id, visible_group_ids=visible_group_ids)
+        regenerated = await self._rerender_step(
+            step, role, new_ids, visible_group_ids=visible_group_ids
+        )
+        return step, regenerated
+
+    async def replace_client_everywhere(
+        self,
+        chain_id: uuid.UUID,
+        old_client_id: uuid.UUID,
+        new_ids: _RoleIds,
+        *,
+        visible_group_ids: set[uuid.UUID] | None = None,
+    ) -> list[RequestChainStep]:
+        """Re-point every role of every step that currently uses ``old_client_id``
+        to ``new_ids`` (new account/card too), re-rendering each affected step.
+
+        Steps where the client doesn't appear are left untouched. Returns the
+        changed steps; an empty list means the client wasn't used anywhere.
+        """
+
+        chain = await self.get(chain_id, visible_group_ids=visible_group_ids)
+        changed: list[RequestChainStep] = []
+        for step in chain.steps:
+            touched = False
+            for role, (client_col, _account_col, _card_col) in _ROLE_COLUMNS.items():
+                if getattr(step, client_col) == old_client_id:
+                    await self._rerender_step(
+                        step, role, new_ids, visible_group_ids=visible_group_ids
+                    )
+                    touched = True
+            if touched:
+                changed.append(step)
+        return changed
 
     async def reorder_steps(
         self,

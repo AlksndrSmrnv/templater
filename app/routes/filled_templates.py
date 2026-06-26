@@ -35,7 +35,11 @@ from app.repositories.request_chain import RequestChainRepository
 from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.htmx_utils import form_str, parse_json_path, parse_uuid_list, toast_header
 from app.routes.uow import commit_or_409
-from app.services.filled_templates import FilledTemplateService, iter_role_labels
+from app.services.filled_templates import (
+    FilledTemplateService,
+    _RoleIds,
+    iter_role_labels,
+)
 from app.services.template_render import render_filled_html
 from app.utils.errors import DomainError
 
@@ -95,6 +99,25 @@ async def _detail_context(
         "receiver": item.receiver_client_id,
         "accountOwner": item.account_owner_client_id,
     }
+    # Current (client, account, card) per role, for the «Заменить» popover's
+    # preselection. Strings (or "") so they drop straight into the template.
+    role_current = {
+        "sender": {
+            "clientId": str(item.sender_client_id or ""),
+            "accountId": str(item.sender_account_id or ""),
+            "cardId": str(item.sender_card_id or ""),
+        },
+        "receiver": {
+            "clientId": str(item.receiver_client_id or ""),
+            "accountId": str(item.receiver_account_id or ""),
+            "cardId": str(item.receiver_card_id or ""),
+        },
+        "accountOwner": {
+            "clientId": str(item.account_owner_client_id or ""),
+            "accountId": str(item.account_owner_account_id or ""),
+            "cardId": str(item.account_owner_card_id or ""),
+        },
+    }
     alive = await _alive_client_ids(session, list(role_client_ids.values()))
     # Existing chains the «В цепочку» dropdown can target (id + name only).
     chains = await RequestChainRepository(session).list_all(visible_group_ids=visible_group_ids)
@@ -103,6 +126,7 @@ async def _detail_context(
         "rendered_html": rendered_html,
         "role_rows": iter_role_labels(item),
         "role_client_ids": role_client_ids,
+        "role_current": role_current,
         "alive_client_ids": alive,
         "chains": [{"id": str(c.id), "name": c.name} for c in chains],
     }
@@ -364,6 +388,89 @@ async def htmx_panel(
         request,
         "partials/filled_panel.html",
         {"standalone": False, **context},
+    )
+
+
+_SWITCH_ROLES = {"sender", "receiver", "accountOwner"}
+
+
+def _role_ids_from_form(form: Any) -> _RoleIds:
+    """Parse a ``(client_id, account_id, card_id)`` triple from switch-role form
+    fields. Empty strings become ``None``; a malformed UUID raises ``ValueError``."""
+
+    def _uuid_or_none(key: str) -> uuid.UUID | None:
+        raw = form_str(form, key)
+        return uuid.UUID(raw) if raw else None
+
+    return _RoleIds(
+        client_id=_uuid_or_none("client_id"),
+        account_id=_uuid_or_none("account_id"),
+        card_id=_uuid_or_none("card_id"),
+    )
+
+
+@router.post("/filled-templates-htmx/{filled_id}/switch-role")
+async def htmx_switch_role(
+    filled_id: uuid.UUID,
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
+) -> Response:
+    """Re-point one role of a filled template to a new client/account/card,
+    re-render its body, and return the refreshed panel."""
+
+    form = await request.form()
+    standalone = form_str(form, "standalone") == "1"
+    role = form_str(form, "role")
+    if role not in _SWITCH_ROLES:
+        return Response(
+            status_code=200,
+            headers={
+                "HX-Trigger": toast_header("Неизвестная роль", toast_type="error"),
+                "HX-Reswap": "none",
+            },
+        )
+    try:
+        new_ids = _role_ids_from_form(form)
+    except ValueError:
+        return Response(
+            status_code=200,
+            headers={
+                "HX-Trigger": toast_header("Некорректный выбор", toast_type="error"),
+                "HX-Reswap": "none",
+            },
+        )
+    try:
+        _, regenerated = await FilledTemplateService(session).switch_role(
+            filled_id, role, new_ids, visible_group_ids=group_ids
+        )
+        await commit_or_409(session)
+    except DomainError as exc:
+        await session.rollback()
+        return Response(
+            status_code=200,
+            headers={
+                "HX-Trigger": toast_header(exc.message, toast_type="error"),
+                "HX-Reswap": "none",
+            },
+        )
+    message = (
+        "Клиент заменён"
+        if regenerated
+        else "Исходный шаблон удалён — текст не перегенерирован, обновлены роли и имя"
+    )
+    toast_type = "success" if regenerated else "warning"
+    context = await _detail_context(session, filled_id, visible_group_ids=group_ids)
+    return templates.TemplateResponse(
+        request,
+        "partials/filled_panel.html",
+        {"standalone": standalone, **context},
+        headers={
+            "HX-Trigger": toast_header(
+                message, toast_type=toast_type, refresh_filled_tree=True
+            )
+        },
     )
 
 

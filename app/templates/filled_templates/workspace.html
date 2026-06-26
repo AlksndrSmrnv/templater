@@ -46,6 +46,9 @@
 {# Loaded once at page level so HTMX-swapped chain panels (#filled-panel) can
    reference window.chainPanel without a per-swap <script> race. #}
 <script src="/templater/static/js/chain_panel.js" defer></script>
+{# Loaded once so HTMX-swapped panels (filled + chain) can reference
+   window.roleSwitch — the «Заменить клиента» popover. #}
+<script src="/templater/static/js/role_switch.js" defer></script>
 <script>
     // ?saved=1 lands here from the fill-save redirect: show the toast and
     // scrub the param so a reload doesn't re-announce it.
