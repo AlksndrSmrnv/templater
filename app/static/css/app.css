@@ -1219,21 +1219,44 @@ input[type="file"]::-webkit-file-upload-button:hover { background: var(--surface
 .send-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .send-error { color: var(--danger); font-size: var(--fs-sm); }
 
-.send-ref-ui {
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: var(--radius-sm); padding: 10px; margin-bottom: 10px;
-    display: flex; flex-direction: column; gap: 8px;
+/* Click-to-bind field picker: a popover anchored at the clicked body field. */
+.chain-body-wrap { position: relative; }
+.chain-field-popover {
+    position: absolute; z-index: 60;
+    width: 360px; max-width: 90%;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
-.send-ref-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-
-/* Click-to-bind field picker (same surface as .send-ref-ui). */
-.chain-field-picker {
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: var(--radius-sm); padding: 10px; margin-bottom: 10px;
-    display: flex; flex-direction: column; gap: 8px;
+/* Flipped above the field when there isn't room below. The 4px gap mirrors
+   FLIP_GAP in chain_panel.js (topbar-clearance check) — keep in sync. */
+.chain-field-popover--above { transform: translateY(calc(-100% - 4px)); }
+.chain-field-popover-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 8px;
 }
-.chain-field-picker .send-ref-row:first-child { justify-content: space-between; }
-.chain-picker-close { margin-left: auto; }
+.chain-picker-close { flex-shrink: 0; }
+.chain-popover-sub { margin: 0 0 6px; font-size: var(--fs-sm); }
+/* Only the list scrolls — head, «Назад» and «Сбросить» stay put. */
+.chain-popover-list {
+    list-style: none; margin: 0; padding: 0;
+    display: flex; flex-direction: column; gap: 2px;
+    max-height: 220px; overflow: auto;
+}
+.chain-popover-item {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    text-align: left; background: none; border: none; cursor: pointer;
+    padding: 7px 8px; border-radius: var(--radius-sm); font: inherit; color: var(--text);
+}
+.chain-popover-item:hover { background: var(--surface-2); }
+.chain-popover-item code { font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Mono", monospace; font-size: var(--fs-sm); }
+.chain-popover-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chain-popover-status { flex-shrink: 0; font-size: var(--fs-sm); }
+.chain-popover-status.is-sent { color: var(--success); }
+.chain-popover-back-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.chain-popover-back { flex-shrink: 0; }
+.chain-popover-empty { margin: 6px 0 0; font-size: var(--fs-sm); }
+.chain-popover-unbind { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 
 /* Collapse chevron in the step header. */
 .chain-collapse-toggle { padding: 2px 6px; }

@@ -22,6 +22,15 @@
  */
 window.chainPanel = function (config) {
     const base = '/templater/filled-templates-htmx/chains/';
+    // Kept clear when flipping the popover upward. TOPBAR_H mirrors
+    // .topbar { height } and FLIP_GAP the .chain-field-popover--above translateY
+    // offset — both in app.css; keep in sync if those change.
+    const TOPBAR_H = 64;
+    const FLIP_GAP = 4;
+    const emptyPicker = () => ({
+        stepIdx: null, location: null, isRef: false, sourceStep: null,
+        paths: [], filtered: [], query: '', anchor: { top: 0, left: 0, above: false },
+    });
     return {
         chainId: config.chainId,
         executeUrl: config.executeUrl,
@@ -29,8 +38,10 @@ window.chainPanel = function (config) {
         pickerOpen: false,
         pickerSearch: '',
         running: false,
-        // Field-binding picker, anchored to the clicked body field.
-        picker: { stepIdx: null, location: null, isRef: false, sourceStep: null, paths: [] },
+        // Field-binding picker, anchored to the clicked body field. `paths` is
+        // the source step's full leaf list; `filtered` is `paths` narrowed by
+        // `query` (recomputed only on change, not per render).
+        picker: emptyPicker(),
 
         init() {
             // Seed run-time/ephemeral fields onto the server-provided steps.
@@ -49,6 +60,8 @@ window.chainPanel = function (config) {
                 error: '',
                 response: null,
                 resolvedRequestHtml: null,
+                resolvedRefs: false,        // resolved body contains purple references
+                resolvedUnresolved: false,  // ...and some couldn't be resolved (red)
             }));
         },
 
@@ -139,28 +152,74 @@ window.chainPanel = function (config) {
             // The first step has no previous response to pull from — its fields
             // aren't bindable (and the cursor reflects that), so do nothing.
             if (idx === 0) return;
-            this.picker = {
-                stepIdx: idx,
-                location: span.dataset.location,
-                isRef: span.classList.contains('reference'),
-                sourceStep: null,
-                paths: [],
-            };
+            // Re-clicking another field of the same step just re-anchors: keep
+            // the chosen source step / field search so the user doesn't drop
+            // back to stage 1.
+            const same = this.picker.stepIdx === idx;
+            this.picker.stepIdx = idx;
+            this.picker.location = span.dataset.location;
+            this.picker.isRef = span.classList.contains('reference');
+            this.picker.anchor = this.anchorFor(span);
+            if (same) {
+                // Re-anchor only: keep the chosen source step / search, but
+                // refresh its field list in case the source was (re)sent since.
+                if (this.picker.sourceStep !== null) {
+                    this.picker.paths = this.loadSourcePaths(this.picker.sourceStep);
+                    this.applyFieldFilter();
+                }
+            } else {
+                this.picker.sourceStep = null;
+                this.picker.paths = [];
+                this.picker.filtered = [];
+                this.picker.query = '';
+            }
+        },
+        // Position the popover next to the clicked field, relative to the body
+        // wrapper. Clamps to the body width (no right-edge spill) and flips above
+        // the field when there isn't room below — but only if the flipped popover
+        // clears the sticky topbar, otherwise it stays below.
+        anchorFor(span) {
+            const wrap = span.closest('.chain-body-wrap');
+            if (!wrap) return { top: 0, left: 0, above: false };
+            const wr = wrap.getBoundingClientRect();
+            const sr = span.getBoundingClientRect();
+            const POPOVER_W = 360;
+            const POPOVER_H = 380;
+            const left = Math.max(0, Math.min(sr.left - wr.left, wr.width - POPOVER_W));
+            const spaceBelow = window.innerHeight - sr.bottom;
+            // The flipped popover's visible top sits FLIP_GAP higher (CSS
+            // translateY), so account for it when checking topbar clearance.
+            const fitsAbove = (sr.top - POPOVER_H - FLIP_GAP) > TOPBAR_H;
+            const above = spaceBelow < POPOVER_H + 12 && fitsAbove;
+            const top = above ? (sr.top - wr.top) : (sr.bottom - wr.top + FLIP_GAP);
+            return { top: top, left: left, above: above };
         },
         closePicker() {
-            this.picker = { stepIdx: null, location: null, isRef: false, sourceStep: null, paths: [] };
+            this.picker = emptyPicker();
+        },
+        // Narrow the stage-2 field list by the search box; stored so the list
+        // isn't re-filtered on every unrelated reactive tick.
+        applyFieldFilter() {
+            const q = (this.picker.query || '').trim().toLowerCase();
+            this.picker.filtered = q
+                ? this.picker.paths.filter((p) => p.path.toLowerCase().includes(q))
+                : this.picker.paths;
         },
         // Fields offered for a source step come from its *sent* response only —
         // until the step is sent there is nothing to parse (per the spec, the
         // list appears after the previous step actually runs).
-        selectPickerSource(stepNum) {
+        loadSourcePaths(stepNum) {
             const src = this.steps[stepNum - 1];
-            let paths = [];
             if (src && src.response) {
-                try { paths = this.leafPaths(JSON.parse(src.response.body)); } catch (e) { paths = []; }
+                try { return this.leafPaths(JSON.parse(src.response.body)); } catch (e) { return []; }
             }
+            return [];
+        },
+        selectPickerSource(stepNum) {
             this.picker.sourceStep = stepNum;
-            this.picker.paths = paths;
+            this.picker.paths = this.loadSourcePaths(stepNum);
+            this.picker.query = '';
+            this.applyFieldFilter();
         },
         // Flatten a parsed JSON value to its leaf paths (a.b, a.c[0].d ...).
         leafPaths(obj, prefix) {
@@ -300,12 +359,14 @@ window.chainPanel = function (config) {
             const isJson = (step.format || 'json') === 'json';
             const re = /\{\{\s*\$(\d+)\.([^}\s]+)\s*\}\}/g;
             const unresolved = [];
+            let refs = 0;
             let html = '';
             let resolved = '';
             let last = 0;
             let inString = false;
             let m;
             while ((m = re.exec(src)) !== null) {
+                refs++;
                 const before = src.slice(last, m.index);
                 html += this.escapeHtml(before);
                 resolved += before;
@@ -327,7 +388,7 @@ window.chainPanel = function (config) {
             const tail = src.slice(last);
             html += this.escapeHtml(tail);
             resolved += tail;
-            return { resolved: resolved, html: html, unresolved: unresolved };
+            return { resolved: resolved, html: html, unresolved: unresolved, refs: refs };
         },
 
         // ---------- "send" (mock) ----------
@@ -337,6 +398,8 @@ window.chainPanel = function (config) {
             step.sending = true;
             const res = this.resolveBody(idx);
             step.resolvedRequestHtml = res.html;
+            step.resolvedRefs = res.refs > 0;
+            step.resolvedUnresolved = res.unresolved.length > 0;
             if (res.unresolved.length) {
                 step.error = 'Не разрешены ссылки: ' + res.unresolved.join(', ');
                 step.response = null;
@@ -394,9 +457,13 @@ window.chainPanel = function (config) {
             const step = this.steps[idx];
             step.response = null;
             step.resolvedRequestHtml = null;
+            step.resolvedRefs = false;
+            step.resolvedUnresolved = false;
             step.error = '';
             for (let j = idx + 1; j < this.steps.length; j++) {
                 this.steps[j].resolvedRequestHtml = null;
+                this.steps[j].resolvedRefs = false;
+                this.steps[j].resolvedUnresolved = false;
             }
         },
 

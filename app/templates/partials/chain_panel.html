@@ -128,41 +128,74 @@
                             <span class="muted send-sub" x-show="idx > 0">Кликните по значению поля, чтобы привязать его к ответу предыдущего шага.</span>
                         </div>
 
-                        <div class="chain-field-picker" x-show="picker.stepIdx === idx" x-cloak>
-                            <div class="send-ref-row">
-                                <span class="muted">Привязать поле <code x-text="picker.location"></code> к ответу шага:</span>
-                                <button type="button" class="btn small chain-picker-close" @click="closePicker()" title="Закрыть">
-                                    <iconify-icon icon="lucide:x"></iconify-icon>
-                                </button>
-                            </div>
-                            <div class="send-ref-row">
-                                <template x-for="ps in priorSteps(idx)" :key="ps.num">
-                                    <button type="button" class="btn small" :class="{ primary: picker.sourceStep === ps.num }" @click="selectPickerSource(ps.num)">
-                                        <span x-text="'#' + ps.num + ' ' + ps.name"></span>
-                                        <span class="muted" x-show="!ps.sent"> · не отправлен</span>
+                        <div class="chain-body-wrap">
+                            <pre class="template-code chain-body" :class="{ 'chain-body-bindable': idx > 0 }"
+                                 x-html="step.bodyHtml" @click="onFieldClick($event, idx)"
+                                 @scroll="if (picker.stepIdx === idx) closePicker()"></pre>
+
+                            <div class="chain-field-popover" x-show="picker.stepIdx === idx" x-cloak
+                                 :class="{ 'chain-field-popover--above': picker.anchor.above }"
+                                 :style="'top:' + picker.anchor.top + 'px; left:' + picker.anchor.left + 'px'"
+                                 @keydown.escape.window="if (picker.stepIdx === idx) closePicker()">
+                                <div class="chain-field-popover-head">
+                                    <span class="muted">Привязать поле <code x-text="picker.location"></code></span>
+                                    <button type="button" class="btn small chain-picker-close" @click="closePicker()" title="Закрыть">
+                                        <iconify-icon icon="lucide:x"></iconify-icon>
                                     </button>
-                                </template>
-                            </div>
-                            <div class="send-ref-row" x-show="picker.sourceStep !== null">
-                                <span class="muted">Поле ответа:</span>
-                                <template x-for="p in picker.paths" :key="p.path">
-                                    <button type="button" class="btn small" @click="bindField(picker.sourceStep, p.path)">
-                                        <code x-text="p.path"></code>
+                                </div>
+
+                                <!-- Стадия 1: выбор сообщения-источника -->
+                                <div x-show="picker.sourceStep === null">
+                                    <p class="muted chain-popover-sub">Из ответа какого шага взять значение?</p>
+                                    <ul class="chain-popover-list">
+                                        <template x-for="ps in priorSteps(idx)" :key="ps.num">
+                                            <li>
+                                                <button type="button" class="chain-popover-item" @click="selectPickerSource(ps.num)">
+                                                    <span class="send-step-num" x-text="ps.num"></span>
+                                                    <span class="chain-popover-item-name" x-text="ps.name"></span>
+                                                    <span class="muted chain-popover-status" :class="{ 'is-sent': ps.sent }"
+                                                          x-text="ps.sent ? 'отправлен' : 'не отправлен'"></span>
+                                                </button>
+                                            </li>
+                                        </template>
+                                    </ul>
+                                </div>
+
+                                <!-- Стадия 2: выбор поля ответа -->
+                                <div x-show="picker.sourceStep !== null">
+                                    <div class="chain-popover-back-row">
+                                        <button type="button" class="btn small chain-popover-back" @click="picker.sourceStep = null">
+                                            <iconify-icon icon="lucide:chevron-left"></iconify-icon> Назад
+                                        </button>
+                                        <span class="muted chain-popover-sub">Поле ответа шага <span x-text="picker.sourceStep"></span></span>
+                                    </div>
+                                    <input class="send-picker-search" type="search" placeholder="Поиск поля…"
+                                           x-model="picker.query" @input="applyFieldFilter()" x-show="picker.paths.length"
+                                           @keydown.escape.stop="picker.query = ''; applyFieldFilter()">
+                                    <ul class="chain-popover-list">
+                                        <template x-for="p in picker.filtered" :key="p.path">
+                                            <li>
+                                                <button type="button" class="chain-popover-item" @click="bindField(picker.sourceStep, p.path)">
+                                                    <code x-text="p.path"></code>
+                                                </button>
+                                            </li>
+                                        </template>
+                                    </ul>
+                                    <p class="muted chain-popover-empty" x-show="picker.paths.length === 0">
+                                        Отправьте шаг <span x-text="picker.sourceStep"></span>, чтобы получить список полей его ответа.
+                                    </p>
+                                    <p class="muted chain-popover-empty" x-show="picker.paths.length && picker.filtered.length === 0">
+                                        Ничего не найдено.
+                                    </p>
+                                </div>
+
+                                <div class="chain-popover-unbind" x-show="picker.isRef">
+                                    <button type="button" class="btn small danger" @click="unbindField()">
+                                        <iconify-icon icon="lucide:rotate-ccw"></iconify-icon> Сбросить к исходному значению
                                     </button>
-                                </template>
-                                <span class="muted" x-show="picker.paths.length === 0">
-                                    Отправьте шаг <span x-text="picker.sourceStep"></span>, чтобы получить список полей его ответа.
-                                </span>
-                            </div>
-                            <div class="send-ref-row" x-show="picker.isRef">
-                                <button type="button" class="btn small danger" @click="unbindField()">
-                                    <iconify-icon icon="lucide:rotate-ccw"></iconify-icon> Сбросить к исходному значению
-                                </button>
+                                </div>
                             </div>
                         </div>
-
-                        <pre class="template-code chain-body" :class="{ 'chain-body-bindable': idx > 0 }"
-                             x-html="step.bodyHtml" @click="onFieldClick($event, idx)"></pre>
                     </section>
 
                     <div class="send-actions">
@@ -182,9 +215,13 @@
                         <pre class="template-code" x-text="step.response?.body"></pre>
                     </section>
 
-                    <section class="send-block" x-show="step.resolvedRequestHtml" x-cloak>
+                    <section class="send-block" x-show="step.resolvedRequestHtml && idx > 0" x-cloak>
                         <h3>Итоговый запрос</h3>
-                        <p class="muted send-sub">Тело с подставленными значениями ссылок (подсвечены фиолетовым).</p>
+                        <p class="muted send-sub" x-text="step.resolvedUnresolved
+                            ? 'Тело запроса. Красным выделены неразрешённые ссылки.'
+                            : (step.resolvedRefs
+                                ? 'Тело с подставленными значениями ссылок (подсвечены фиолетовым).'
+                                : 'Тело запроса, которое будет отправлено.')"></p>
                         <pre class="template-code" x-html="step.resolvedRequestHtml"></pre>
                     </section>
                 </div>
