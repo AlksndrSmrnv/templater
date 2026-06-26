@@ -128,14 +128,19 @@ def test_build_short_name_sender_and_receiver() -> None:
         "Перевод",
         {"sender": ("Иванов", "ACC-001"), "receiver": ("Петров", "ACC-002")},
     )
-    assert name == "Перевод Иванов ACC-001 Петров ACC-002"
-    assert "—" not in name  # no date / separators of the old format
-    assert "→" not in name
+    assert name == "Перевод Иванов ACC-001 → Петров ACC-002"
+    assert "—" not in name  # no date of the old format
 
 
 def test_build_short_name_only_sender_without_number() -> None:
     name = build_short_name("Tpl", {"sender": ("Иванов", "")})
     assert name == "Tpl Иванов"
+    assert "→" not in name  # no receiver → no arrow
+
+
+def test_build_short_name_only_receiver_keeps_arrow() -> None:
+    name = build_short_name("Tpl", {"receiver": ("Петров", "ACC-2")})
+    assert name == "Tpl → Петров ACC-2"
 
 
 def test_build_short_name_appends_owner_last() -> None:
@@ -147,7 +152,7 @@ def test_build_short_name_appends_owner_last() -> None:
             "accountOwner": ("Сидоров", "ACC-3"),
         },
     )
-    assert name == "Tpl Иванов ACC-1 Петров ACC-2 Сидоров ACC-3"
+    assert name == "Tpl Иванов ACC-1 → Петров ACC-2 Сидоров ACC-3"
 
 
 def test_build_short_name_without_roles_is_just_template() -> None:

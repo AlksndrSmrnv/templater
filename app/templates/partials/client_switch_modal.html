@@ -1,0 +1,53 @@
+{# Single shared «Заменить клиента» modal. Mounted once per page, outside the
+   HTMX-swapped panels. Opened via a bubbling `open-client-switch` window event
+   (see client_switch_modal.js). Reuses the fill list partials/endpoints. #}
+<div x-data="clientSwitchModal()"
+     @open-client-switch.window="onOpen($event.detail)"
+     @keydown.escape.window="open && close()">
+    <div class="modal-overlay" x-show="open" x-cloak @click.self="close()">
+        <div class="client-switch-modal" role="dialog" aria-modal="true">
+            <div class="client-switch-head">
+                <h3>
+                    <iconify-icon icon="lucide:user-pen"></iconify-icon>
+                    <span x-text="title || 'Сменить клиента'"></span>
+                </h3>
+                <button type="button" class="btn small" @click="close()" title="Закрыть">
+                    <iconify-icon icon="lucide:x"></iconify-icon>
+                </button>
+            </div>
+
+            <div class="picker-group">
+                <label>Клиенты</label>
+                <input class="picker-search" type="search" placeholder="Поиск"
+                       x-model="search" @input.debounce.250ms="loadClients()">
+                <div class="picker-list" x-ref="clients" role="listbox"
+                     @click="pickFromList($event, 'client')">
+                    <div class="picker-empty">Загрузка…</div>
+                </div>
+            </div>
+            <div class="client-switch-choices">
+                <div class="picker-group">
+                    <label>Счета</label>
+                    <div class="picker-list picker-list--stacked" x-ref="accounts" role="listbox"
+                         @click="pickFromList($event, 'account')">
+                        <div class="picker-empty">Выберите клиента</div>
+                    </div>
+                </div>
+                <div class="picker-group">
+                    <label>Карты</label>
+                    <div class="picker-list picker-list--stacked" x-ref="cards" role="listbox"
+                         @click="pickFromList($event, 'card')">
+                        <div class="picker-empty">Выберите клиента</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="client-switch-actions">
+                <button type="button" class="btn" @click="close()">Отмена</button>
+                <button type="button" class="btn primary" @click="apply()" :disabled="!cur().clientId">
+                    Применить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>

@@ -40,6 +40,8 @@
         {% endif %}
     </section>
 </div>
+{# Single client-switch modal, page-level so it survives #filled-panel swaps. #}
+{% include "partials/client_switch_modal.html" %}
 {% endblock %}
 
 {% block scripts %}
@@ -47,8 +49,8 @@
    reference window.chainPanel without a per-swap <script> race. #}
 <script src="/templater/static/js/chain_panel.js" defer></script>
 {# Loaded once so HTMX-swapped panels (filled + chain) can reference
-   window.roleSwitch — the «Заменить клиента» popover. #}
-<script src="/templater/static/js/role_switch.js" defer></script>
+   window.clientSwitchModal — the «Заменить клиента» modal. #}
+<script src="/templater/static/js/client_switch_modal.js" defer></script>
 <script>
     // ?saved=1 lands here from the fill-save redirect: show the toast and
     // scrub the param so a reload doesn't re-announce it.

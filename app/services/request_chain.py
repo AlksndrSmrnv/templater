@@ -501,37 +501,36 @@ class RequestChainService:
         await self._apply_chain_group(chain)
         return step, regenerated
 
-    async def replace_client_everywhere(
+    async def replace_role_everywhere(
         self,
         chain_id: uuid.UUID,
-        old_client_id: uuid.UUID,
+        role: str,
         new_ids: _RoleIds,
         *,
         visible_group_ids: set[uuid.UUID] | None = None,
     ) -> list[RequestChainStep]:
-        """Re-point every role of every step that currently uses ``old_client_id``
-        to ``new_ids`` (new account/card too), re-rendering each affected step.
+        """Re-point ``role`` to ``new_ids`` on *every* step that has it, re-rendering
+        each. «Заменить отправителя/получателя/владельца во всей цепочке».
 
-        Steps where the client doesn't appear are left untouched. All roles of a
-        step that match are switched in one re-render. Returns the changed steps;
-        an empty list means the client wasn't used anywhere.
+        Only steps where the role is populated (``<role>_client_id is not None``)
+        are touched — a step whose template doesn't use the role keeps it empty.
+        Returns the changed steps; an empty list means no step has the role.
         """
 
+        if role not in _ROLE_COLUMNS:
+            raise ValidationFailed("Неизвестная роль")
         if new_ids.client_id is None:
             raise ValidationFailed("Выберите клиента для замены")
+        client_col = _ROLE_COLUMNS[role][0]
         chain = await self.get(chain_id, visible_group_ids=visible_group_ids)
         changed: list[RequestChainStep] = []
         for step in chain.steps:
-            overrides = {
-                role: new_ids
-                for role, (client_col, _account_col, _card_col) in _ROLE_COLUMNS.items()
-                if getattr(step, client_col) == old_client_id
-            }
-            if overrides:
-                await self._rerender_step(
-                    step, overrides, visible_group_ids=visible_group_ids
-                )
-                changed.append(step)
+            if getattr(step, client_col) is None:
+                continue
+            await self._rerender_step(
+                step, {role: new_ids}, visible_group_ids=visible_group_ids
+            )
+            changed.append(step)
         if changed:
             await self._apply_chain_group(chain)
         return changed

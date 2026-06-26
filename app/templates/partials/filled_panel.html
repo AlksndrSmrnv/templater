@@ -152,16 +152,18 @@
                                     {% endif %}
                                 </span>
                                 {% if ft.message_template_id %}
-                                    {% with role=role,
-                                            title=title,
-                                            template_id=(ft.message_template_id | string),
-                                            current=role_current.get(role, {}),
-                                            post_url="/templater/filled-templates-htmx/" ~ (ft.id | string) ~ "/switch-role",
-                                            target="#filled-panel-body",
-                                            swap="outerHTML",
-                                            standalone=standalone %}
-                                        {% include "partials/role_switch_popover.html" %}
-                                    {% endwith %}
+                                    <button type="button" class="btn small"
+                                            @click="$dispatch('open-client-switch', {
+                                                role: {{ role | tojson | forceescape }},
+                                                title: {{ ('Сменить: ' ~ title) | tojson | forceescape }},
+                                                templateId: {{ (ft.message_template_id | string) | tojson | forceescape }},
+                                                current: {{ role_current.get(role, {}) | tojson | forceescape }},
+                                                postUrl: {{ ('/templater/filled-templates-htmx/' ~ (ft.id | string) ~ '/switch-role') | tojson | forceescape }},
+                                                target: '#filled-panel-body',
+                                                standalone: {{ standalone | tojson }}
+                                            })">
+                                        <iconify-icon icon="lucide:user-pen"></iconify-icon> Заменить
+                                    </button>
                                 {% endif %}
                             </div>
                         </td>

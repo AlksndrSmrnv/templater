@@ -108,22 +108,34 @@ def _surname(label: str) -> str:
     return cleaned.split(maxsplit=1)[0] if cleaned else ""
 
 
-def build_short_name(template_name: str, role_bits: dict[str, tuple[str, str]]) -> str:
-    """Build ``«<template> <senderSurname> <senderNum> <receiverSurname> <receiverNum>»``.
+def _role_block(role_bits: dict[str, tuple[str, str]], role: str) -> str:
+    """``"<surname> <number>"`` for a role, empty parts dropped; ``""`` if none."""
 
-    ``role_bits`` maps each role to ``(surname, account_or_card_number)``; either
-    element may be empty and is then dropped. The account/card number trails the
-    surname of the same role. Owner, if present, is appended last. Segments are
-    space-joined and the result is clamped to :data:`NAME_MAX_LEN`.
+    surname, number = role_bits.get(role, ("", ""))
+    return " ".join(bit for bit in (surname, number) if bit)
+
+
+def build_short_name(template_name: str, role_bits: dict[str, tuple[str, str]]) -> str:
+    """Build ``«<template> <sender> → <receiver> <owner>»``.
+
+    Each role contributes ``"<surname> <account_or_card_number>"`` (empty parts
+    dropped). An arrow separates sender and receiver (kept before a lone receiver
+    for clarity, omitted for a lone sender). The owner block, if any, trails.
+    The result is clamped to :data:`NAME_MAX_LEN`.
     """
 
     parts: list[str] = [template_name or "Шаблон"]
-    for role in _ROLES:
-        surname, number = role_bits.get(role, ("", ""))
-        if surname:
-            parts.append(surname)
-        if number:
-            parts.append(number)
+    sender = _role_block(role_bits, "sender")
+    receiver = _role_block(role_bits, "receiver")
+    if sender and receiver:
+        parts.append(f"{sender} → {receiver}")
+    elif sender:
+        parts.append(sender)
+    elif receiver:
+        parts.append(f"→ {receiver}")
+    owner = _role_block(role_bits, "accountOwner")
+    if owner:
+        parts.append(owner)
     return _truncate(" ".join(parts))
 
 
