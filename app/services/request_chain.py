@@ -37,6 +37,7 @@ from app.services.filled_templates import (
     _override_role,
     _RoleIds,
     build_short_name,
+    collect_request_groups,
     collect_role_labels,
     collect_role_short_bits,
 )
@@ -354,26 +355,30 @@ class RequestChainService:
     async def _rerender_step(
         self,
         step: RequestChainStep,
-        role: str,
-        new_ids: _RoleIds,
+        overrides: dict[str, _RoleIds],
         *,
         visible_group_ids: set[uuid.UUID] | None = None,
     ) -> bool:
-        """Re-point ``role`` of ``step`` to ``new_ids`` and re-render its body.
+        """Re-point one or more roles of ``step`` and re-render its body.
 
-        Rebuilds ``body`` from the source message template (reached via
-        ``filled_template_id`` → ``message_template_id``) with the step's role
-        ids. Existing ``{{ $N.path }}`` field bindings are re-applied where their
-        leaf still exists in the new body (the reset buffer is refreshed to the
-        new literal); bindings whose leaf vanished are dropped. ``changed_locations``
-        is reset to the fresh fill. Returns whether the body was regenerated —
-        ``False`` when the source template/filled template is unreachable, in
-        which case only the role columns and labels are updated.
+        ``overrides`` maps role → new ids; all are applied in a single re-render
+        so a step whose sender and receiver are the same client never passes
+        through a mixed (one-new-one-old) intermediate body. Rebuilds ``body``
+        from the source message template (reached via ``filled_template_id`` →
+        ``message_template_id``) with the step's role ids. Existing ``{{ $N.path }}``
+        field bindings are re-applied where their leaf still exists in the new
+        body (the reset buffer is refreshed to the new literal); bindings whose
+        leaf vanished are dropped. ``changed_locations`` is reset to the fresh
+        fill. Returns whether the body was regenerated — ``False`` when the
+        source template/filled template is unreachable, in which case only the
+        role columns and labels are updated.
         """
 
-        if role not in _ROLE_COLUMNS:
-            raise ValidationFailed("Неизвестная роль")
-        req = _override_role(_fill_request_from_roles(step), role, new_ids)
+        req = _fill_request_from_roles(step)
+        for role, new_ids in overrides.items():
+            if role not in _ROLE_COLUMNS:
+                raise ValidationFailed("Неизвестная роль")
+            req = _override_role(req, role, new_ids)
         await assert_fill_visible(self.session, req, visible_group_ids)
 
         # step → filled template → message template; either hop may be NULL
@@ -428,6 +433,37 @@ class RequestChainService:
             step.name_snapshot = build_short_name(template_name, bits)[:NAME_MAX_LEN]
         return regenerated
 
+    async def _apply_chain_group(self, chain: RequestChain) -> None:
+        """Recompute ``chain.group_id`` from the role clients of *all* its steps.
+
+        A chain carries a single ``group_id``; after a client switch the minimal
+        access group is whatever the steps now reference. Mixing two private
+        groups is rejected (a lone ``group_id`` can't hide one group's data from
+        holders of another). Resolving to ``None`` when nothing is private is
+        safe — the chain holds only public data. Mirrors ``add_step``'s invariant
+        but recomputed from scratch so a switch can't leave a stale group.
+        """
+
+        groups: dict[uuid.UUID, Any] = {}
+        for step in chain.steps:
+            groups.update(
+                await collect_request_groups(self.session, _fill_request_from_roles(step))
+            )
+        if len(groups) > 1:
+            raise ValidationFailed(
+                "Нельзя смешивать в одной цепочке данные из разных групп доступа — "
+                "это раскрыло бы данные одной группы держателям другой."
+            )
+        if not groups:
+            chain.group_id = None
+            chain.group_name_snapshot = ""
+            chain.group_color_snapshot = ""
+            return
+        gid, group = next(iter(groups.items()))
+        chain.group_id = gid
+        chain.group_name_snapshot = (getattr(group, "name", "") or "")[:NAME_MAX_LEN]
+        chain.group_color_snapshot = getattr(group, "color", "") or ""
+
     async def switch_step_client(
         self,
         chain_id: uuid.UUID,
@@ -439,10 +475,17 @@ class RequestChainService:
     ) -> tuple[RequestChainStep, bool]:
         """Switch one role of one step. Returns ``(step, regenerated)``."""
 
+        if new_ids.client_id is None:
+            raise ValidationFailed("Выберите клиента для замены")
+        chain = await self.get(chain_id, visible_group_ids=visible_group_ids)
         step = await self._get_step(chain_id, step_id, visible_group_ids=visible_group_ids)
         regenerated = await self._rerender_step(
-            step, role, new_ids, visible_group_ids=visible_group_ids
+            step, {role: new_ids}, visible_group_ids=visible_group_ids
         )
+        # Recompute the chain's access group so a switch into another group can't
+        # leave private data under the old (now wrong) group_id — a cross-group
+        # mix is rejected, rolling back the whole switch.
+        await self._apply_chain_group(chain)
         return step, regenerated
 
     async def replace_client_everywhere(
@@ -456,22 +499,28 @@ class RequestChainService:
         """Re-point every role of every step that currently uses ``old_client_id``
         to ``new_ids`` (new account/card too), re-rendering each affected step.
 
-        Steps where the client doesn't appear are left untouched. Returns the
-        changed steps; an empty list means the client wasn't used anywhere.
+        Steps where the client doesn't appear are left untouched. All roles of a
+        step that match are switched in one re-render. Returns the changed steps;
+        an empty list means the client wasn't used anywhere.
         """
 
+        if new_ids.client_id is None:
+            raise ValidationFailed("Выберите клиента для замены")
         chain = await self.get(chain_id, visible_group_ids=visible_group_ids)
         changed: list[RequestChainStep] = []
         for step in chain.steps:
-            touched = False
-            for role, (client_col, _account_col, _card_col) in _ROLE_COLUMNS.items():
-                if getattr(step, client_col) == old_client_id:
-                    await self._rerender_step(
-                        step, role, new_ids, visible_group_ids=visible_group_ids
-                    )
-                    touched = True
-            if touched:
+            overrides = {
+                role: new_ids
+                for role, (client_col, _account_col, _card_col) in _ROLE_COLUMNS.items()
+                if getattr(step, client_col) == old_client_id
+            }
+            if overrides:
+                await self._rerender_step(
+                    step, overrides, visible_group_ids=visible_group_ids
+                )
                 changed.append(step)
+        if changed:
+            await self._apply_chain_group(chain)
         return changed
 
     async def reorder_steps(

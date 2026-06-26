@@ -33,17 +33,16 @@ from app.repositories.filled_template import FilledTemplateRepository
 from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.entities_htmx import entity_label
 from app.routes.htmx_utils import form_str, parse_json_path, parse_uuid_list, toast_header
+from app.routes.role_switch_utils import role_ids_from_form
 from app.routes.uow import commit_or_409
 from app.services.filled_templates import (
     _ROLE_COLUMNS,
+    ROLE_TITLES,
     FilledTemplateService,
-    _RoleIds,
 )
 from app.services.request_chain import RequestChainService
 from app.services.template_render import render_chain_step_html
 from app.utils.errors import DomainError
-
-_ROLE_TITLES = {"sender": "Отправитель", "receiver": "Получатель", "accountOwner": "Владелец счёта"}
 
 router = APIRouter()
 
@@ -123,6 +122,11 @@ async def _manage_context(
     chain (for the chain-wide replace popovers)."""
 
     used: dict[uuid.UUID, dict[str, Any]] = {}
+    # A template id for the chain-wide replace picker. The fill endpoints use it
+    # only for role validation (``_check_fill_role``) — the client/account/card
+    # lists are global, NOT filtered by template — so any reachable step's
+    # template works even when the chain spans several templates; each step is
+    # re-rendered against its own source template in ``_rerender_step``.
     any_template_id = ""
     manage_steps: list[dict[str, Any]] = []
     for idx, step in enumerate(chain.steps, start=1):
@@ -139,7 +143,7 @@ async def _manage_context(
             roles.append(
                 {
                     "role": role,
-                    "title": _ROLE_TITLES[role],
+                    "title": ROLE_TITLES[role],
                     "label": labels.get(role) or "—",
                     "client_id": str(cid),
                     "account_id": str(getattr(step, account_col) or ""),
@@ -572,18 +576,6 @@ async def htmx_unbind_field(
 # ---------- client switching (return the chain panel) ----------
 
 
-def _role_ids_from_form(form: Any) -> _RoleIds:
-    def _uuid_or_none(key: str) -> uuid.UUID | None:
-        raw = form_str(form, key)
-        return uuid.UUID(raw) if raw else None
-
-    return _RoleIds(
-        client_id=_uuid_or_none("client_id"),
-        account_id=_uuid_or_none("account_id"),
-        card_id=_uuid_or_none("card_id"),
-    )
-
-
 @router.post("/filled-templates-htmx/chains/{chain_id}/steps/{step_id}/switch-role")
 async def htmx_switch_step_role(
     chain_id: uuid.UUID,
@@ -596,10 +588,10 @@ async def htmx_switch_step_role(
     form = await request.form()
     standalone = form_str(form, "standalone") == "1"
     role = form_str(form, "role")
-    if role not in _ROLE_TITLES:
+    if role not in ROLE_TITLES:
         return _toast_only("Неизвестная роль", "error")
     try:
-        new_ids = _role_ids_from_form(form)
+        new_ids = role_ids_from_form(form)
     except ValueError:
         return _toast_only("Некорректный выбор", "error")
     try:
@@ -637,7 +629,7 @@ async def htmx_replace_client(
     standalone = form_str(form, "standalone") == "1"
     try:
         old_client_id = uuid.UUID(form_str(form, "old_client_id"))
-        new_ids = _role_ids_from_form(form)
+        new_ids = role_ids_from_form(form)
     except ValueError:
         return _toast_only("Некорректный выбор", "error")
     try:

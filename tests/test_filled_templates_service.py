@@ -562,7 +562,6 @@ async def test_save_from_fill_snapshots_project_name_and_color() -> None:
         rendered="{}",
         changed=[],
         unresolved=[],
-        now=_now(),
     )
     assert saved.project_name_snapshot == "Альфа"
     assert saved.project_color_snapshot == "#112233"
@@ -579,7 +578,6 @@ async def test_save_from_fill_tolerates_template_without_project() -> None:
         rendered="{}",
         changed=[],
         unresolved=[],
-        now=_now(),
     )
     assert saved.project_name_snapshot == ""
     assert saved.project_color_snapshot == ""
@@ -610,7 +608,6 @@ async def test_save_from_fill_snapshots_http_request_and_folder() -> None:
         changed=[],
         unresolved=[],
         folder_path=["Проект", "Релиз", "Фича"],
-        now=_now(),
     )
     assert saved.folder_path == ["Проект", "Релиз", "Фича"]
     assert saved.http_method_snapshot == "POST"
@@ -635,7 +632,6 @@ async def test_save_from_fill_appends_after_ordered_siblings() -> None:
         changed=[],
         unresolved=[],
         folder_path=["Проект"],
-        now=_now(),
     )
     assert saved.display_order == 5
 
@@ -650,7 +646,6 @@ async def test_save_from_fill_defaults_when_http_fields_and_folder_absent() -> N
         rendered="{}",
         changed=[],
         unresolved=[],
-        now=_now(),
     )
     assert saved.folder_path == []
     assert saved.http_method_snapshot == ""

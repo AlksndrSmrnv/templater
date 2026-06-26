@@ -38,20 +38,21 @@ window.roleSwitch = function (config) {
         close() {
             this.open = false;
         },
-        // Lazy first-load of the clients list, then load the current client's
-        // accounts/cards by firing the same event a client click would.
+        // Lazy first-load: fetch the clients list and the current client's
+        // accounts/cards exactly once. The popover is only hidden (x-show) on
+        // close, so the loaded lists persist across reopens — no need to refetch.
         ensureLoaded() {
-            if (!this._loaded && this.templateId) {
-                this._loaded = true;
-                const list = this.$root.querySelector("[data-list='clients']");
-                if (window.htmx && list) {
-                    window.htmx.ajax(
-                        'GET',
-                        '/templater/templates-htmx/' + this.templateId + '/fill/clients?role=' + role,
-                        { target: list, swap: 'innerHTML' },
-                    );
-                }
+            if (this._loaded || !this.templateId) return;
+            this._loaded = true;
+            const list = this.$root.querySelector("[data-list='clients']");
+            if (window.htmx && list) {
+                window.htmx.ajax(
+                    'GET',
+                    '/templater/templates-htmx/' + this.templateId + '/fill/clients?role=' + role,
+                    { target: list, swap: 'innerHTML' },
+                );
             }
+            // Load accounts/cards for the preselected client (if any).
             this.$nextTick(() => this.fireClientChanged());
         },
         fireClientChanged() {

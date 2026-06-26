@@ -34,12 +34,9 @@ from app.repositories.entity import ClientRepository
 from app.repositories.request_chain import RequestChainRepository
 from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.htmx_utils import form_str, parse_json_path, parse_uuid_list, toast_header
+from app.routes.role_switch_utils import SWITCH_ROLES, role_ids_from_form
 from app.routes.uow import commit_or_409
-from app.services.filled_templates import (
-    FilledTemplateService,
-    _RoleIds,
-    iter_role_labels,
-)
+from app.services.filled_templates import FilledTemplateService, iter_role_labels
 from app.services.template_render import render_filled_html
 from app.utils.errors import DomainError
 
@@ -391,24 +388,6 @@ async def htmx_panel(
     )
 
 
-_SWITCH_ROLES = {"sender", "receiver", "accountOwner"}
-
-
-def _role_ids_from_form(form: Any) -> _RoleIds:
-    """Parse a ``(client_id, account_id, card_id)`` triple from switch-role form
-    fields. Empty strings become ``None``; a malformed UUID raises ``ValueError``."""
-
-    def _uuid_or_none(key: str) -> uuid.UUID | None:
-        raw = form_str(form, key)
-        return uuid.UUID(raw) if raw else None
-
-    return _RoleIds(
-        client_id=_uuid_or_none("client_id"),
-        account_id=_uuid_or_none("account_id"),
-        card_id=_uuid_or_none("card_id"),
-    )
-
-
 @router.post("/filled-templates-htmx/{filled_id}/switch-role")
 async def htmx_switch_role(
     filled_id: uuid.UUID,
@@ -423,7 +402,7 @@ async def htmx_switch_role(
     form = await request.form()
     standalone = form_str(form, "standalone") == "1"
     role = form_str(form, "role")
-    if role not in _SWITCH_ROLES:
+    if role not in SWITCH_ROLES:
         return Response(
             status_code=200,
             headers={
@@ -432,7 +411,7 @@ async def htmx_switch_role(
             },
         )
     try:
-        new_ids = _role_ids_from_form(form)
+        new_ids = role_ids_from_form(form)
     except ValueError:
         return Response(
             status_code=200,

@@ -214,6 +214,60 @@ async def collect_role_short_bits(
     return bits
 
 
+async def collect_request_groups(
+    session: AsyncSession, req: TemplateFillRequest
+) -> dict[uuid.UUID, Any]:
+    """Distinct private access groups referenced by ``req``, as ``{group_id: group_row}``.
+
+    Resolves the *owning client* of every referenced entity — a client directly,
+    an account via its client, a card via its account's client — so a private
+    account/card counts even when the request carries no explicit ``*_client_id``
+    (a crafted save could otherwise slip private data through as public). Public
+    clients (``group_id is None``) contribute nothing. getattr-safe so test
+    doubles without the ``group`` relationship work.
+    """
+
+    clients_repo = ClientRepository(session)
+    accounts_repo = AccountRepository(session)
+    cards_repo = CardRepository(session)
+
+    client_ids: set[uuid.UUID] = set()
+    for cid in (req.sender_client_id, req.receiver_client_id, req.account_owner_client_id):
+        if cid is not None:
+            client_ids.add(cid)
+    for aid in (req.sender_account_id, req.receiver_account_id, req.account_owner_account_id):
+        if aid is not None:
+            account = await accounts_repo.get(aid)
+            if account is not None:
+                client_ids.add(account.client_id)
+    for kid in (req.sender_card_id, req.receiver_card_id, req.account_owner_card_id):
+        if kid is not None:
+            card = await cards_repo.get(kid)
+            if card is not None:
+                account = await accounts_repo.get(card.account_id)
+                if account is not None:
+                    client_ids.add(account.client_id)
+
+    groups: dict[uuid.UUID, Any] = {}  # group_id → group row (for name/color)
+    for cid in client_ids:
+        client = await clients_repo.get(cid)
+        if client is None:
+            continue
+        gid = getattr(client, "group_id", None)
+        if gid is not None:
+            groups[gid] = getattr(client, "group", None)
+    return groups
+
+
+# Human-readable role titles, the single source of truth shared by the panel
+# (:func:`iter_role_labels`) and the chain management UI.
+ROLE_TITLES: dict[str, str] = {
+    "sender": "Отправитель",
+    "receiver": "Получатель",
+    "accountOwner": "Владелец счёта",
+}
+
+
 class FilledTemplateService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -495,65 +549,17 @@ class FilledTemplateService:
         """Resolve ``(group_id, name, color)`` for a fill across *all* its roles.
 
         A saved snapshot is a single artifact with one ``group_id``, so it can
-        only safely represent one access group. We resolve the *owning client* of
-        every referenced entity — a client directly, an account via its client, a
-        card via its account's client — so a private account/card protects the
-        snapshot even when the request carries no explicit ``*_client_id`` (a
-        crafted save could otherwise persist private data as public). Then over
-        the distinct private groups of those clients:
+        only safely represent one access group. Over the distinct private groups
+        of all referenced clients (see :func:`collect_request_groups`):
 
         - none → public (``None``);
         - exactly one → that group (name/color snapshotted for the badge);
         - two or more → reject. A single ``group_id`` cannot be hidden from
           holders of group A while shown to holders of group B, so persisting the
           mix would leak one group's data to the other.
-
-        getattr-safe so test doubles without the ``group`` relationship work.
         """
 
-        clients_repo = ClientRepository(self.session)
-        accounts_repo = AccountRepository(self.session)
-        cards_repo = CardRepository(self.session)
-
-        client_ids: set[uuid.UUID] = set()
-        for cid in (
-            fill_request.sender_client_id,
-            fill_request.receiver_client_id,
-            fill_request.account_owner_client_id,
-        ):
-            if cid is not None:
-                client_ids.add(cid)
-        for aid in (
-            fill_request.sender_account_id,
-            fill_request.receiver_account_id,
-            fill_request.account_owner_account_id,
-        ):
-            if aid is not None:
-                account = await accounts_repo.get(aid)
-                if account is not None:
-                    client_ids.add(account.client_id)
-        for kid in (
-            fill_request.sender_card_id,
-            fill_request.receiver_card_id,
-            fill_request.account_owner_card_id,
-        ):
-            if kid is not None:
-                card = await cards_repo.get(kid)
-                if card is not None:
-                    account = await accounts_repo.get(card.account_id)
-                    if account is not None:
-                        client_ids.add(account.client_id)
-
-        if not client_ids:
-            return None, "", ""
-        groups: dict[uuid.UUID, Any] = {}  # group_id → group row (for name/color)
-        for cid in client_ids:
-            client = await clients_repo.get(cid)
-            if client is None:
-                continue
-            gid = getattr(client, "group_id", None)
-            if gid is not None:
-                groups[gid] = getattr(client, "group", None)
+        groups = await collect_request_groups(self.session, fill_request)
         if not groups:
             return None, "", ""
         if len(groups) > 1:
@@ -574,7 +580,6 @@ class FilledTemplateService:
         changed: list[str],
         unresolved: list[str],
         folder_path: list[str] | None = None,
-        now: datetime | None = None,
     ) -> FilledTemplate:
         role_labels = await collect_role_labels(self.session, fill_request)
         name = await self._compose_name(template.name, fill_request)
@@ -653,6 +658,8 @@ class FilledTemplateService:
 
         if role not in _ROLES:
             raise ValidationFailed("Неизвестная роль")
+        if new_ids.client_id is None:
+            raise ValidationFailed("Выберите клиента для замены")
         item = await self.get(filled_id, visible_group_ids=visible_group_ids)
         req = _override_role(_fill_request_from_roles(item), role, new_ids)
         await assert_fill_visible(self.session, req, visible_group_ids)
@@ -756,10 +763,9 @@ def iter_role_labels(item: FilledTemplate) -> list[tuple[str, str, str | None]]:
     filled (no entry in ``role_labels_snapshot``) are skipped.
     """
 
-    titles = {"sender": "Отправитель", "receiver": "Получатель", "accountOwner": "Владелец счёта"}
     snap = item.role_labels_snapshot or {}
     out: list[tuple[str, str, str | None]] = []
     for role in _ROLES:
         if role in snap:
-            out.append((role, titles[role], snap.get(role)))
+            out.append((role, ROLE_TITLES[role], snap.get(role)))
     return out
