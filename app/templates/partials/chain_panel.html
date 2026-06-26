@@ -145,7 +145,7 @@
                                 </div>
 
                                 <!-- Стадия 1: выбор сообщения-источника -->
-                                <div class="chain-popover-stage" x-show="picker.sourceStep === null">
+                                <div x-show="picker.sourceStep === null">
                                     <p class="muted chain-popover-sub">Из ответа какого шага взять значение?</p>
                                     <ul class="chain-popover-list">
                                         <template x-for="ps in priorSteps(idx)" :key="ps.num">
@@ -162,7 +162,7 @@
                                 </div>
 
                                 <!-- Стадия 2: выбор поля ответа -->
-                                <div class="chain-popover-stage" x-show="picker.sourceStep !== null">
+                                <div x-show="picker.sourceStep !== null">
                                     <div class="chain-popover-back-row">
                                         <button type="button" class="btn small chain-popover-back" @click="picker.sourceStep = null">
                                             <iconify-icon icon="lucide:chevron-left"></iconify-icon> Назад
@@ -170,7 +170,8 @@
                                         <span class="muted chain-popover-sub">Поле ответа шага <span x-text="picker.sourceStep"></span></span>
                                     </div>
                                     <input class="send-picker-search" type="search" placeholder="Поиск поля…"
-                                           x-model="picker.query" @input="applyFieldFilter()" x-show="picker.paths.length">
+                                           x-model="picker.query" @input="applyFieldFilter()" x-show="picker.paths.length"
+                                           @keydown.escape.stop="picker.query = ''; applyFieldFilter()">
                                     <ul class="chain-popover-list">
                                         <template x-for="p in picker.filtered" :key="p.path">
                                             <li>
@@ -216,9 +217,11 @@
 
                     <section class="send-block" x-show="step.resolvedRequestHtml && idx > 0" x-cloak>
                         <h3>Итоговый запрос</h3>
-                        <p class="muted send-sub" x-text="stepDeps(idx).length
-                            ? 'Тело с подставленными значениями ссылок (подсвечены фиолетовым).'
-                            : 'Тело запроса, которое будет отправлено.'"></p>
+                        <p class="muted send-sub" x-text="step.resolvedUnresolved
+                            ? 'Тело запроса. Красным выделены неразрешённые ссылки.'
+                            : (step.resolvedRefs
+                                ? 'Тело с подставленными значениями ссылок (подсвечены фиолетовым).'
+                                : 'Тело запроса, которое будет отправлено.')"></p>
                         <pre class="template-code" x-html="step.resolvedRequestHtml"></pre>
                     </section>
                 </div>
