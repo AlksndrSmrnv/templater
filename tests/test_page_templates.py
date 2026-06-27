@@ -240,7 +240,7 @@ def test_import_page_uses_htmx_upload_form() -> None:
 
 def test_filled_template_view_copy_fetch_uses_templater_prefix() -> None:
     html = render_template(
-        "filled_templates/view.html",
+        "partials/filled_panel.html",
         {
             "active": "filled_templates",
             "ft": SimpleNamespace(
@@ -1477,7 +1477,7 @@ def test_filled_template_view_shows_project_row_from_snapshot() -> None:
     }
 
     with_project = render_template(
-        "filled_templates/view.html",
+        "partials/filled_panel.html",
         {**context, "ft": SimpleNamespace(**base, project_name_snapshot="Альфа", project_color_snapshot="#112233")},
     )
     assert "Проект" in with_project
@@ -1485,7 +1485,7 @@ def test_filled_template_view_shows_project_row_from_snapshot() -> None:
     assert "background: #112233" in with_project
 
     without_project = render_template(
-        "filled_templates/view.html",
+        "partials/filled_panel.html",
         {**context, "ft": SimpleNamespace(**base)},
     )
     assert "Проект" in without_project

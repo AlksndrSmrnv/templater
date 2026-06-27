@@ -28,7 +28,12 @@ def _step(name: str, body: str, mock: str = '{"transferId": "TRF-1"}') -> dict:
     }
 
 
-def _chain_panel_context(steps: list[dict], *, standalone: bool = False) -> dict:
+def _chain_panel_context(
+    steps: list[dict],
+    *,
+    standalone: bool = False,
+    dependencies: dict | None = None,
+) -> dict:
     chain = SimpleNamespace(id=uuid.uuid4(), name="Цепочка перевода")
     return {
         "standalone": standalone,
@@ -39,6 +44,8 @@ def _chain_panel_context(steps: list[dict], *, standalone: bool = False) -> dict
              "project_name": "Платежи", "project_color": "#3366ff"},
         ],
         "execute_url": "/templater/send-htmx/execute",
+        # The panel renders a «Зависимости сообщений» overview from this.
+        "dependencies": dependencies if dependencies is not None else {},
     }
 
 
@@ -55,7 +62,7 @@ def test_chain_panel_renders_steps_and_controls() -> None:
     assert "placeholder reference" in html
     # Picker option from the available list.
     assert "Перевод A2A" in html
-    # Inline header (delete + open-standalone) only when not standalone.
+    # Inline header (delete) only when not standalone.
     assert "Удалить" in html
 
 
@@ -95,23 +102,15 @@ def test_chain_panel_standalone_hides_inline_header() -> None:
     assert 'hx-target="#filled-panel"' not in html
 
 
-def test_chain_view_shows_dependencies() -> None:
+def test_chain_panel_shows_dependencies() -> None:
     s1 = _step("Создать перевод", '{"amount": 100}')
     s2 = _step("Подтвердить", '{"transferId": "{{ $1.transferId }}"}')
-    chain = SimpleNamespace(id=uuid.uuid4(), name="Цепочка перевода")
-    context = {
-        "active": "templates",
-        "standalone": True,
-        "chain": chain,
-        "chain_data": {"id": str(chain.id), "name": chain.name, "steps": [s1, s2]},
-        "available": [],
-        "execute_url": "/templater/send-htmx/execute",
-        "dependencies": {1: [], 2: [1]},
-    }
-    html = render_template("chains/view.html", context)
+    html = render_template(
+        "partials/chain_panel.html",
+        _chain_panel_context([s1, s2], dependencies={1: [], 2: [1]}),
+    )
     assert "Зависимости сообщений" in html
     assert "шаг 1" in html  # step 2 depends on step 1
-    assert "/templater/static/js/chain_panel.js" in html
 
 
 def test_filled_tree_renders_chain_node() -> None:
