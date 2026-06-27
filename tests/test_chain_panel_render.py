@@ -28,12 +28,7 @@ def _step(name: str, body: str, mock: str = '{"transferId": "TRF-1"}') -> dict:
     }
 
 
-def _chain_panel_context(
-    steps: list[dict],
-    *,
-    standalone: bool = False,
-    dependencies: dict | None = None,
-) -> dict:
+def _chain_panel_context(steps: list[dict], *, standalone: bool = False) -> dict:
     chain = SimpleNamespace(id=uuid.uuid4(), name="Цепочка перевода")
     return {
         "standalone": standalone,
@@ -44,8 +39,6 @@ def _chain_panel_context(
              "project_name": "Платежи", "project_color": "#3366ff"},
         ],
         "execute_url": "/templater/send-htmx/execute",
-        # The panel renders a «Зависимости сообщений» overview from this.
-        "dependencies": dependencies if dependencies is not None else {},
     }
 
 
@@ -102,15 +95,17 @@ def test_chain_panel_standalone_hides_inline_header() -> None:
     assert 'hx-target="#filled-panel"' not in html
 
 
-def test_chain_panel_shows_dependencies() -> None:
+def test_chain_panel_shows_dependency_overview() -> None:
+    # The «Зависимости сообщений» overview is Alpine-derived from the reactive
+    # `steps` (stepDeps/hasAnyDeps), so it stays correct after binding/unbinding/
+    # reordering/removing steps. The static render only carries the scaffold.
     s1 = _step("Создать перевод", '{"amount": 100}')
     s2 = _step("Подтвердить", '{"transferId": "{{ $1.transferId }}"}')
-    html = render_template(
-        "partials/chain_panel.html",
-        _chain_panel_context([s1, s2], dependencies={1: [], 2: [1]}),
-    )
+    html = render_template("partials/chain_panel.html", _chain_panel_context([s1, s2]))
     assert "Зависимости сообщений" in html
-    assert "шаг 1" in html  # step 2 depends on step 1
+    assert 'x-show="hasAnyDeps()"' in html
+    assert "stepDeps(i)" in html
+    assert "chain-dep-badge" in html
 
 
 def test_filled_tree_renders_chain_node() -> None:

@@ -28,27 +28,26 @@
 
     {# Dependency overview — make the message dependencies obvious: each step
        that pulls a field from an earlier response is listed with which step it
-       depends on. #}
+       depends on. Derived from the reactive `steps` (via stepDeps), so it stays
+       correct after binding/unbinding/reordering/removing steps client-side. #}
     <section class="chain-deps-overview">
         <h2><iconify-icon icon="lucide:git-branch"></iconify-icon> Зависимости сообщений</h2>
-        {% set any_dep = dependencies.values() | select | list | length > 0 %}
-        {% if chain_data.steps and any_dep %}
-        <ul class="chain-deps-list">
-            {% for pos, deps in dependencies.items() %}
-            {% if deps %}
-            <li>
-                <span class="send-step-num">{{ pos }}</span>
-                <span class="chain-dep-name">{{ chain_data.steps[pos - 1].name }}</span>
-                <iconify-icon icon="lucide:arrow-left"></iconify-icon>
-                {% for d in deps %}<span class="chain-dep-badge">шаг {{ d }}</span>{% endfor %}
-            </li>
-            {% endif %}
-            {% endfor %}
+        <ul class="chain-deps-list" x-show="hasAnyDeps()" x-cloak>
+            <template x-for="(step, i) in steps" :key="step.id">
+                <template x-if="stepDeps(i).length">
+                    <li>
+                        <span class="send-step-num" x-text="i + 1"></span>
+                        <span class="chain-dep-name" x-text="step.name"></span>
+                        <iconify-icon icon="lucide:arrow-left"></iconify-icon>
+                        <template x-for="d in stepDeps(i)" :key="d">
+                            <span class="chain-dep-badge" x-text="'шаг ' + d"></span>
+                        </template>
+                    </li>
+                </template>
+            </template>
         </ul>
-        {% else %}
-        <p class="muted">Пока ни одно сообщение не использует поля из ответов других шагов.
+        <p class="muted" x-show="!hasAnyDeps()" x-cloak>Пока ни одно сообщение не использует поля из ответов других шагов.
             Кликните по значению поля в теле шага, чтобы связать его с ответом предыдущего.</p>
-        {% endif %}
     </section>
 
     <p class="muted send-hint">
