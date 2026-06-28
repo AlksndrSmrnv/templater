@@ -1278,6 +1278,7 @@ input[type="file"]::-webkit-file-upload-button:hover { background: var(--surface
 }
 .send-status-code.is-ok  { color: var(--success); background: rgba(22, 128, 60, 0.12); border-color: rgba(22, 128, 60, 0.30); }
 .send-status-code.is-err { color: var(--danger);  background: rgba(220, 38, 38, 0.12); border-color: rgba(220, 38, 38, 0.30); }
+.icon-spin { animation: spin 0.8s linear infinite; }
 
 /* Dependency badges (which step a message pulls fields from) */
 .chain-dep-badge {

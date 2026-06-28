@@ -32,35 +32,8 @@
     response: null,
     statusCode: null,  // parsed from the response body (any case, nested)
     chainMenuOpen: false,
-    // Recursively find the first numeric `statusCode` (case-insensitive) at any
-    // depth; null when absent / not numeric. Mirrors chain_panel.js — kept local
-    // because this panel also renders on pages that don't load that script.
-    findStatusCode(node) {
-        if (node === null || typeof node !== 'object') return null;
-        if (Array.isArray(node)) {
-            for (const v of node) {
-                const r = this.findStatusCode(v);
-                if (r !== null) return r;
-            }
-            return null;
-        }
-        for (const k of Object.keys(node)) {
-            if (k.toLowerCase() === 'statuscode') {
-                const n = typeof node[k] === 'number' ? node[k] : Number(node[k]);
-                if (node[k] !== null && node[k] !== '' && !Number.isNaN(n)) return n;
-            }
-        }
-        for (const k of Object.keys(node)) {
-            const r = this.findStatusCode(node[k]);
-            if (r !== null) return r;
-        }
-        return null;
-    },
-    extractStatusCode(jsonStr) {
-        let obj;
-        try { obj = JSON.parse(jsonStr); } catch (e) { return null; }
-        return this.findStatusCode(obj);
-    },
+    // statusCode extraction is shared via status_code.js (window.extractStatusCode),
+    // loaded on every page that renders this panel.
     exampleResponse() {
         return JSON.stringify({
             status: 'SUCCESS',
@@ -85,7 +58,7 @@
             }),
         })
             .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-            .then(d => { this.response = { status: d.status, statusText: d.status_text, latencyMs: d.latency_ms, body: d.body }; this.statusCode = this.extractStatusCode(d.body); })
+            .then(d => { this.response = { status: d.status, statusText: d.status_text, latencyMs: d.latency_ms, body: d.body }; this.statusCode = window.extractStatusCode(d.body); })
             .catch(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Ошибка отправки (мок)', type: 'error' } })))
             .finally(() => { this.sending = false; });
     },

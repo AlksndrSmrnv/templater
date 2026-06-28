@@ -69,8 +69,8 @@
             <iconify-icon icon="lucide:play"></iconify-icon> Запустить всё
         </button>
         <span class="send-status-code" x-show="chainStatus !== null" x-cloak
-              :class="chainStatus === 0 ? 'is-ok' : 'is-err'"
-              x-text="'statusCode = ' + chainStatus"></span>
+              :class="chainStatus && chainStatus.ok ? 'is-ok' : 'is-err'"
+              x-text="chainStatus && chainStatus.code !== null ? ('statusCode = ' + chainStatus.code) : 'ошибка'"></span>
     </div>
 
     {# «Клиенты всей цепочки» — replace a role's client across every step that
@@ -131,9 +131,11 @@
                         </template>
                     </div>
                     <div class="send-step-actions">
-                        <button class="btn small primary" type="button" title="Отправить шаг"
+                        <button class="btn small primary" type="button"
+                                :title="step.sending ? 'Отправка…' : 'Отправить шаг'"
                                 x-show="step.collapsed" :disabled="step.sending" @click="send(idx)">
-                            <iconify-icon icon="lucide:send"></iconify-icon>
+                            <iconify-icon :icon="step.sending ? 'lucide:loader-2' : 'lucide:send'"
+                                          :class="{ 'icon-spin': step.sending }"></iconify-icon>
                         </button>
                         <span class="send-status-code" x-show="step.statusCode !== null" x-cloak
                               :class="step.statusCode === 0 ? 'is-ok' : 'is-err'"
