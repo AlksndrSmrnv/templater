@@ -68,6 +68,9 @@
         <button class="btn" type="button" @click="sendAll()" x-show="steps.length" :disabled="running">
             <iconify-icon icon="lucide:play"></iconify-icon> Запустить всё
         </button>
+        <span class="send-status-code" x-show="chainStatus !== null" x-cloak
+              :class="chainStatus === 0 ? 'is-ok' : 'is-err'"
+              x-text="'statusCode = ' + chainStatus"></span>
     </div>
 
     {# «Клиенты всей цепочки» — replace a role's client across every step that
@@ -128,6 +131,13 @@
                         </template>
                     </div>
                     <div class="send-step-actions">
+                        <button class="btn small primary" type="button" title="Отправить шаг"
+                                x-show="step.collapsed" :disabled="step.sending" @click="send(idx)">
+                            <iconify-icon icon="lucide:send"></iconify-icon>
+                        </button>
+                        <span class="send-status-code" x-show="step.statusCode !== null" x-cloak
+                              :class="step.statusCode === 0 ? 'is-ok' : 'is-err'"
+                              x-text="'statusCode = ' + step.statusCode"></span>
                         <button class="btn small" type="button" title="Выше" @click="moveStep(idx, -1)" :disabled="idx === 0"><iconify-icon icon="lucide:chevron-up"></iconify-icon></button>
                         <button class="btn small" type="button" title="Ниже" @click="moveStep(idx, 1)" :disabled="idx === steps.length - 1"><iconify-icon icon="lucide:chevron-down"></iconify-icon></button>
                         <button class="btn small danger" type="button" title="Удалить шаг" @click="removeStep(idx)"><iconify-icon icon="lucide:trash-2"></iconify-icon></button>

@@ -20,6 +20,38 @@
  * Defined on window so HTMX-swapped panels can reference it without a per-swap
  * <script> race; loaded once at page level.
  */
+// Recursively find the first numeric `statusCode` field (case-insensitive) at
+// any nesting depth. Checks the current object's keys first, then descends.
+// Returns the number, or null when absent / not numeric.
+function findStatusCode(node) {
+    if (node === null || typeof node !== 'object') return null;
+    if (Array.isArray(node)) {
+        for (const v of node) {
+            const r = findStatusCode(v);
+            if (r !== null) return r;
+        }
+        return null;
+    }
+    for (const k of Object.keys(node)) {
+        if (k.toLowerCase() === 'statuscode') {
+            const n = typeof node[k] === 'number' ? node[k] : Number(node[k]);
+            if (node[k] !== null && node[k] !== '' && !Number.isNaN(n)) return n;
+        }
+    }
+    for (const k of Object.keys(node)) {
+        const r = findStatusCode(node[k]);
+        if (r !== null) return r;
+    }
+    return null;
+}
+// Parse a JSON response body and pull out its statusCode (see findStatusCode).
+// null on parse error or when the field is absent.
+function extractStatusCode(jsonStr) {
+    let obj;
+    try { obj = JSON.parse(jsonStr); } catch (e) { return null; }
+    return findStatusCode(obj);
+}
+
 window.chainPanel = function (config) {
     const base = '/templater/filled-templates-htmx/chains/';
     // Kept clear when flipping the popover upward. TOPBAR_H mirrors
@@ -38,6 +70,8 @@ window.chainPanel = function (config) {
         pickerOpen: false,
         pickerSearch: '',
         running: false,
+        // Aggregate statusCode of the last «Запустить всё» run (null = hide).
+        chainStatus: null,
         // Field-binding picker, anchored to the clicked body field. `paths` is
         // the source step's full leaf list; `filtered` is `paths` narrowed by
         // `query` (recomputed only on change, not per render).
@@ -59,6 +93,7 @@ window.chainPanel = function (config) {
                 sending: false,
                 error: '',
                 response: null,
+                statusCode: null,  // parsed from the response body (any case, nested)
                 resolvedRequestHtml: null,
                 resolvedRefs: false,        // resolved body contains purple references
                 resolvedUnresolved: false,  // ...and some couldn't be resolved (red)
@@ -396,6 +431,7 @@ window.chainPanel = function (config) {
             const step = this.steps[idx];
             step.error = '';
             step.sending = true;
+            step.statusCode = null;
             const res = this.resolveBody(idx);
             step.resolvedRequestHtml = res.html;
             step.resolvedRefs = res.refs > 0;
@@ -427,6 +463,7 @@ window.chainPanel = function (config) {
                     latencyMs: d.latency_ms,
                     body: this.prettyJson(d.body),
                 };
+                step.statusCode = extractStatusCode(d.body);
             } catch (e) {
                 step.error = 'Ошибка отправки (мок)';
             } finally {
@@ -435,6 +472,7 @@ window.chainPanel = function (config) {
         },
         async sendAll() {
             this.running = true;
+            this.chainStatus = null;
             try {
                 for (let i = 0; i < this.steps.length; i++) {
                     await this.send(i);
@@ -445,6 +483,14 @@ window.chainPanel = function (config) {
             } finally {
                 this.running = false;
             }
+            // Aggregate over the steps that actually ran: any non-zero code wins
+            // (show the first one — that's where the chain stopped); otherwise 0
+            // if every run succeeded; null if nothing reported a statusCode.
+            const codes = this.steps
+                .map((s) => s.statusCode)
+                .filter((c) => c !== null);
+            const failing = codes.find((c) => c !== 0);
+            this.chainStatus = failing !== undefined ? failing : (codes.length ? 0 : null);
         },
         prettyJson(s) {
             try { return JSON.stringify(JSON.parse(s), null, 2); } catch (e) { return s; }
@@ -456,6 +502,7 @@ window.chainPanel = function (config) {
         invalidate(idx) {
             const step = this.steps[idx];
             step.response = null;
+            step.statusCode = null;
             step.resolvedRequestHtml = null;
             step.resolvedRefs = false;
             step.resolvedUnresolved = false;
