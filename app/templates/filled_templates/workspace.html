@@ -45,6 +45,9 @@
 {% endblock %}
 
 {% block scripts %}
+{# statusCode helper shared by the chain panel and the filled-template send
+   button; defer keeps it before chain_panel.js (which calls it). #}
+<script src="/templater/static/js/status_code.js" defer></script>
 {# Loaded once at page level so HTMX-swapped chain panels (#filled-panel) can
    reference window.chainPanel without a per-swap <script> race. #}
 <script src="/templater/static/js/chain_panel.js" defer></script>
