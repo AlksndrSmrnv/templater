@@ -467,9 +467,11 @@ window.chainPanel = function (config) {
             const ran = this.steps.slice(0, ranCount);
             const failed = ran.find((s) => s.error || (s.statusCode !== null && s.statusCode !== 0));
             if (failed) {
-                this.chainStatus = { ok: false, code: failed.error ? null : failed.statusCode };
+                // `title` carries the step's own reason (e.g. «Не разрешены
+                // ссылки: …») so it shows on hover without expanding the step.
+                this.chainStatus = { ok: false, code: failed.error ? null : failed.statusCode, title: failed.error || '' };
             } else if (ran.some((s) => s.statusCode === 0)) {
-                this.chainStatus = { ok: true, code: 0 };
+                this.chainStatus = { ok: true, code: 0, title: '' };
             } else {
                 this.chainStatus = null;
             }

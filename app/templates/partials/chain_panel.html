@@ -70,6 +70,7 @@
         </button>
         <span class="send-status-code" x-show="chainStatus !== null" x-cloak
               :class="chainStatus && chainStatus.ok ? 'is-ok' : 'is-err'"
+              :title="chainStatus ? chainStatus.title : ''"
               x-text="chainStatus && chainStatus.code !== null ? ('statusCode = ' + chainStatus.code) : 'ошибка'"></span>
     </div>
 
