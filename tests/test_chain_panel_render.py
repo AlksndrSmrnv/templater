@@ -52,8 +52,6 @@ def test_chain_panel_renders_steps_and_controls() -> None:
     assert "Добавить шаг" in html
     assert "Запустить всё" in html
     assert "Цепочка перевода" in html
-    # The reference hint advertises purple references.
-    assert "placeholder reference" in html
     # Picker option from the available list.
     assert "Перевод A2A" in html
     # Inline header (delete) only when not standalone.
@@ -75,9 +73,6 @@ def test_chain_panel_drops_example_and_insert_link_adds_collapse() -> None:
     assert "onFieldClick(" in html
     assert "chain-collapse-toggle" in html
     assert 'x-show="!step.collapsed"' in html
-    # Colour legend in the hint.
-    assert "placeholder dynamic" in html
-    assert "placeholder filled" in html
 
 
 def test_chain_panel_seed_json_is_escaped() -> None:
@@ -96,16 +91,15 @@ def test_chain_panel_standalone_hides_inline_header() -> None:
     assert 'hx-target="#filled-panel"' not in html
 
 
-def test_chain_panel_shows_dependency_overview() -> None:
-    # The «Зависимости сообщений» overview is Alpine-derived from the reactive
-    # `steps` (stepDeps/hasAnyDeps), so it stays correct after binding/unbinding/
-    # reordering/removing steps. The static render only carries the scaffold.
+def test_chain_panel_omits_dependency_overview() -> None:
+    # The top-of-panel «Зависимости сообщений» overview was removed; per-step
+    # «зависит от шага N» badges (Alpine-derived via stepDeps) stay.
     s1 = _step("Создать перевод", '{"amount": 100}')
     s2 = _step("Подтвердить", '{"transferId": "{{ $1.transferId }}"}')
     html = render_template("partials/chain_panel.html", _chain_panel_context([s1, s2]))
-    assert "Зависимости сообщений" in html
-    assert 'x-show="hasAnyDeps()"' in html
-    assert "stepDeps(i)" in html
+    assert "Зависимости сообщений" not in html
+    assert 'x-show="hasAnyDeps()"' not in html
+    assert "зависит от шага" in html
     assert "chain-dep-badge" in html
 
 

@@ -1169,9 +1169,6 @@ input[type="file"]::-webkit-file-upload-button:hover { background: var(--surface
 .chain-panel { display: flex; flex-direction: column; }
 .chain-toolbar { display: flex; align-items: center; gap: 10px; margin: 4px 0 16px; flex-wrap: wrap; }
 
-.send-hint { margin: 10px 0 16px; max-width: 72ch; }
-.send-hint code { font-family: 'Geist Mono', ui-monospace, monospace; font-size: var(--fs-sm); }
-
 .send-picker { position: relative; }
 .send-picker-menu {
     position: absolute; left: 0; top: calc(100% + 6px); z-index: 30;
@@ -1286,14 +1283,6 @@ input[type="file"]::-webkit-file-upload-button:hover { background: var(--surface
     padding: 1px 8px; border-radius: var(--radius-pill); font-size: var(--fs-sm);
     background: rgba(192, 132, 252, 0.16); color: #c4a7ff; border: 1px solid rgba(192, 132, 252, 0.35);
 }
-.chain-deps-overview {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 16px 18px; margin-bottom: 18px;
-}
-.chain-deps-overview h2 { margin: 0 0 10px; font-size: var(--fs-lg); display: flex; align-items: center; gap: 8px; }
-.chain-deps-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.chain-deps-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.chain-dep-name { font-weight: 500; }
 
 /* ---- role cells in the filled-template panel ---- */
 .role-cell { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
