@@ -41,4 +41,22 @@
         try { obj = JSON.parse(jsonStr); } catch (e) { return null; }
         return findStatusCode(obj);
     };
+
+    // ---- «last send» timestamp formatting (shared by both send panels) ----
+    // Server seeds badges with ISO-8601 (UTC) timestamps; both the seeded value
+    // and a locally produced «now» are rendered through this single formatter, so
+    // they always read in the SAME (browser-local) zone — no UTC-vs-local drift
+    // between a server-rendered badge and one updated right after a send.
+    const pad = (n) => String(n).padStart(2, '0');
+    // Format an ISO-8601 string as dd.mm.yyyy HH:MM:SS in the browser's zone.
+    window.formatSendTs = function (iso) {
+        if (!iso) return '';
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + '.' + d.getFullYear()
+            + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    };
+    // ISO-8601 (UTC) for «now» — store this on a badge after a local send, then
+    // render it through formatSendTs like any server-seeded value.
+    window.nowSendTs = function () { return new Date().toISOString(); };
 })();

@@ -444,11 +444,14 @@ window.chainPanel = function (config) {
                 };
                 step.statusCode = window.extractStatusCode(d.body);
                 // Mirror the server's ok rule: absent/zero statusCode = success.
-                if (step.statusCode === null || step.statusCode === 0) step.lastSuccessAt = this.fmtNow();
-                else step.lastErrorAt = this.fmtNow();
+                // The server already recorded this send; ISO «now» matches that.
+                if (step.statusCode === null || step.statusCode === 0) step.lastSuccessAt = window.nowSendTs();
+                else step.lastErrorAt = window.nowSendTs();
             } catch (e) {
+                // No usable response — we can't tell if the server recorded a
+                // send (or even received it), so leave the badges to the next
+                // panel render (the history is the source of truth).
                 step.error = 'Ошибка отправки (мок)';
-                step.lastErrorAt = this.fmtNow();
             } finally {
                 step.sending = false;
             }
@@ -491,13 +494,6 @@ window.chainPanel = function (config) {
         },
         prettyJson(s) {
             try { return JSON.stringify(JSON.parse(s), null, 2); } catch (e) { return s; }
-        },
-        // dd.mm.yyyy HH:MM:SS — matches the server's strftime so a locally
-        // updated «last send» badge reads the same as a server-rendered one.
-        fmtNow() {
-            const d = new Date(), p = (n) => String(n).padStart(2, '0');
-            return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.' + d.getFullYear()
-                + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
         },
         // Binding a field changes this step's body, so its own last run no longer
         // matches. Later steps may reference this step's response, so their

@@ -31,6 +31,14 @@ def test_boolean_not_coerced() -> None:
     assert extract_status_code('{"statusCode": true}') is None
 
 
+def test_non_finite_floats_are_none() -> None:
+    # json.loads parses 1e400 → inf and NaN → nan; int(inf) would raise
+    # OverflowError, and this runs outside a try in the route, so guard them.
+    assert extract_status_code('{"statusCode": 1e400}') is None
+    assert extract_status_code('{"statusCode": -1e400}') is None
+    assert extract_status_code('{"statusCode": NaN}') is None
+
+
 def test_nested_and_arrays() -> None:
     assert extract_status_code('{"a": {"b": {"statusCode": 4}}}') == 4
     assert extract_status_code('{"items": [{"statusCode": 8}]}') == 8

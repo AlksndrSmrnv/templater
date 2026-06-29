@@ -30,15 +30,11 @@
     response: null,
     statusCode: null,  // parsed from the response body (any case, nested)
     chainMenuOpen: false,
-    // Last successful / failed send (server-seeded, updated locally after each
-    // send so the badge moves without re-rendering the panel).
-    lastSuccessAt: {{ (last_send.success_at.strftime('%d.%m.%Y %H:%M:%S') if last_send and last_send.success_at else '') | tojson | forceescape }},
-    lastErrorAt: {{ (last_send.error_at.strftime('%d.%m.%Y %H:%M:%S') if last_send and last_send.error_at else '') | tojson | forceescape }},
-    fmtNow() {
-        const d = new Date(), p = (n) => String(n).padStart(2, '0');
-        return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.' + d.getFullYear()
-            + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
-    },
+    // Last successful / failed send as ISO-8601 (server-seeded, updated locally
+    // after each send). Rendered through window.formatSendTs so the badge reads
+    // in the user's zone and a local update matches a server-seeded value.
+    lastSuccessAt: {{ (last_send.success_at.isoformat() if last_send and last_send.success_at else '') | tojson | forceescape }},
+    lastErrorAt: {{ (last_send.error_at.isoformat() if last_send and last_send.error_at else '') | tojson | forceescape }},
     // statusCode extraction is shared via status_code.js (window.extractStatusCode),
     // loaded on every page that renders this panel.
     exampleResponse() {
@@ -73,11 +69,13 @@
                 this.response = { status: d.status, statusText: d.status_text, latencyMs: d.latency_ms, body: d.body };
                 this.statusCode = window.extractStatusCode(d.body);
                 // Mirror the server's ok rule: absent/zero statusCode = success.
-                if (this.statusCode === null || this.statusCode === 0) this.lastSuccessAt = this.fmtNow();
-                else this.lastErrorAt = this.fmtNow();
+                // The server already recorded this send; ISO «now» matches it.
+                if (this.statusCode === null || this.statusCode === 0) this.lastSuccessAt = window.nowSendTs();
+                else this.lastErrorAt = window.nowSendTs();
             })
             .catch(() => {
-                this.lastErrorAt = this.fmtNow();
+                // No usable response — leave the badges to the next panel render
+                // (the history is the source of truth) and just toast.
                 window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Ошибка отправки (мок)', type: 'error' } }));
             })
             .finally(() => { this.sending = false; });
@@ -220,12 +218,12 @@
               :class="statusCode === 0 ? 'is-ok' : 'is-err'"
               x-text="'statusCode = ' + statusCode"></span>
         <span class="send-last is-ok" x-show="lastSuccessAt" x-cloak
-              :title="'Последняя успешная отправка: ' + lastSuccessAt">
-            <iconify-icon icon="lucide:check"></iconify-icon><span x-text="lastSuccessAt"></span>
+              :title="'Последняя успешная отправка: ' + window.formatSendTs(lastSuccessAt)">
+            <iconify-icon icon="lucide:check"></iconify-icon><span x-text="window.formatSendTs(lastSuccessAt)"></span>
         </span>
         <span class="send-last is-err" x-show="lastErrorAt" x-cloak
-              :title="'Последняя неуспешная отправка: ' + lastErrorAt">
-            <iconify-icon icon="lucide:x"></iconify-icon><span x-text="lastErrorAt"></span>
+              :title="'Последняя неуспешная отправка: ' + window.formatSendTs(lastErrorAt)">
+            <iconify-icon icon="lucide:x"></iconify-icon><span x-text="window.formatSendTs(lastErrorAt)"></span>
         </span>
         <div class="send-picker" @click.outside="chainMenuOpen = false" style="position:relative;">
             <button class="btn" type="button" @click="chainMenuOpen = !chainMenuOpen">

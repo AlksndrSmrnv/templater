@@ -76,9 +76,6 @@ def _toast_only(
 # ---------- serialization ----------
 
 
-_SEND_TS_FMT = "%d.%m.%Y %H:%M:%S"
-
-
 def _serialize_step(
     step: RequestChainStep,
     message_template_id: uuid.UUID | None = None,
@@ -108,13 +105,14 @@ def _serialize_step(
         # Roles bound on this step — drives the per-step «Заменить» buttons inside
         # the Alpine step card.
         "roles": _step_roles(step),
-        # Last successful / failed send of this step (formatted, "" when none) —
-        # seeds the «последняя отправка» badges next to the step's send buttons.
+        # Last successful / failed send of this step as ISO-8601 ("" when none) —
+        # the client formats it (window.formatSendTs) so the badge reads in the
+        # user's zone and matches a locally updated value after a send.
         "last_success_at": (
-            last.success_at.strftime(_SEND_TS_FMT) if last and last.success_at else ""
+            last.success_at.isoformat() if last and last.success_at else ""
         ),
         "last_error_at": (
-            last.error_at.strftime(_SEND_TS_FMT) if last and last.error_at else ""
+            last.error_at.isoformat() if last and last.error_at else ""
         ),
     }
 
@@ -709,16 +707,23 @@ async def _record_send(
     filled_id = _opt_uuid(payload.get("filled_template_id"))
     chain_id = _opt_uuid(payload.get("chain_id"))
     step_id = _opt_uuid(payload.get("chain_step_id"))
+
+    # Resolve source_kind from the client's intent *before* dropping stale ids —
+    # a chain-step send whose step was just deleted is still a chain-step send,
+    # not re-labelled «filled» because its FK survived. The id fallback only
+    # applies when the client sent no/invalid source_kind.
+    source_kind = str(payload.get("source_kind") or "")
+    if source_kind not in (SEND_SOURCE_FILLED, SEND_SOURCE_CHAIN_STEP):
+        source_kind = SEND_SOURCE_CHAIN_STEP if step_id is not None else SEND_SOURCE_FILLED
+
+    # Drop ids whose row no longer exists so the INSERT's FKs hold (snapshot
+    # columns keep the row meaningful regardless).
     if filled_id is not None and await session.get(FilledTemplate, filled_id) is None:
         filled_id = None
     if step_id is not None and await session.get(RequestChainStep, step_id) is None:
         step_id = None
     if chain_id is not None and await session.get(RequestChain, chain_id) is None:
         chain_id = None
-
-    source_kind = str(payload.get("source_kind") or "")
-    if source_kind not in (SEND_SOURCE_FILLED, SEND_SOURCE_CHAIN_STEP):
-        source_kind = SEND_SOURCE_CHAIN_STEP if step_id is not None else SEND_SOURCE_FILLED
 
     headers = payload.get("headers")
     record = MessageSend(
@@ -785,7 +790,9 @@ async def htmx_execute(
     # in the UI); absent/zero counts as success. Transport never fails for the
     # mock — the real send will set ok=False on network/HTTP errors instead.
     ok = status_code is None or status_code == 0
-
+    # The mock has no transport error to describe, so error_message stays empty
+    # even when ok=False (the reason is the non-zero statusCode in the body).
+    # TODO: the real sender should pass the network/HTTP error text here.
     await _record_send(
         session,
         payload,

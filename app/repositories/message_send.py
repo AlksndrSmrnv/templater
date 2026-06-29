@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import MessageSend
@@ -86,16 +86,16 @@ class MessageSendRepository:
         out: dict[uuid.UUID, LastSends] = {}
         if not ids:
             return out
-        # Newest first, so the first success/error seen per id is the latest.
+        # Aggregate in SQL — two timestamps per id, regardless of history size —
+        # rather than streaming every row back to reduce in Python. The partial
+        # indexes-friendly FILTER splits success vs. failure in one GROUP BY pass.
+        success_at = func.max(MessageSend.created_at).filter(MessageSend.ok.is_(True))
+        error_at = func.max(MessageSend.created_at).filter(MessageSend.ok.is_(False))
         stmt = (
-            select(column, MessageSend.ok, MessageSend.created_at)
+            select(column, success_at, error_at)
             .where(column.in_(list(ids)))
-            .order_by(MessageSend.created_at.desc())
+            .group_by(column)
         )
-        for owner_id, ok, created_at in (await self.session.execute(stmt)).all():
-            last = out.setdefault(owner_id, LastSends())
-            if ok and last.success_at is None:
-                last.success_at = created_at
-            elif not ok and last.error_at is None:
-                last.error_at = created_at
+        for owner_id, last_ok_at, last_err_at in (await self.session.execute(stmt)).all():
+            out[owner_id] = LastSends(success_at=last_ok_at, error_at=last_err_at)
         return out

@@ -5,11 +5,18 @@ Mirrors ``app/static/js/status_code.js`` (``window.extractStatusCode``) so the
 next to the send button: the first ``statusCode`` field (case-insensitive) found
 at any nesting depth, current object's keys before descending. Only real numbers
 and numeric strings count — booleans are NOT coerced. Returns the int or ``None``.
+
+Note: the column is ``Integer``, so a fractional value (``12.5``) is truncated to
+``int`` here. The JS side keeps it a float, so a non-integer statusCode (rare in
+practice — it's an enum-like field) can show ``12.5`` at the button but store
+``12``. Acceptable for an integer history column; revisit if fractional codes
+ever become real.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Any
 
@@ -22,7 +29,9 @@ def _coerce(value: Any) -> int | None:
     if isinstance(value, int):
         return value
     if isinstance(value, float):
-        return None if value != value else int(value)  # NaN guard
+        # Guards NaN and ±Infinity (json.loads parses 1e400 → inf): int(inf)
+        # would raise OverflowError, and this runs outside a try in the route.
+        return int(value) if math.isfinite(value) else None
     if isinstance(value, str) and _NUMERIC_RE.match(value.strip()):
         return int(float(value))
     return None

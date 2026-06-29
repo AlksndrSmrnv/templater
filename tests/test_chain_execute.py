@@ -120,12 +120,11 @@ async def test_execute_records_failure_on_nonzero_status_code() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_drops_stale_source_id_to_null() -> None:
+async def test_execute_drops_stale_source_id_but_keeps_source_kind() -> None:
     # A chain_step_id whose row no longer exists must not block the send — it is
-    # stored as NULL rather than tripping the FK.
+    # stored as NULL — but the send is still a chain-step send: the client's
+    # valid source_kind is preserved, not re-labelled «filled» by the id fallback.
     import uuid
-
-    from app.db.models import RequestChainStep
 
     stale = uuid.uuid4()
     session = _FakeSession(store={})  # nothing in the store → get() returns None
@@ -137,8 +136,7 @@ async def test_execute_drops_stale_source_id_to_null() -> None:
     await chains.htmx_execute(req, session)  # type: ignore[arg-type]
     rec = session.sends[0]
     assert rec.chain_step_id is None
-    # Sanity: the model the route probed for existence is the step model.
-    assert RequestChainStep is not None
+    assert rec.source_kind == "chain_step"
 
 
 @pytest.mark.asyncio

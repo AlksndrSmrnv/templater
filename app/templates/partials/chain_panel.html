@@ -136,12 +136,12 @@
                               :class="step.statusCode === 0 ? 'is-ok' : 'is-err'"
                               x-text="'statusCode = ' + step.statusCode"></span>
                         <span class="send-last is-ok" x-show="step.lastSuccessAt" x-cloak
-                              :title="'Последняя успешная отправка: ' + step.lastSuccessAt">
-                            <iconify-icon icon="lucide:check"></iconify-icon><span x-text="step.lastSuccessAt"></span>
+                              :title="'Последняя успешная отправка: ' + window.formatSendTs(step.lastSuccessAt)">
+                            <iconify-icon icon="lucide:check"></iconify-icon><span x-text="window.formatSendTs(step.lastSuccessAt)"></span>
                         </span>
                         <span class="send-last is-err" x-show="step.lastErrorAt" x-cloak
-                              :title="'Последняя неуспешная отправка: ' + step.lastErrorAt">
-                            <iconify-icon icon="lucide:x"></iconify-icon><span x-text="step.lastErrorAt"></span>
+                              :title="'Последняя неуспешная отправка: ' + window.formatSendTs(step.lastErrorAt)">
+                            <iconify-icon icon="lucide:x"></iconify-icon><span x-text="window.formatSendTs(step.lastErrorAt)"></span>
                         </span>
                         <button class="btn small" type="button" title="Выше" @click="moveStep(idx, -1)" :disabled="idx === 0"><iconify-icon icon="lucide:chevron-up"></iconify-icon></button>
                         <button class="btn small" type="button" title="Ниже" @click="moveStep(idx, 1)" :disabled="idx === steps.length - 1"><iconify-icon icon="lucide:chevron-down"></iconify-icon></button>
