@@ -503,12 +503,15 @@ window.chainPanel = function (config) {
             } else {
                 this.chainStatus = null;
             }
-            // Record this run on the chain-level «последний запуск» badge, unless
-            // no step actually ran (e.g. an empty chain). Success = no execution
-            // error and no non-zero statusCode among the run steps (`failed`).
-            // Mirrors the per-step ISO update; history is the source of truth.
-            if (ranCount > 0) {
-                if (failed) this.chainLastErrorAt = window.nowSendTs();
+            // Advance the chain-level «последний запуск» badge only for steps
+            // that actually reached the server (have a response) — a step aborted
+            // before fetch (e.g. «Не разрешены ссылки») writes no message_sends
+            // row and leaves its own badge untouched, so the chain badge must not
+            // move either. Among sent steps, a non-zero statusCode = failure.
+            const sent = ran.filter((s) => s.response !== null);
+            if (sent.length > 0) {
+                const failedSent = sent.some((s) => s.statusCode !== null && s.statusCode !== 0);
+                if (failedSent) this.chainLastErrorAt = window.nowSendTs();
                 else this.chainLastSuccessAt = window.nowSendTs();
             }
         },
