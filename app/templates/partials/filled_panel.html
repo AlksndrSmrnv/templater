@@ -2,6 +2,27 @@
    (#filled-panel). The header carries the actions; delete swaps in the
    empty-state and refreshes the tree. #}
 {% set standalone = standalone | default(false) %}
+
+{# «Отправить» + its statusCode and «последняя отправка» badges. Lives in the
+   header actions in the normal view (next to «История отправок»); falls back to
+   the bottom action row in standalone mode, where the header is hidden. #}
+{% macro send_controls() %}
+<button class="btn primary" type="button" @click="sendOnce()" :disabled="sending">
+    <iconify-icon icon="lucide:send"></iconify-icon>
+    <span x-text="sending ? 'Отправка…' : 'Отправить'"></span>
+</button>
+<span class="send-status-code" x-show="statusCode !== null" x-cloak
+      :class="statusCode === 0 ? 'is-ok' : 'is-err'"
+      x-text="'statusCode = ' + statusCode"></span>
+<span class="send-last is-ok" x-show="lastSuccessAt" x-cloak
+      :title="'Последняя успешная отправка: ' + window.formatSendTs(lastSuccessAt)">
+    <iconify-icon icon="lucide:check"></iconify-icon><span x-text="window.formatSendTs(lastSuccessAt)"></span>
+</span>
+<span class="send-last is-err" x-show="lastErrorAt" x-cloak
+      :title="'Последняя неуспешная отправка: ' + window.formatSendTs(lastErrorAt)">
+    <iconify-icon icon="lucide:x"></iconify-icon><span x-text="window.formatSendTs(lastErrorAt)"></span>
+</span>
+{% endmacro %}
 <div id="filled-panel-body" x-data="{
     /*
      * Copy the *original* filled body from /raw, NOT textContent of the
@@ -39,6 +60,7 @@
     // loaded on every page that renders this panel.
     exampleResponse() {
         return JSON.stringify({
+            statusCode: 0,
             status: 'SUCCESS',
             transferId: 'TRF-' + Math.floor(100000 + Math.random() * 900000),
             processedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
@@ -99,6 +121,7 @@
                 <a class="btn" href="/templater/templates?template={{ ft.message_template_id }}">К исходному шаблону</a>
             {% endif %}
             <a class="btn" href="/templater/filled-templates/{{ ft.id }}/raw?download=1"><iconify-icon icon="lucide:download"></iconify-icon> Скачать</a>
+            {{ send_controls() }}
             <button class="btn" type="button"
                     hx-get="/templater/send-history-htmx/filled/{{ ft.id }}"
                     hx-target="#send-history-content" hx-swap="innerHTML"
@@ -210,21 +233,9 @@
 
     <div class="form-actions" style="margin-top:18px;">
         <button class="btn primary" type="button" @click="copy()"><iconify-icon icon="lucide:clipboard-copy"></iconify-icon> Копировать</button>
-        <button class="btn" type="button" @click="sendOnce()" :disabled="sending">
-            <iconify-icon icon="lucide:send"></iconify-icon>
-            <span x-text="sending ? 'Отправка…' : 'Отправить'"></span>
-        </button>
-        <span class="send-status-code" x-show="statusCode !== null" x-cloak
-              :class="statusCode === 0 ? 'is-ok' : 'is-err'"
-              x-text="'statusCode = ' + statusCode"></span>
-        <span class="send-last is-ok" x-show="lastSuccessAt" x-cloak
-              :title="'Последняя успешная отправка: ' + window.formatSendTs(lastSuccessAt)">
-            <iconify-icon icon="lucide:check"></iconify-icon><span x-text="window.formatSendTs(lastSuccessAt)"></span>
-        </span>
-        <span class="send-last is-err" x-show="lastErrorAt" x-cloak
-              :title="'Последняя неуспешная отправка: ' + window.formatSendTs(lastErrorAt)">
-            <iconify-icon icon="lucide:x"></iconify-icon><span x-text="window.formatSendTs(lastErrorAt)"></span>
-        </span>
+        {# Normal view shows «Отправить» in the header; standalone has no header,
+           so fall back to it here. #}
+        {% if standalone %}{{ send_controls() }}{% endif %}
         <div class="send-picker" @click.outside="chainMenuOpen = false" style="position:relative;">
             <button class="btn" type="button" @click="chainMenuOpen = !chainMenuOpen">
                 <iconify-icon icon="lucide:workflow"></iconify-icon> В цепочку

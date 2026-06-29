@@ -94,6 +94,17 @@ class RequestChainRepository:
         ).where(RequestChain.folder_path == folder_path)
         return int((await self.session.execute(stmt)).scalar_one()) + 1
 
+    async def list_by_folder(self, folder_path: list[str]) -> list[RequestChain]:
+        """Chains living exactly in ``folder_path`` (steps not loaded) — the
+        sibling set for drag-and-drop renumbering, mirroring the filled repo."""
+
+        stmt = (
+            select(RequestChain)
+            .where(RequestChain.folder_path == folder_path)
+            .order_by(RequestChain.display_order, RequestChain.created_at)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def step_counts(self) -> dict[uuid.UUID, int]:
         """``{chain_id: step_count}`` for every chain with at least one step —
         lets the tree show a «N шагов» badge without lazy-loading ``.steps``."""

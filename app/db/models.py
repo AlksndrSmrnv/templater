@@ -521,6 +521,15 @@ class RequestChain(Base):
     group_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     group_color_snapshot: Mapped[str] = mapped_column(String(16), nullable=False, default="")
 
+    # Project the chain belongs to, mirroring the group invariant: every step
+    # must come from the same project. The first step sets this (from the filled
+    # template's project snapshot — there is no project_id to FK), a step from a
+    # different project is rejected, and removing the last step clears it. Stored
+    # as a name/color snapshot (like FilledTemplate's) so the badge survives the
+    # project being renamed/deleted; "" = no project.
+    project_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    project_color_snapshot: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+
     steps: Mapped[list[RequestChainStep]] = relationship(
         back_populates="chain",
         order_by="RequestChainStep.position",

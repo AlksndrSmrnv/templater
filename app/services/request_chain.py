@@ -56,6 +56,14 @@ _CROSS_GROUP_MSG = (
     "это раскрыло бы данные одной группы держателям другой."
 )
 
+# Shown when a step's project differs from the chain's. Unlike groups, the rule
+# is strict: a chain is locked to the project of its first step (including «no
+# project»), so every later step must come from that same project.
+_CROSS_PROJECT_MSG = (
+    "Все шаги цепочки должны быть из одного проекта — этот шаблон из другого "
+    "проекта."
+)
+
 
 def _leaf_exists(fmt: str, body: str, location: str) -> bool:
     """Whether a *replaceable* leaf at ``location`` is present in ``body``.
@@ -130,6 +138,7 @@ def default_mock_response(now: datetime | None = None) -> str:
         moment = moment.replace(tzinfo=UTC)
     return json.dumps(
         {
+            "statusCode": 0,
             "status": "SUCCESS",
             "transferId": f"TRF-{random.randint(100000, 999999)}",
             "processedAt": moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -199,6 +208,50 @@ class RequestChainService:
         # Steps cascade (FK ON DELETE CASCADE + relationship cascade).
         await self.repo.delete(chain)
 
+    async def move_chain(
+        self,
+        chain_id: uuid.UUID,
+        target_folder_path: list[str],
+        order: list[uuid.UUID],
+        *,
+        visible_group_ids: set[uuid.UUID] | None = None,
+    ) -> None:
+        """Move a chain into ``target_folder_path`` and renumber ``display_order``
+        across the target folder's chain siblings.
+
+        Mirrors ``FilledTemplateService.move_filled``: chains have their own
+        ``display_order`` sequence (independent of filled templates — in the tree
+        they render after the templates of a folder), so only chain siblings are
+        renumbered. ``order`` is the ids the client sees (may be a filtered
+        subset); visible chains are re-sequenced across the slots they occupy and
+        the whole folder is renumbered 0..n-1, so a partial payload can't produce
+        duplicate orders. Unknown ids are ignored.
+        """
+
+        chain = await self.get(chain_id, visible_group_ids=visible_group_ids)
+        target_folder = _norm_path(target_folder_path)
+        chain.folder_path = target_folder
+        # autoflush=False — flush so the sibling query sees the moved chain in its
+        # new folder (else a stale display_order could collide on renumber).
+        await self.session.flush()
+
+        siblings = await self.repo.list_by_folder(target_folder)
+        full = sorted(siblings, key=lambda row: (row.display_order, row.created_at))
+        by_id = {row.id: row for row in full}
+        payload: list[uuid.UUID] = []
+        payload_ids: set[uuid.UUID] = set()
+        for raw_id in order:
+            if raw_id in by_id and raw_id not in payload_ids:
+                payload.append(raw_id)
+                payload_ids.add(raw_id)
+        payload_iter = iter(payload)
+        resequenced = (
+            by_id[next(payload_iter)] if row.id in payload_ids else row for row in full
+        )
+        for position, row in enumerate(resequenced):
+            row.display_order = position
+        await self.session.flush()
+
     # ---- steps ----
 
     async def add_step(
@@ -243,6 +296,19 @@ class RequestChainService:
                 chain.group_color_snapshot = getattr(filled, "group_color_snapshot", "") or ""
             elif chain.group_id != filled_group:
                 raise ValidationFailed(_CROSS_GROUP_MSG)
+
+        # Project invariant (strict): the first step locks the chain to its
+        # project (by name snapshot — there is no project_id); every later step
+        # must match it, «no project» («") included. ``chain.steps`` is the
+        # already-loaded collection (the new step isn't added yet), so a
+        # non-empty chain is one that already has the lock set.
+        filled_project = getattr(filled, "project_name_snapshot", "") or ""
+        if chain.steps:
+            if filled_project != (chain.project_name_snapshot or ""):
+                raise ValidationFailed(_CROSS_PROJECT_MSG)
+        else:
+            chain.project_name_snapshot = filled_project
+            chain.project_color_snapshot = getattr(filled, "project_color_snapshot", "") or ""
 
         step = RequestChainStep(
             chain_id=chain.id,
@@ -298,12 +364,19 @@ class RequestChainService:
         *,
         visible_group_ids: set[uuid.UUID] | None = None,
     ) -> None:
+        chain = await self.get(chain_id, visible_group_ids=visible_group_ids)
         step = await self._get_step(chain_id, step_id, visible_group_ids=visible_group_ids)
         await self.repo.delete_step(step)
         # Renumber remaining steps so positions stay 0..n-1 (no gaps).
         await self.session.flush()
-        for position, remaining in enumerate(await self.repo.list_steps(chain_id)):
-            remaining.position = position
+        remaining = await self.repo.list_steps(chain_id)
+        for position, row in enumerate(remaining):
+            row.position = position
+        # Last step gone → drop the project lock so the now-empty chain can be
+        # re-seeded with any project on the next add.
+        if not remaining:
+            chain.project_name_snapshot = ""
+            chain.project_color_snapshot = ""
 
     async def bind_field(
         self,

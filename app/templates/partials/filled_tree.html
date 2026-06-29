@@ -71,15 +71,19 @@
     {% endfor %}
     {% for ch in node.chains | default([]) %}
     <li class="tree-chain"
+        data-id="{{ ch.id }}"
+        data-kind="chain"
         :class="{ active: selected === '{{ ch.id }}' }"
         @click="selected = '{{ ch.id }}'"
         hx-get="/templater/filled-templates-htmx/chains/{{ ch.id }}/panel"
         hx-target="#filled-panel"
         hx-swap="innerHTML"
         x-data="{ editing: false }">
+        <span class="tree-drag-handle" title="Перетащите цепочку" @click.stop><iconify-icon icon="lucide:grip-vertical"></iconify-icon></span>
         <span class="tree-chain-icon" title="Цепочка запросов"><iconify-icon icon="lucide:workflow"></iconify-icon></span>
         <span class="tree-name" x-show="!editing" title="{{ ch.name }}">{{ ch.name }}</span>
         <span class="tree-chain-count" title="Шагов в цепочке">{{ ch.step_count }}</span>
+        {% if ch.project_name_snapshot %}<span class="project-badge" title="Проект: {{ ch.project_name_snapshot }}"><span class="project-dot" style="background: {{ ch.project_color_snapshot or '#9E9E9E' }}"></span>{{ ch.project_name_snapshot }}</span>{% endif %}
         <form class="tree-inline-form" x-show="editing" x-cloak @click.stop
               hx-post="/templater/filled-templates-htmx/chains/{{ ch.id }}/rename"
               hx-include=".tree-search"
