@@ -55,9 +55,19 @@ class _FakeChainRepo:
         orders = [c.display_order for c in self.chains if list(c.folder_path or []) == list(folder_path)]
         return (max(orders) + 1) if orders else 0
 
+    async def list_by_folder(self, folder_path: Any) -> Any:
+        return sorted(
+            (c for c in self.chains if list(c.folder_path or []) == list(folder_path)),
+            key=lambda c: (c.display_order, c.created_at),
+        )
+
     async def add(self, chain: Any) -> Any:
         if getattr(chain, "id", None) is None:
             chain.id = uuid.uuid4()
+        # Real chains carry a server-default created_at; the in-memory model
+        # leaves it None, so stamp one (move sorts siblings by it).
+        if getattr(chain, "created_at", None) is None:
+            chain.created_at = self._tick()
         self.chains.append(chain)
         return chain
 
@@ -111,7 +121,12 @@ class _FakeSettingsRepo:
 
 
 def _filled(
-    *, name: str = "FT", group_id: uuid.UUID | None = None, group_name: str = ""
+    *,
+    name: str = "FT",
+    group_id: uuid.UUID | None = None,
+    group_name: str = "",
+    project_name: str = "",
+    project_color: str = "",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
@@ -126,6 +141,8 @@ def _filled(
         group_id=group_id,
         group_name_snapshot=group_name,
         group_color_snapshot="#fff",
+        project_name_snapshot=project_name,
+        project_color_snapshot=project_color,
     )
 
 
@@ -229,6 +246,110 @@ async def test_add_step_inherits_group_then_rejects_conflict() -> None:
 
     with pytest.raises(ValidationFailed):
         await svc.add_step(chain.id, private2.id)  # different group
+
+
+@pytest.mark.asyncio
+async def test_add_step_locks_project_then_rejects_other() -> None:
+    a1 = _filled(name="a1", project_name="Платежи", project_color="#3366ff")
+    a2 = _filled(name="a2", project_name="Платежи", project_color="#3366ff")
+    b1 = _filled(name="b1", project_name="Выписки", project_color="#22aa22")
+    svc = _service([a1, a2, b1])
+    chain = await svc.create_chain([], "Цепочка")
+
+    await svc.add_step(chain.id, a1.id)
+    assert chain.project_name_snapshot == "Платежи"
+    assert chain.project_color_snapshot == "#3366ff"
+
+    await svc.add_step(chain.id, a2.id)  # same project — ok
+
+    with pytest.raises(ValidationFailed):
+        await svc.add_step(chain.id, b1.id)  # different project
+
+
+@pytest.mark.asyncio
+async def test_add_step_no_project_and_projected_cannot_mix() -> None:
+    none1 = _filled(name="n1")  # project_name "" → no project
+    proj = _filled(name="p1", project_name="Платежи")
+    svc = _service([none1, proj])
+    chain = await svc.create_chain([], "Цепочка")
+
+    await svc.add_step(chain.id, none1.id)
+    assert chain.project_name_snapshot == ""  # locked to «no project»
+
+    with pytest.raises(ValidationFailed):
+        await svc.add_step(chain.id, proj.id)  # projected can't join a no-project chain
+
+
+@pytest.mark.asyncio
+async def test_remove_last_step_clears_project_lock() -> None:
+    a = _filled(name="a", project_name="Платежи", project_color="#3366ff")
+    b = _filled(name="b", project_name="Выписки", project_color="#22aa22")
+    svc = _service([a, b])
+    chain = await svc.create_chain([], "Цепочка")
+
+    step = await svc.add_step(chain.id, a.id)
+    assert chain.project_name_snapshot == "Платежи"
+
+    await svc.remove_step(chain.id, step.id)
+    assert chain.project_name_snapshot == ""  # empty chain → lock dropped
+
+    # A different project can now seed the (empty) chain.
+    await svc.add_step(chain.id, b.id)
+    assert chain.project_name_snapshot == "Выписки"
+
+
+# ---- move_chain (mirrors FilledTemplateService.move_filled) --------------------
+
+
+def _chain_ns(name: str, folder: list[str], order: int, created: datetime) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(), name=name, folder_path=folder,
+        display_order=order, created_at=created, steps=[],
+    )
+
+
+@pytest.mark.asyncio
+async def test_move_chain_sets_folder_and_reorders_siblings() -> None:
+    svc = _service()
+    c1 = _chain_ns("c1", ["A"], 0, datetime(2026, 6, 25, 12, 0))
+    c2 = _chain_ns("c2", ["B"], 0, datetime(2026, 6, 25, 12, 1))
+    svc.repo.chains.extend([c1, c2])  # type: ignore[attr-defined]
+
+    await svc.move_chain(c1.id, ["B"], [c2.id, c1.id])
+    assert c1.folder_path == ["B"]
+    assert c2.display_order == 0 and c1.display_order == 1
+
+
+@pytest.mark.asyncio
+async def test_move_chain_ignores_non_sibling_ids_in_order() -> None:
+    svc = _service()
+    c1 = _chain_ns("c1", ["A"], 0, datetime(2026, 6, 25, 12, 0))
+    elsewhere = _chain_ns("elsewhere", ["B"], 7, datetime(2026, 6, 25, 12, 1))
+    svc.repo.chains.extend([c1, elsewhere])  # type: ignore[attr-defined]
+
+    # A crafted order including a chain from another folder must not renumber it.
+    await svc.move_chain(c1.id, ["A"], [c1.id, elsewhere.id])
+    assert c1.display_order == 0
+    assert elsewhere.display_order == 7  # untouched
+
+
+@pytest.mark.asyncio
+async def test_move_chain_keeps_hidden_siblings_without_duplicate_order() -> None:
+    # Search/truncation can hide part of a folder: the DnD payload then covers
+    # only visible chains. Hidden siblings keep their slots and the folder ends
+    # up renumbered without duplicates.
+    svc = _service()
+    hidden = _chain_ns("hidden", ["F"], 0, datetime(2026, 6, 25, 12, 0))
+    v1 = _chain_ns("v1", ["F"], 1, datetime(2026, 6, 25, 12, 1))
+    v2 = _chain_ns("v2", ["F"], 2, datetime(2026, 6, 25, 12, 2))
+    svc.repo.chains.extend([hidden, v1, v2])  # type: ignore[attr-defined]
+
+    # The user sees only v1/v2 and drags v2 above v1.
+    await svc.move_chain(v2.id, ["F"], [v2.id, v1.id])
+    assert hidden.display_order == 0  # hidden slot preserved
+    assert v2.display_order == 1 and v1.display_order == 2
+    orders = [hidden.display_order, v1.display_order, v2.display_order]
+    assert len(set(orders)) == len(orders), "display_order must stay unique"
 
 
 @pytest.mark.asyncio

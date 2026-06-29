@@ -167,3 +167,5 @@ def test_default_mock_response_is_utc_z_json() -> None:
     assert data["status"] == "SUCCESS"
     assert data["processedAt"].endswith("Z")
     assert "transferId" in data
+    # statusCode 0 so the green «statusCode = 0» indicator shows by default.
+    assert data["statusCode"] == 0

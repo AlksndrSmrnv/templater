@@ -63,3 +63,22 @@ async def test_last_for_empty_ids_skips_query() -> None:
     out = await repo.last_for_chain_steps([])
     assert out == {}
     assert session.executed is False
+
+
+@pytest.mark.asyncio
+async def test_last_for_chain_returns_aggregate_for_the_chain() -> None:
+    chain = uuid.uuid4()
+    rows = [(chain, datetime(2026, 6, 29, 14, 0, 0), datetime(2026, 6, 29, 13, 0, 0))]
+    repo = MessageSendRepository(_FakeSession(rows))  # type: ignore[arg-type]
+    last = await repo.last_for_chain(chain)
+    assert last.success_at == datetime(2026, 6, 29, 14, 0, 0)
+    assert last.error_at == datetime(2026, 6, 29, 13, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_last_for_chain_no_history_is_empty() -> None:
+    # No rows → both timestamps None (chain never run).
+    repo = MessageSendRepository(_FakeSession([]))  # type: ignore[arg-type]
+    last = await repo.last_for_chain(uuid.uuid4())
+    assert last.success_at is None
+    assert last.error_at is None

@@ -80,6 +80,13 @@ class MessageSendRepository:
 
         return await self._last_by(MessageSend.chain_step_id, step_ids)
 
+    async def last_for_chain(self, chain_id: uuid.UUID) -> LastSends:
+        """Latest success/error across *all* sends of a chain (any step) —
+        drives the «последний запуск» badge next to «Запустить всё»."""
+
+        out = await self._last_by(MessageSend.chain_id, [chain_id])
+        return out.get(chain_id, LastSends())
+
     async def _last_by(
         self, column: Any, ids: Sequence[uuid.UUID]
     ) -> dict[uuid.UUID, LastSends]:

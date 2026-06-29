@@ -111,7 +111,10 @@
                 instances.push(Sortable.create(ul, {
                     group: 'filled-tree',
                     handle: '.tree-drag-handle',
-                    draggable: '.tree-item',
+                    // Both filled templates and chains are draggable; they keep
+                    // separate display_order sequences, so on drop we post the
+                    // sibling order of the dragged item's own kind only.
+                    draggable: '.tree-item, .tree-chain',
                     animation: 150,
                     fallbackOnBody: true,
                     ghostClass: 'sortable-ghost',
@@ -121,19 +124,24 @@
                         const id = item && item.dataset ? item.dataset.id : '';
                         const target = evt.to;
                         if (!id || !target) return;
-                        const order = Array.from(
-                            target.querySelectorAll(':scope > li.tree-item')
-                        ).map((li) => li.dataset.id).filter(Boolean);
+                        const isChain = item.dataset.kind === 'chain';
+                        const sel = isChain ? ':scope > li.tree-chain' : ':scope > li.tree-item';
+                        const order = Array.from(target.querySelectorAll(sel))
+                            .map((li) => li.dataset.id).filter(Boolean);
                         const searchInput = document.querySelector('.tree-search');
-                        htmx.ajax('POST', '/templater/filled-templates-htmx/move', {
-                            values: {
-                                filled_id: id,
-                                folder: target.dataset.folderPath || '[]',
-                                order: order.join(','),
-                                // Keep the current filter so the refreshed
-                                // tree shows what the user was looking at.
-                                search: searchInput ? searchInput.value : '',
-                            },
+                        const url = isChain
+                            ? '/templater/filled-templates-htmx/chains/move'
+                            : '/templater/filled-templates-htmx/move';
+                        const values = {
+                            folder: target.dataset.folderPath || '[]',
+                            order: order.join(','),
+                            // Keep the current filter so the refreshed tree shows
+                            // what the user was looking at.
+                            search: searchInput ? searchInput.value : '',
+                        };
+                        values[isChain ? 'chain_id' : 'filled_id'] = id;
+                        htmx.ajax('POST', url, {
+                            values: values,
                             target: '#filled-tree',
                             swap: 'innerHTML',
                         });

@@ -42,6 +42,14 @@ window.chainPanel = function (config) {
         running: false,
         // Aggregate statusCode of the last «Запустить всё» run (null = hide).
         chainStatus: null,
+        // Chain-level «последний запуск» badges (ISO; server-seeded, updated
+        // locally after sendAll). Rendered via window.formatSendTs.
+        chainLastSuccessAt: config.chainLastSuccessAt || '',
+        chainLastErrorAt: config.chainLastErrorAt || '',
+        // Project the chain is locked to ("" = no project / unset). Once the
+        // chain has steps, «Добавить шаг» hides templates from other projects
+        // (the server also rejects a cross-project add).
+        chainProject: config.chainProject || '',
         // Field-binding picker, anchored to the clicked body field. `paths` is
         // the source step's full leaf list; `filtered` is `paths` narrowed by
         // `query` (recomputed only on change, not per render).
@@ -75,7 +83,11 @@ window.chainPanel = function (config) {
         },
 
         // ---------- picker (client-side filter of server-rendered options) ----------
-        matchPicker(name) {
+        matchPicker(name, project) {
+            // Once the chain has steps it's locked to one project — hide other
+            // projects (empty project must match empty too). An empty chain
+            // accepts anything; the first step sets the lock.
+            if (this.steps.length && (project || '') !== this.chainProject) return false;
             const q = this.pickerSearch.trim().toLowerCase();
             return !q || String(name || '').toLowerCase().includes(q);
         },
@@ -406,6 +418,11 @@ window.chainPanel = function (config) {
             step.error = '';
             step.sending = true;
             step.statusCode = null;
+            // Clear any prior run's response up front: it's a stale signal for
+            // «did this run reach the server» (sendAll's chain-badge check reads
+            // s.response), and it must not linger next to a fresh error in the
+            // step card (chain_panel.html shows response and error together).
+            step.response = null;
             const res = this.resolveBody(idx);
             step.resolvedRequestHtml = res.html;
             step.resolvedRefs = res.refs > 0;
@@ -490,6 +507,17 @@ window.chainPanel = function (config) {
                 this.chainStatus = { ok: true, code: 0, title: '' };
             } else {
                 this.chainStatus = null;
+            }
+            // Advance the chain-level «последний запуск» badge only for steps
+            // that actually reached the server (have a response) — a step aborted
+            // before fetch (e.g. «Не разрешены ссылки») writes no message_sends
+            // row and leaves its own badge untouched, so the chain badge must not
+            // move either. Among sent steps, a non-zero statusCode = failure.
+            const sent = ran.filter((s) => s.response !== null);
+            if (sent.length > 0) {
+                const failedSent = sent.some((s) => s.statusCode !== null && s.statusCode !== 0);
+                if (failedSent) this.chainLastErrorAt = window.nowSendTs();
+                else this.chainLastSuccessAt = window.nowSendTs();
             }
         },
         prettyJson(s) {

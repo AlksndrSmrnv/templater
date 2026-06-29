@@ -257,9 +257,10 @@ async def _panel_context(
         for row in await FilledTemplateRepository(session).get_many(filled_ids):
             tpl_by_filled[row.id] = row.message_template_id
     # Latest success/failure per step, for the «последняя отправка» badges.
-    last_by_step = await MessageSendRepository(session).last_for_chain_steps(
-        [s.id for s in chain.steps]
-    )
+    sends = MessageSendRepository(session)
+    last_by_step = await sends.last_for_chain_steps([s.id for s in chain.steps])
+    # Chain-level latest run (across all steps), for the badge by «Запустить всё».
+    chain_last = await sends.last_for_chain(chain.id)
     data = _serialize_chain(chain, tpl_by_filled, last_by_step)
     manage = await _manage_context(session, chain, tpl_by_filled)
     # Filled templates the «Добавить шаг» picker can choose from (id/name/method).
@@ -279,6 +280,10 @@ async def _panel_context(
         "chain_data": data,
         "available": available,
         "execute_url": "/templater/send-htmx/execute",
+        # ISO timestamps for the chain-level «последний запуск» badges; the
+        # client formats them (window.formatSendTs) like the per-step ones.
+        "chain_last_success_at": chain_last.success_at.isoformat() if chain_last.success_at else "",
+        "chain_last_error_at": chain_last.error_at.isoformat() if chain_last.error_at else "",
         **manage,
     }
 
@@ -330,6 +335,46 @@ async def htmx_create_chain(
         request, templates, session, search=search,
         headers={"HX-Trigger": toast_header(f"Цепочка «{name.strip()}» создана")},
         visible_group_ids=group_ids,
+    )
+
+
+@router.post("/filled-templates-htmx/chains/move")
+async def htmx_move_chain(
+    request: Request,
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
+) -> Response:
+    """Drag-and-drop move/reorder of a chain in the folder tree (mirrors the
+    filled-template ``/move``). ``order`` is the visible chain ids in the target
+    folder; chains renumber independently of filled templates."""
+
+    form = await request.form()
+    search = form_str(form, "search")
+    try:
+        chain_id = uuid.UUID(form_str(form, "chain_id"))
+    except ValueError:
+        return await _tree_response(
+            request, templates, session, search=search,
+            headers={"HX-Trigger": toast_header("Некорректный запрос", toast_type="error")},
+            visible_group_ids=group_ids,
+        )
+    folder = parse_json_path(form_str(form, "folder"))
+    order = parse_uuid_list(form_str(form, "order"))
+    try:
+        await RequestChainService(session).move_chain(
+            chain_id, folder, order, visible_group_ids=group_ids
+        )
+        await commit_or_409(session)
+    except DomainError as exc:
+        await session.rollback()
+        return await _tree_response(
+            request, templates, session, search=search,
+            headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
+            visible_group_ids=group_ids,
+        )
+    return await _tree_response(
+        request, templates, session, search=search, visible_group_ids=group_ids
     )
 
 
