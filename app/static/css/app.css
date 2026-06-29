@@ -959,6 +959,9 @@ li.tree-item.sortable-chosen { background: var(--surface-2); }
 .panel-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .panel-title h2 { margin: 0; font-size: var(--fs-lg); overflow-wrap: anywhere; }
 .panel-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; flex-shrink: 0; }
+/* «Удалить» sits apart on the far right of the header actions (both the filled
+   template and chain panels), away from the functional buttons. */
+.panel-actions .btn.danger { margin-left: auto; }
 .panel-description { margin: 8px 0 0; }
 .panel-url {
     margin-top: 12px; padding: 8px 10px; background: var(--surface-2);

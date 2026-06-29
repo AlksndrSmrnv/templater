@@ -7,7 +7,10 @@
      x-data="chainPanel({
         chainId: {{ chain_data.id | tojson | forceescape }},
         executeUrl: {{ execute_url | tojson | forceescape }},
-        steps: {{ chain_data.steps | tojson | forceescape }}
+        steps: {{ chain_data.steps | tojson | forceescape }},
+        chainLastSuccessAt: {{ (chain_last_success_at | default('')) | tojson | forceescape }},
+        chainLastErrorAt: {{ (chain_last_error_at | default('')) | tojson | forceescape }},
+        chainProject: {{ (chain.project_name_snapshot | default('') or '') | tojson | forceescape }}
      })">
 
     {% if not standalone %}
@@ -16,6 +19,9 @@
             <span class="tree-chain-icon"><iconify-icon icon="lucide:workflow"></iconify-icon></span>
             <h2 title="{{ chain.name }}">{{ chain.name }}</h2>
             <span class="muted">цепочка запросов</span>
+            {% if chain.project_name_snapshot %}
+            <span class="project-badge" title="Проект: {{ chain.project_name_snapshot }}"><span class="project-dot" style="background: {{ chain.project_color_snapshot or '#9E9E9E' }}"></span>{{ chain.project_name_snapshot }}</span>
+            {% endif %}
         </div>
         <div class="panel-actions">
             <button class="btn danger" type="button"
@@ -35,7 +41,7 @@
                 <input class="send-picker-search" type="search" placeholder="Поиск шаблона…" x-model="pickerSearch">
                 <ul>
                     {% for a in available | default([]) %}
-                    <li x-show="matchPicker({{ a.name | tojson | forceescape }})">
+                    <li x-show="matchPicker({{ a.name | tojson | forceescape }}, {{ (a.project_name or '') | tojson | forceescape }})">
                         <button type="button" @click="pickerOpen = false"
                                 hx-post="/templater/filled-templates-htmx/chains/{{ chain.id }}/steps"
                                 hx-vals='{{ {"filled_id": a.id, "standalone": ("1" if standalone else "0")} | tojson | forceescape }}'
@@ -65,6 +71,14 @@
               :class="chainStatus && chainStatus.ok ? 'is-ok' : 'is-err'"
               :title="chainStatus ? chainStatus.title : ''"
               x-text="chainStatus && chainStatus.code !== null ? ('statusCode = ' + chainStatus.code) : 'ошибка'"></span>
+        <span class="send-last is-ok" x-show="chainLastSuccessAt" x-cloak
+              :title="'Последний успешный запуск: ' + window.formatSendTs(chainLastSuccessAt)">
+            <iconify-icon icon="lucide:check"></iconify-icon><span x-text="window.formatSendTs(chainLastSuccessAt)"></span>
+        </span>
+        <span class="send-last is-err" x-show="chainLastErrorAt" x-cloak
+              :title="'Последний неуспешный запуск: ' + window.formatSendTs(chainLastErrorAt)">
+            <iconify-icon icon="lucide:x"></iconify-icon><span x-text="window.formatSendTs(chainLastErrorAt)"></span>
+        </span>
     </div>
 
     {# «Клиенты всей цепочки» — replace a role's client across every step that

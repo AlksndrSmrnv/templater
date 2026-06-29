@@ -111,7 +111,12 @@ class _FakeSettingsRepo:
 
 
 def _filled(
-    *, name: str = "FT", group_id: uuid.UUID | None = None, group_name: str = ""
+    *,
+    name: str = "FT",
+    group_id: uuid.UUID | None = None,
+    group_name: str = "",
+    project_name: str = "",
+    project_color: str = "",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
@@ -126,6 +131,8 @@ def _filled(
         group_id=group_id,
         group_name_snapshot=group_name,
         group_color_snapshot="#fff",
+        project_name_snapshot=project_name,
+        project_color_snapshot=project_color,
     )
 
 
@@ -229,6 +236,56 @@ async def test_add_step_inherits_group_then_rejects_conflict() -> None:
 
     with pytest.raises(ValidationFailed):
         await svc.add_step(chain.id, private2.id)  # different group
+
+
+@pytest.mark.asyncio
+async def test_add_step_locks_project_then_rejects_other() -> None:
+    a1 = _filled(name="a1", project_name="Платежи", project_color="#3366ff")
+    a2 = _filled(name="a2", project_name="Платежи", project_color="#3366ff")
+    b1 = _filled(name="b1", project_name="Выписки", project_color="#22aa22")
+    svc = _service([a1, a2, b1])
+    chain = await svc.create_chain([], "Цепочка")
+
+    await svc.add_step(chain.id, a1.id)
+    assert chain.project_name_snapshot == "Платежи"
+    assert chain.project_color_snapshot == "#3366ff"
+
+    await svc.add_step(chain.id, a2.id)  # same project — ok
+
+    with pytest.raises(ValidationFailed):
+        await svc.add_step(chain.id, b1.id)  # different project
+
+
+@pytest.mark.asyncio
+async def test_add_step_no_project_and_projected_cannot_mix() -> None:
+    none1 = _filled(name="n1")  # project_name "" → no project
+    proj = _filled(name="p1", project_name="Платежи")
+    svc = _service([none1, proj])
+    chain = await svc.create_chain([], "Цепочка")
+
+    await svc.add_step(chain.id, none1.id)
+    assert chain.project_name_snapshot == ""  # locked to «no project»
+
+    with pytest.raises(ValidationFailed):
+        await svc.add_step(chain.id, proj.id)  # projected can't join a no-project chain
+
+
+@pytest.mark.asyncio
+async def test_remove_last_step_clears_project_lock() -> None:
+    a = _filled(name="a", project_name="Платежи", project_color="#3366ff")
+    b = _filled(name="b", project_name="Выписки", project_color="#22aa22")
+    svc = _service([a, b])
+    chain = await svc.create_chain([], "Цепочка")
+
+    step = await svc.add_step(chain.id, a.id)
+    assert chain.project_name_snapshot == "Платежи"
+
+    await svc.remove_step(chain.id, step.id)
+    assert chain.project_name_snapshot == ""  # empty chain → lock dropped
+
+    # A different project can now seed the (empty) chain.
+    await svc.add_step(chain.id, b.id)
+    assert chain.project_name_snapshot == "Выписки"
 
 
 @pytest.mark.asyncio

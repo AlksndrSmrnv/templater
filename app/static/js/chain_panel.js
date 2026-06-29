@@ -42,6 +42,14 @@ window.chainPanel = function (config) {
         running: false,
         // Aggregate statusCode of the last «Запустить всё» run (null = hide).
         chainStatus: null,
+        // Chain-level «последний запуск» badges (ISO; server-seeded, updated
+        // locally after sendAll). Rendered via window.formatSendTs.
+        chainLastSuccessAt: config.chainLastSuccessAt || '',
+        chainLastErrorAt: config.chainLastErrorAt || '',
+        // Project the chain is locked to ("" = no project / unset). Once the
+        // chain has steps, «Добавить шаг» hides templates from other projects
+        // (the server also rejects a cross-project add).
+        chainProject: config.chainProject || '',
         // Field-binding picker, anchored to the clicked body field. `paths` is
         // the source step's full leaf list; `filtered` is `paths` narrowed by
         // `query` (recomputed only on change, not per render).
@@ -75,7 +83,11 @@ window.chainPanel = function (config) {
         },
 
         // ---------- picker (client-side filter of server-rendered options) ----------
-        matchPicker(name) {
+        matchPicker(name, project) {
+            // Once the chain has steps it's locked to one project — hide other
+            // projects (empty project must match empty too). An empty chain
+            // accepts anything; the first step sets the lock.
+            if (this.steps.length && (project || '') !== this.chainProject) return false;
             const q = this.pickerSearch.trim().toLowerCase();
             return !q || String(name || '').toLowerCase().includes(q);
         },
@@ -490,6 +502,14 @@ window.chainPanel = function (config) {
                 this.chainStatus = { ok: true, code: 0, title: '' };
             } else {
                 this.chainStatus = null;
+            }
+            // Record this run on the chain-level «последний запуск» badge, unless
+            // no step actually ran (e.g. an empty chain). Success = no execution
+            // error and no non-zero statusCode among the run steps (`failed`).
+            // Mirrors the per-step ISO update; history is the source of truth.
+            if (ranCount > 0) {
+                if (failed) this.chainLastErrorAt = window.nowSendTs();
+                else this.chainLastSuccessAt = window.nowSendTs();
             }
         },
         prettyJson(s) {

@@ -388,6 +388,8 @@ class FilledTemplateService:
                     "step_count": counts.get(chain.id, 0),
                     "group_name_snapshot": getattr(chain, "group_name_snapshot", "") or "",
                     "group_color_snapshot": getattr(chain, "group_color_snapshot", "") or "",
+                    "project_name_snapshot": getattr(chain, "project_name_snapshot", "") or "",
+                    "project_color_snapshot": getattr(chain, "project_color_snapshot", "") or "",
                 }
             )
         return len(ordered)
