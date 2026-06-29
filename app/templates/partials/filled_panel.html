@@ -28,7 +28,10 @@
     },
     sending: false,
     response: null,
+    statusCode: null,  // parsed from the response body (any case, nested)
     chainMenuOpen: false,
+    // statusCode extraction is shared via status_code.js (window.extractStatusCode),
+    // loaded on every page that renders this panel.
     exampleResponse() {
         return JSON.stringify({
             status: 'SUCCESS',
@@ -39,6 +42,7 @@
     sendOnce() {
         this.sending = true;
         this.response = null;
+        this.statusCode = null;
         fetch('/templater/send-htmx/execute', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -52,7 +56,7 @@
             }),
         })
             .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-            .then(d => { this.response = { status: d.status, statusText: d.status_text, latencyMs: d.latency_ms, body: d.body }; })
+            .then(d => { this.response = { status: d.status, statusText: d.status_text, latencyMs: d.latency_ms, body: d.body }; this.statusCode = window.extractStatusCode(d.body); })
             .catch(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Ошибка отправки (мок)', type: 'error' } })))
             .finally(() => { this.sending = false; });
     },
@@ -184,6 +188,9 @@
             <iconify-icon icon="lucide:send"></iconify-icon>
             <span x-text="sending ? 'Отправка…' : 'Отправить'"></span>
         </button>
+        <span class="send-status-code" x-show="statusCode !== null" x-cloak
+              :class="statusCode === 0 ? 'is-ok' : 'is-err'"
+              x-text="'statusCode = ' + statusCode"></span>
         <div class="send-picker" @click.outside="chainMenuOpen = false" style="position:relative;">
             <button class="btn" type="button" @click="chainMenuOpen = !chainMenuOpen">
                 <iconify-icon icon="lucide:workflow"></iconify-icon> В цепочку

@@ -20,6 +20,8 @@
  * Defined on window so HTMX-swapped panels can reference it without a per-swap
  * <script> race; loaded once at page level.
  */
+// statusCode extraction lives in status_code.js (window.extractStatusCode),
+// loaded before this script and shared with the filled-template panel.
 window.chainPanel = function (config) {
     const base = '/templater/filled-templates-htmx/chains/';
     // Kept clear when flipping the popover upward. TOPBAR_H mirrors
@@ -38,6 +40,8 @@ window.chainPanel = function (config) {
         pickerOpen: false,
         pickerSearch: '',
         running: false,
+        // Aggregate statusCode of the last «Запустить всё» run (null = hide).
+        chainStatus: null,
         // Field-binding picker, anchored to the clicked body field. `paths` is
         // the source step's full leaf list; `filtered` is `paths` narrowed by
         // `query` (recomputed only on change, not per render).
@@ -59,6 +63,7 @@ window.chainPanel = function (config) {
                 sending: false,
                 error: '',
                 response: null,
+                statusCode: null,  // parsed from the response body (any case, nested)
                 resolvedRequestHtml: null,
                 resolvedRefs: false,        // resolved body contains purple references
                 resolvedUnresolved: false,  // ...and some couldn't be resolved (red)
@@ -402,6 +407,7 @@ window.chainPanel = function (config) {
             const step = this.steps[idx];
             step.error = '';
             step.sending = true;
+            step.statusCode = null;
             const res = this.resolveBody(idx);
             step.resolvedRequestHtml = res.html;
             step.resolvedRefs = res.refs > 0;
@@ -433,6 +439,7 @@ window.chainPanel = function (config) {
                     latencyMs: d.latency_ms,
                     body: this.prettyJson(d.body),
                 };
+                step.statusCode = window.extractStatusCode(d.body);
             } catch (e) {
                 step.error = 'Ошибка отправки (мок)';
             } finally {
@@ -441,15 +448,38 @@ window.chainPanel = function (config) {
         },
         async sendAll() {
             this.running = true;
+            this.chainStatus = null;
+            // Clear last run's per-step state so the aggregate below can't pick
+            // up a stale statusCode/error from steps that don't run this time.
+            this.steps.forEach((s) => { s.statusCode = null; s.error = ''; });
+            let ranCount = 0;
             try {
                 for (let i = 0; i < this.steps.length; i++) {
                     await this.send(i);
-                    // Stop on the first failing step — later steps may reference
-                    // its (now absent) response.
+                    ranCount = i + 1;
+                    // Stop on the first errored step — later steps may reference
+                    // its (now absent) response. A non-zero statusCode is a
+                    // logical failure but not an execution error, so the chain
+                    // keeps going (it's surfaced red in the aggregate below).
                     if (this.steps[i].error) break;
                 }
             } finally {
                 this.running = false;
+            }
+            // Aggregate over the steps that actually ran (0..ranCount-1): red on
+            // the first execution error or non-zero statusCode; green only when
+            // every run step succeeded and at least one reported statusCode 0;
+            // hidden when nothing reported a statusCode and nothing errored.
+            const ran = this.steps.slice(0, ranCount);
+            const failed = ran.find((s) => s.error || (s.statusCode !== null && s.statusCode !== 0));
+            if (failed) {
+                // `title` carries the step's own reason (e.g. «Не разрешены
+                // ссылки: …») so it shows on hover without expanding the step.
+                this.chainStatus = { ok: false, code: failed.error ? null : failed.statusCode, title: failed.error || '' };
+            } else if (ran.some((s) => s.statusCode === 0)) {
+                this.chainStatus = { ok: true, code: 0, title: '' };
+            } else {
+                this.chainStatus = null;
             }
         },
         prettyJson(s) {
@@ -462,6 +492,10 @@ window.chainPanel = function (config) {
         invalidate(idx) {
             const step = this.steps[idx];
             step.response = null;
+            step.statusCode = null;
+            // The «Запустить всё» aggregate may have included this step — it's
+            // now stale, so drop it rather than keep showing the old colour.
+            this.chainStatus = null;
             step.resolvedRequestHtml = null;
             step.resolvedRefs = false;
             step.resolvedUnresolved = false;
