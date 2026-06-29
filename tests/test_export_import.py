@@ -241,10 +241,10 @@ async def test_template_roundtrip_preserves_collection_metadata() -> None:
 
     package = {
         "version": 2,
-        "collections": [ExportImportService._dump_collection(coll)],
+        "collections": [ExportImportService._dump_collection(cast(Any, coll))],
         "templates": [
-            ExportImportService._dump_template(parsable),
-            ExportImportService._dump_template(unparsed),
+            ExportImportService._dump_template(cast(Any, parsable)),
+            ExportImportService._dump_template(cast(Any, unparsed)),
         ],
     }
 
@@ -442,7 +442,7 @@ class _KnownProjectSession(_RoundTripSession):
         project = self._project
 
         class _Result(_EmptyResult):
-            def scalar_one_or_none(self) -> Project:
+            def scalar_one_or_none(self) -> Any:
                 return project
 
         return _Result()
@@ -611,7 +611,7 @@ async def test_export_excludes_clients_outside_unlocked_groups() -> None:
     assert exported_ids == {str(public.id), str(in_a.id)}  # group B is hidden
     assert str(in_b.id) not in exported_ids
     # The visibility set was actually threaded to the repository.
-    assert svc.clients.seen_visible == {group_a}
+    assert cast(Any, svc.clients).seen_visible == {group_a}
 
 
 def test_dump_client_carries_group_name_and_color_not_hash() -> None:

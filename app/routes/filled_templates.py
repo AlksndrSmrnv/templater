@@ -22,6 +22,7 @@ Raw:
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -43,7 +44,7 @@ router = APIRouter()
 
 
 async def _alive_client_ids(
-    session: AsyncSession, ids: list[uuid.UUID]
+    session: AsyncSession, ids: Iterable[uuid.UUID | None]
 ) -> set[uuid.UUID]:
     """Return the subset of ``ids`` that still exist in ``clients``."""
 

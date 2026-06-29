@@ -9,11 +9,12 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from types import SimpleNamespace
+from typing import Any
 
 from tests.test_page_templates import render_template
 
 
-def _step(name: str, body: str, mock: str = '{"transferId": "TRF-1"}') -> dict:
+def _step(name: str, body: str, mock: str = '{"transferId": "TRF-1"}') -> dict[str, Any]:
     return {
         "id": str(uuid.uuid4()),
         "name": name,
@@ -28,7 +29,7 @@ def _step(name: str, body: str, mock: str = '{"transferId": "TRF-1"}') -> dict:
     }
 
 
-def _chain_panel_context(steps: list[dict], *, standalone: bool = False) -> dict:
+def _chain_panel_context(steps: list[dict[str, Any]], *, standalone: bool = False) -> dict[str, Any]:
     chain = SimpleNamespace(id=uuid.uuid4(), name="Цепочка перевода")
     return {
         "standalone": standalone,

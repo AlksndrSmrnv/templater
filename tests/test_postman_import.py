@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -12,8 +13,8 @@ from app.utils.errors import ValidationFailed
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "postman_sample.json"
 
 
-def _load() -> dict:
-    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+def _load() -> dict[str, Any]:
+    return cast("dict[str, Any]", json.loads(FIXTURE.read_text(encoding="utf-8")))
 
 
 def test_parse_sample_collection_basics() -> None:

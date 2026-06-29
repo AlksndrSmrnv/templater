@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -415,7 +416,7 @@ async def test_root_create_folder_persists_to_settings() -> None:
 
     # Subfolder under an existing root folder.
     await svc.create_folder(None, ["Inbox"], "Urgent")
-    assert ["Inbox", "Urgent"] in settings.values[ROOT_FOLDERS_KEY]
+    assert ["Inbox", "Urgent"] in cast(list[Any], settings.values[ROOT_FOLDERS_KEY])
 
     with pytest.raises(ValidationFailed):
         await svc.create_folder(None, [], "Inbox")  # duplicate

@@ -356,7 +356,7 @@ async def test_htmx_fill_save_persists_form_snapshot_without_rerender(
         # Destination folder from the «Сохранить в папку» selector.
         "folder_path": json.dumps(["Проект", "Релиз"], ensure_ascii=False),
     }
-    response = await templates_reg.htmx_fill_save(
+    response: Any = await templates_reg.htmx_fill_save(
         template_id=tpl_id,
         request=cast(Any, _FakeFormRequest(form)),
         templates=cast(Any, _FakeRenderer()),
@@ -388,7 +388,7 @@ async def test_htmx_fill_save_rejects_empty_snapshot(
     captured = _install_save_fakes(monkeypatch)
     tpl_id: uuid.UUID = captured["template_id"]
 
-    response = await templates_reg.htmx_fill_save(
+    response: Any = await templates_reg.htmx_fill_save(
         template_id=tpl_id,
         request=cast(Any, _FakeFormRequest({"content": ""})),
         templates=cast(Any, _FakeRenderer()),
@@ -409,7 +409,7 @@ async def test_htmx_fill_save_rejects_malformed_json_fields(
     captured = _install_save_fakes(monkeypatch)
     tpl_id: uuid.UUID = captured["template_id"]
 
-    response = await templates_reg.htmx_fill_save(
+    response: Any = await templates_reg.htmx_fill_save(
         template_id=tpl_id,
         request=cast(
             Any,
@@ -438,7 +438,7 @@ async def test_htmx_fill_save_rejects_non_list_json(
     captured = _install_save_fakes(monkeypatch)
     tpl_id: uuid.UUID = captured["template_id"]
 
-    response = await templates_reg.htmx_fill_save(
+    response: Any = await templates_reg.htmx_fill_save(
         template_id=tpl_id,
         request=cast(
             Any,

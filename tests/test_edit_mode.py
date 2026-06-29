@@ -212,7 +212,7 @@ async def run_import(
 async def test_import_with_attribute_schema_is_blocked_when_locked(
     fake_settings: SimpleNamespace, import_service_spy: list[dict[str, object]]
 ) -> None:
-    package = {"attribute_schema": [{"entity_type": "client", "name": "x"}], "clients": []}
+    package: dict[str, object] = {"attribute_schema": [{"entity_type": "client", "name": "x"}], "clients": []}
     response = await run_import(package, cookies={})
     assert response.status_code == 403
     assert "attribute_schema" in str(response.context["message"])
@@ -222,7 +222,7 @@ async def test_import_with_attribute_schema_is_blocked_when_locked(
 async def test_import_with_attribute_schema_passes_in_edit_mode(
     fake_settings: SimpleNamespace, import_service_spy: list[dict[str, object]]
 ) -> None:
-    package = {"attribute_schema": [{"entity_type": "client", "name": "x"}]}
+    package: dict[str, object] = {"attribute_schema": [{"entity_type": "client", "name": "x"}]}
     response = await run_import(package, cookies={COOKIE_NAME: issue_edit_token()})
     assert response.status_code == 200
     assert len(import_service_spy) == 1
@@ -231,7 +231,7 @@ async def test_import_with_attribute_schema_passes_in_edit_mode(
 async def test_data_only_import_stays_open_when_locked(
     fake_settings: SimpleNamespace, import_service_spy: list[dict[str, object]]
 ) -> None:
-    package = {"clients": [{"name": "test"}], "templates": []}
+    package: dict[str, object] = {"clients": [{"name": "test"}], "templates": []}
     response = await run_import(package, cookies={})
     assert response.status_code == 200
     assert len(import_service_spy) == 1
@@ -244,7 +244,7 @@ async def test_import_passes_project_creation_permission_from_edit_mode(
     enforces it at the exact point a project would be created (per-row), so
     skipped conflicts / duplicates / invalid records are never blocked."""
 
-    package = {"templates": [{"id": "x", "name": "T", "project_name": "Новый"}]}
+    package: dict[str, object] = {"templates": [{"id": "x", "name": "T", "project_name": "Новый"}]}
 
     response = await run_import(package, cookies={})
     assert response.status_code == 200

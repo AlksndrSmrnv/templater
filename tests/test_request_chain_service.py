@@ -36,7 +36,7 @@ class _FakeChainRepo:
         return self._clock
 
     # chains
-    async def get(self, chain_id, *, visible_group_ids=None):
+    async def get(self, chain_id: Any, *, visible_group_ids: Any = None) -> Any:
         chain = next((c for c in self.chains if c.id == chain_id), None)
         if chain is not None:
             chain.steps = sorted(
@@ -45,41 +45,41 @@ class _FakeChainRepo:
             )
         return chain
 
-    async def list_all(self, *, limit=200, visible_group_ids=None):
+    async def list_all(self, *, limit: int = 200, visible_group_ids: Any = None) -> Any:
         return list(self.chains)
 
-    async def list_folder_paths(self):
+    async def list_folder_paths(self) -> Any:
         return [list(c.folder_path or []) for c in self.chains]
 
-    async def next_display_order(self, folder_path):
+    async def next_display_order(self, folder_path: Any) -> Any:
         orders = [c.display_order for c in self.chains if list(c.folder_path or []) == list(folder_path)]
         return (max(orders) + 1) if orders else 0
 
-    async def add(self, chain):
+    async def add(self, chain: Any) -> Any:
         if getattr(chain, "id", None) is None:
             chain.id = uuid.uuid4()
         self.chains.append(chain)
         return chain
 
-    async def delete(self, chain):
+    async def delete(self, chain: Any) -> None:
         self.chains = [c for c in self.chains if c.id != chain.id]
         self.steps = [s for s in self.steps if s.chain_id != chain.id]
 
     # steps
-    async def get_step(self, step_id):
+    async def get_step(self, step_id: Any) -> Any:
         return next((s for s in self.steps if s.id == step_id), None)
 
-    async def next_position(self, chain_id):
+    async def next_position(self, chain_id: Any) -> Any:
         ps = [s.position for s in self.steps if s.chain_id == chain_id]
         return (max(ps) + 1) if ps else 0
 
-    async def list_steps(self, chain_id):
+    async def list_steps(self, chain_id: Any) -> Any:
         return sorted(
             (s for s in self.steps if s.chain_id == chain_id),
             key=lambda s: (s.position, s.created_at),
         )
 
-    async def add_step(self, step):
+    async def add_step(self, step: Any) -> Any:
         if getattr(step, "id", None) is None:
             step.id = uuid.uuid4()
         if getattr(step, "created_at", None) is None:
@@ -87,7 +87,7 @@ class _FakeChainRepo:
         self.steps.append(step)
         return step
 
-    async def delete_step(self, step):
+    async def delete_step(self, step: Any) -> None:
         self.steps = [s for s in self.steps if s.id != step.id]
 
 
@@ -95,10 +95,10 @@ class _FakeFilledRepo:
     def __init__(self, filled: list[SimpleNamespace]) -> None:
         self.filled = filled
 
-    async def get(self, filled_id, *, visible_group_ids=None):
+    async def get(self, filled_id: Any, *, visible_group_ids: Any = None) -> Any:
         return next((f for f in self.filled if f.id == filled_id), None)
 
-    async def list_folder_paths(self):
+    async def list_folder_paths(self) -> Any:
         return [list(f.folder_path or []) for f in self.filled]
 
 
@@ -239,7 +239,7 @@ async def test_remove_step_renumbers_remaining() -> None:
     steps = [await svc.add_step(chain.id, f.id) for f in fts]
 
     await svc.remove_step(chain.id, steps[0].id)
-    remaining = await svc.repo.list_steps(chain.id)  # type: ignore[attr-defined]
+    remaining = await svc.repo.list_steps(chain.id)
     assert [s.position for s in remaining] == [0, 1]
     assert [s.name_snapshot for s in remaining] == ["s1", "s2"]
 
@@ -253,7 +253,7 @@ async def test_reorder_steps_follows_payload_and_renumbers() -> None:
 
     # Move the last step to the front; unknown ids ignored.
     await svc.reorder_steps(chain.id, [steps[2].id, uuid.uuid4()])
-    ordered = await svc.repo.list_steps(chain.id)  # type: ignore[attr-defined]
+    ordered = await svc.repo.list_steps(chain.id)
     assert [s.name_snapshot for s in ordered] == ["s2", "s0", "s1"]
     assert [s.position for s in ordered] == [0, 1, 2]
 
@@ -466,7 +466,7 @@ async def test_switch_step_preserves_surviving_binding(monkeypatch: Any) -> None
     ft = _filled_with_role(client_id=cid, mtid=uuid.uuid4())
     svc = _service([ft])
     chain = await svc.create_chain([], "Цепочка")
-    s1 = await svc.add_step(chain.id, ft.id)
+    await svc.add_step(chain.id, ft.id)
     svc.filled.filled.append(ft)  # type: ignore[attr-defined]
     s2 = await svc.add_step(chain.id, ft.id)
     # Bind /amount on the 2nd step to step 1's response, then switch its client.
