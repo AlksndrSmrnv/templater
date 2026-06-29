@@ -20,7 +20,7 @@
         this.detailId = id;
         if (scroll) {
             this.$nextTick(() => {
-                const row = this.$root.querySelector('tr[data-id=&quot;' + id + '&quot;]');
+                const row = this.$root.querySelector('tr[data-id=&#34;' + CSS.escape(id) + '&#34;]');
                 if (row) row.scrollIntoView({ block: 'center' });
             });
         }

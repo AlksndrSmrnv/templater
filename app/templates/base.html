@@ -31,7 +31,7 @@
         clearTimeout(this.toastTimer);
         this.toastTimer = setTimeout(() => { this.toastOpen = false; }, 4200);
     }
-}" @show-toast.window="showToast($event)" @showToast.window="showToast($event)">
+}" @show-toast.window="showToast($event)">
 <header class="topbar">
     <div class="brand"><a href="/templater/"><iconify-icon icon="lucide:notebook-pen"></iconify-icon> Template Maker</a></div>
     <nav class="topnav">
@@ -76,10 +76,12 @@
      x-text="toastMessage"></div>
 {% block scripts %}{% endblock %}
 {# Alpine loads LAST so every page-level component-definition script (e.g.
-   client_switch_modal.js) defines its window.* factory before Alpine's deferred
-   bundle runs initTree on the initial DOM. A `defer` Alpine in <head> would
-   start initializing while readyState is 'interactive' — before those scripts
-   execute — leaving function x-data in the initial HTML undefined. #}
+   client_switch_modal.js) has defined its window.* factory before Alpine runs.
+   Alpine's CDN build starts initializing the DOM as soon as its own script
+   executes — it does not wait for the other deferred scripts — and deferred
+   scripts run in document order, so Alpine must come after them. With Alpine in
+   <head> it ran first, and the modal's x-data="clientSwitchModal()" in the
+   initial HTML evaluated before its factory existed. #}
 <script src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"
         integrity="sha384-l8f0VcPi/M1iHPv8egOnY/15TDwqgbOR1anMIJWvU6nLRgZVLTLSaNqi/TOoT5Fh"
         crossorigin="anonymous"
