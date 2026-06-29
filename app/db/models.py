@@ -634,3 +634,67 @@ class RequestChainStep(Base):
 
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
+
+
+# Where a send came from — drives which object's history a row belongs to.
+SEND_SOURCE_FILLED = "filled"
+SEND_SOURCE_CHAIN_STEP = "chain_step"
+
+
+class MessageSend(Base):
+    """One recorded «send» of a message — what was sent, where, and the response.
+
+    Sending is still a stub seam (``POST /send-htmx/execute`` echoes an editable
+    mock response, no real network call), but every send — whether triggered from
+    a filled template's «Отправить» button or a chain step — is persisted here so
+    the UI can show a full send history table and the «last success / last error»
+    timestamps next to each send button.
+
+    The request/response are snapshotted (``url``, ``request_body``,
+    ``response_body``, …) so a row stays meaningful even after its source filled
+    template / chain / step is deleted. All three source FKs are ``ON DELETE SET
+    NULL`` for that reason; ``source_kind`` records which one originated the send.
+    """
+
+    __tablename__ = "message_sends"
+    __table_args__ = (
+        # History is always queried per source object, newest first.
+        Index("ix_message_sends_filled", "filled_template_id", "created_at"),
+        Index("ix_message_sends_chain", "chain_id", "created_at"),
+        Index("ix_message_sends_step", "chain_step_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+
+    source_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Audit links to the source object(s). filled sends set filled_template_id;
+    # chain-step sends set chain_id + chain_step_id. All SET NULL on delete.
+    filled_template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("filled_templates.id", ondelete="SET NULL"), nullable=True
+    )
+    chain_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("request_chains.id", ondelete="SET NULL"), nullable=True
+    )
+    chain_step_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("request_chain_steps.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # Snapshot of «what message / where to» — survives source deletion.
+    name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    http_method: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    request_headers: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    request_body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    # Result of the send.
+    ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # statusCode parsed from the response body (see app/utils/status_code.py), so
+    # the history matches the indicator the user saw next to the send button.
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    response_headers: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    response_body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    created_at: Mapped[datetime] = _created_at()

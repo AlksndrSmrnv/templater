@@ -21,6 +21,7 @@ from app.routes import (
     filled_templates,
     home,
     send,
+    send_history,
     templates_reg,
 )
 from app.routes import (
@@ -75,6 +76,7 @@ def create_app() -> FastAPI:
     app.include_router(filled_templates.router, prefix=app_prefix)
     app.include_router(chains.router, prefix=app_prefix)
     app.include_router(send.router, prefix=app_prefix)
+    app.include_router(send_history.router, prefix=app_prefix)
     app.include_router(settings_routes.router, prefix=app_prefix)
     app.include_router(settings_routes.edit_router, prefix=app_prefix)
     app.include_router(export_import.router, prefix=app_prefix)

@@ -31,6 +31,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.entity import ClientRepository
+from app.repositories.message_send import MessageSendRepository
 from app.repositories.request_chain import RequestChainRepository
 from app.routes.client_switch_utils import SWITCH_ROLES, role_ids_from_form
 from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
@@ -118,6 +119,9 @@ async def _detail_context(
     alive = await _alive_client_ids(session, list(role_client_ids.values()))
     # Existing chains the «В цепочку» dropdown can target (id + name only).
     chains = await RequestChainRepository(session).list_all(visible_group_ids=visible_group_ids)
+    # Latest successful / failed send of this template, for the badges next to
+    # «Отправить» (None until the first send of that outcome).
+    last_send = (await MessageSendRepository(session).last_for_filled([filled_id])).get(filled_id)
     return {
         "ft": item,
         "rendered_html": rendered_html,
@@ -126,6 +130,7 @@ async def _detail_context(
         "role_current": role_current,
         "alive_client_ids": alive,
         "chains": [{"id": str(c.id), "name": c.name} for c in chains],
+        "last_send": last_send,
     }
 
 

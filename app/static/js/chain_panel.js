@@ -64,6 +64,10 @@ window.chainPanel = function (config) {
                 error: '',
                 response: null,
                 statusCode: null,  // parsed from the response body (any case, nested)
+                // Last successful / failed send (server-seeded, updated locally
+                // after each send so the badge moves without a panel re-render).
+                lastSuccessAt: s.last_success_at || '',
+                lastErrorAt: s.last_error_at || '',
                 resolvedRequestHtml: null,
                 resolvedRefs: false,        // resolved body contains purple references
                 resolvedUnresolved: false,  // ...and some couldn't be resolved (red)
@@ -423,6 +427,11 @@ window.chainPanel = function (config) {
                         body: res.resolved,
                         format: step.format,
                         mock_response: step.mockResponse,
+                        // Context so the send is recorded against this chain step.
+                        source_kind: 'chain_step',
+                        chain_id: this.chainId,
+                        chain_step_id: step.id,
+                        name: step.name,
                     }),
                 });
                 if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -434,8 +443,12 @@ window.chainPanel = function (config) {
                     body: this.prettyJson(d.body),
                 };
                 step.statusCode = window.extractStatusCode(d.body);
+                // Mirror the server's ok rule: absent/zero statusCode = success.
+                if (step.statusCode === null || step.statusCode === 0) step.lastSuccessAt = this.fmtNow();
+                else step.lastErrorAt = this.fmtNow();
             } catch (e) {
                 step.error = 'Ошибка отправки (мок)';
+                step.lastErrorAt = this.fmtNow();
             } finally {
                 step.sending = false;
             }
@@ -478,6 +491,13 @@ window.chainPanel = function (config) {
         },
         prettyJson(s) {
             try { return JSON.stringify(JSON.parse(s), null, 2); } catch (e) { return s; }
+        },
+        // dd.mm.yyyy HH:MM:SS — matches the server's strftime so a locally
+        // updated «last send» badge reads the same as a server-rendered one.
+        fmtNow() {
+            const d = new Date(), p = (n) => String(n).padStart(2, '0');
+            return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.' + d.getFullYear()
+                + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
         },
         // Binding a field changes this step's body, so its own last run no longer
         // matches. Later steps may reference this step's response, so their

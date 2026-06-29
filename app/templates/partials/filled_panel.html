@@ -30,6 +30,15 @@
     response: null,
     statusCode: null,  // parsed from the response body (any case, nested)
     chainMenuOpen: false,
+    // Last successful / failed send (server-seeded, updated locally after each
+    // send so the badge moves without re-rendering the panel).
+    lastSuccessAt: {{ (last_send.success_at.strftime('%d.%m.%Y %H:%M:%S') if last_send and last_send.success_at else '') | tojson | forceescape }},
+    lastErrorAt: {{ (last_send.error_at.strftime('%d.%m.%Y %H:%M:%S') if last_send and last_send.error_at else '') | tojson | forceescape }},
+    fmtNow() {
+        const d = new Date(), p = (n) => String(n).padStart(2, '0');
+        return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.' + d.getFullYear()
+            + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    },
     // statusCode extraction is shared via status_code.js (window.extractStatusCode),
     // loaded on every page that renders this panel.
     exampleResponse() {
@@ -53,11 +62,24 @@
                 body: '',
                 format: this.envelope.format,
                 mock_response: this.exampleResponse(),
+                // Context so the send is recorded against this filled template.
+                source_kind: 'filled',
+                filled_template_id: '{{ ft.id }}',
+                name: {{ (ft.name or '') | tojson | forceescape }},
             }),
         })
             .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-            .then(d => { this.response = { status: d.status, statusText: d.status_text, latencyMs: d.latency_ms, body: d.body }; this.statusCode = window.extractStatusCode(d.body); })
-            .catch(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Ошибка отправки (мок)', type: 'error' } })))
+            .then(d => {
+                this.response = { status: d.status, statusText: d.status_text, latencyMs: d.latency_ms, body: d.body };
+                this.statusCode = window.extractStatusCode(d.body);
+                // Mirror the server's ok rule: absent/zero statusCode = success.
+                if (this.statusCode === null || this.statusCode === 0) this.lastSuccessAt = this.fmtNow();
+                else this.lastErrorAt = this.fmtNow();
+            })
+            .catch(() => {
+                this.lastErrorAt = this.fmtNow();
+                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Ошибка отправки (мок)', type: 'error' } }));
+            })
             .finally(() => { this.sending = false; });
     },
 }">
@@ -79,6 +101,12 @@
                 <a class="btn" href="/templater/templates?template={{ ft.message_template_id }}">К исходному шаблону</a>
             {% endif %}
             <a class="btn" href="/templater/filled-templates/{{ ft.id }}/raw?download=1"><iconify-icon icon="lucide:download"></iconify-icon> Скачать</a>
+            <button class="btn" type="button"
+                    hx-get="/templater/send-history-htmx/filled/{{ ft.id }}"
+                    hx-target="#send-history-content" hx-swap="innerHTML"
+                    @click="$dispatch('open-send-history')">
+                <iconify-icon icon="lucide:history"></iconify-icon> История отправок
+            </button>
             <button class="btn danger"
                     type="button"
                     hx-delete="/templater/filled-templates-htmx/{{ ft.id }}?panel=1"
@@ -191,6 +219,14 @@
         <span class="send-status-code" x-show="statusCode !== null" x-cloak
               :class="statusCode === 0 ? 'is-ok' : 'is-err'"
               x-text="'statusCode = ' + statusCode"></span>
+        <span class="send-last is-ok" x-show="lastSuccessAt" x-cloak
+              :title="'Последняя успешная отправка: ' + lastSuccessAt">
+            <iconify-icon icon="lucide:check"></iconify-icon><span x-text="lastSuccessAt"></span>
+        </span>
+        <span class="send-last is-err" x-show="lastErrorAt" x-cloak
+              :title="'Последняя неуспешная отправка: ' + lastErrorAt">
+            <iconify-icon icon="lucide:x"></iconify-icon><span x-text="lastErrorAt"></span>
+        </span>
         <div class="send-picker" @click.outside="chainMenuOpen = false" style="position:relative;">
             <button class="btn" type="button" @click="chainMenuOpen = !chainMenuOpen">
                 <iconify-icon icon="lucide:workflow"></iconify-icon> В цепочку
