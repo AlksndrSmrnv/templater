@@ -26,41 +26,6 @@
     </div>
     {% endif %}
 
-    {# Dependency overview — make the message dependencies obvious: each step
-       that pulls a field from an earlier response is listed with which step it
-       depends on. Derived from the reactive `steps` (via stepDeps), so it stays
-       correct after binding/unbinding/reordering/removing steps client-side. #}
-    <section class="chain-deps-overview">
-        <h2><iconify-icon icon="lucide:git-branch"></iconify-icon> Зависимости сообщений</h2>
-        <ul class="chain-deps-list" x-show="hasAnyDeps()" x-cloak>
-            <template x-for="(step, i) in steps" :key="step.id">
-                <template x-if="stepDeps(i).length">
-                    <li>
-                        <span class="send-step-num" x-text="i + 1"></span>
-                        <span class="chain-dep-name" x-text="step.name"></span>
-                        <iconify-icon icon="lucide:arrow-left"></iconify-icon>
-                        <template x-for="d in stepDeps(i)" :key="d">
-                            <span class="chain-dep-badge" x-text="'шаг ' + d"></span>
-                        </template>
-                    </li>
-                </template>
-            </template>
-        </ul>
-        <p class="muted" x-show="!hasAnyDeps()" x-cloak>Пока ни одно сообщение не использует поля из ответов других шагов.
-            Кликните по значению поля в теле шага, чтобы связать его с ответом предыдущего.</p>
-    </section>
-
-    <p class="muted send-hint">
-        Соберите цепочку запросов из заполненных шаблонов. Отправка имитируется —
-        реальные запросы не уходят. Поля тела подсвечены по роли:
-        <span class="placeholder dynamic">голубой</span> — динамические по умолчанию,
-        <span class="placeholder filled">зелёный</span> — из тестовых данных,
-        белый — как в оригинальном шаблоне,
-        <span class="placeholder reference">фиолетовый</span> — ссылка на поле ответа
-        предыдущего шага. Кликните по значению поля, чтобы привязать его к полю ответа
-        предыдущего шага (доступно после отправки этого шага).
-    </p>
-
     <div class="chain-toolbar">
         <div class="send-picker" @click.outside="pickerOpen = false">
             <button class="btn primary" type="button" @click="pickerOpen = !pickerOpen">
@@ -155,10 +120,11 @@
                     </div>
                     <div class="send-step-actions">
                         <button class="btn small primary" type="button"
-                                :title="step.sending ? 'Отправка…' : 'Отправить шаг'"
+                                :title="step.sending ? 'Отправка…' : ('Отправить шаг ' + (idx + 1))"
                                 x-show="step.collapsed" :disabled="step.sending" @click="send(idx)">
                             <iconify-icon :icon="step.sending ? 'lucide:loader-2' : 'lucide:send'"
                                           :class="{ 'icon-spin': step.sending }"></iconify-icon>
+                            <span x-text="step.sending ? 'Отправка…' : 'Отправить'"></span>
                         </button>
                         <span class="send-status-code" x-show="step.statusCode !== null" x-cloak
                               :class="step.statusCode === 0 ? 'is-ok' : 'is-err'"
@@ -295,9 +261,10 @@
 
                     <div class="send-actions">
                         <button class="btn primary" type="button" @click="send(idx)" :disabled="step.sending">
-                            <iconify-icon icon="lucide:send"></iconify-icon> Отправить
+                            <iconify-icon :icon="step.sending ? 'lucide:loader-2' : 'lucide:send'"
+                                          :class="{ 'icon-spin': step.sending }"></iconify-icon>
+                            <span x-text="step.sending ? 'Отправка…' : 'Отправить'"></span>
                         </button>
-                        <span class="muted" x-show="step.sending">Отправка…</span>
                         <span class="send-error" x-show="step.error" x-text="step.error"></span>
                     </div>
 
