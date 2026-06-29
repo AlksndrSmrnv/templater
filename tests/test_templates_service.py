@@ -1272,7 +1272,7 @@ async def test_regenerate_meta_only_updates_meta_and_keeps_placeholders() -> Non
     # content + placeholders are left untouched by a meta-only reprocess
     assert out.content == '{"x": "{{sender.fullName}}"}'
     assert out.placeholders is placeholders
-    assert out.llm_debug["response_text"] == "r"
+    assert cast("dict[str, Any]", out.llm_debug)["response_text"] == "r"
 
 
 # ---------------------------------------------------------------------------
@@ -1314,7 +1314,7 @@ class _ProjectAwareSession:
 
 def test_template_create_schema_requires_project_id() -> None:
     with pytest.raises(PydanticSchemaError):
-        TemplateCreate(name="T", format="json", content="{}")
+        TemplateCreate(name="T", format="json", content="{}")  # type: ignore[call-arg]
 
 
 @pytest.mark.asyncio

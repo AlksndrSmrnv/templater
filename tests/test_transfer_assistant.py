@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -10,16 +10,16 @@ from app.services.transfer_assistant import TransferAssistant
 from app.utils.errors import ValidationFailed
 
 
-def _client(**attrs):
+def _client(**attrs: Any) -> Any:
     return SimpleNamespace(id=uuid.uuid4(), attributes=attrs, description="", tags=[])
 
 
-def _account(client_id, **attrs):
+def _account(client_id: Any, **attrs: Any) -> Any:
     return SimpleNamespace(id=uuid.uuid4(), client_id=client_id, attributes=attrs,
                            description="", tags=[])
 
 
-def _card(account_id):
+def _card(account_id: Any) -> Any:
     return SimpleNamespace(id=uuid.uuid4(), account_id=account_id, attributes={},
                            description="", tags=[])
 
@@ -146,14 +146,16 @@ async def test_compose_filters_participants_by_visible_groups() -> None:
             return []
 
     class _FakeLLM:
-        async def pick_transfer_template(self, *, request: str, templates: Any) -> tuple[str, dict]:
+        async def pick_transfer_template(
+            self, *, request: str, templates: Any
+        ) -> tuple[str, dict[str, Any]]:
             return "T1", {}
 
-        async def pick_transfer_participants(self, **_: Any) -> tuple[dict, dict]:
+        async def pick_transfer_participants(self, **_: Any) -> tuple[dict[str, Any], dict[str, Any]]:
             return {}, {}
 
     a = TransferAssistant.__new__(TransferAssistant)
-    a.session = object()  # not reached: no participants resolve → raises first
+    a.session = cast(Any, object())  # not reached: no participants resolve → raises first
     a.templates = _FakeTemplates()  # type: ignore[assignment]
     a.clients = _SpyEntityService("clients")  # type: ignore[assignment]
     a.accounts = _SpyEntityService("accounts")  # type: ignore[assignment]

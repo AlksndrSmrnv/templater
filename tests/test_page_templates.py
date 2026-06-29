@@ -78,7 +78,7 @@ def install_page_fill_fakes(monkeypatch: pytest.MonkeyPatch, template: Any) -> N
         return [["Проект"], ["Проект", "Релиз"]]
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
-    monkeypatch.setattr(templates_reg.ClientService, "list_all", fake_list_all)
+    monkeypatch.setattr(cast(Any, templates_reg).ClientService, "list_all", fake_list_all)
     monkeypatch.setattr(templates_reg, "_fill_labels", fake_fill_labels)
     # page_fill feeds the «Сохранить в папку» selector from the filled-templates
     # service; patch the method so the fake session never reaches the DB.
@@ -1460,7 +1460,7 @@ def test_template_panel_filled_links_show_project_snapshot_badge() -> None:
 
 
 def test_filled_template_view_shows_project_row_from_snapshot() -> None:
-    base = dict(
+    base: dict[str, Any] = dict(
         id="3db678b1-1111-2222-3333-444444444444",
         name="Filled",
         message_template_id=None,

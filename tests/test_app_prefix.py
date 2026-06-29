@@ -7,7 +7,7 @@ from app.main import create_app
 
 def test_app_routes_are_registered_under_templater_prefix() -> None:
     app = create_app()
-    route_paths = {route.path for route in app.routes}
+    route_paths = {getattr(route, "path", "") for route in app.routes}
 
     assert "/templater/" in route_paths
     assert "/templater/clients" in route_paths

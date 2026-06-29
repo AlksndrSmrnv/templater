@@ -41,7 +41,7 @@ async def test_execute_echoes_mock_response() -> None:
     )
     resp = await chains.htmx_execute(req)  # type: ignore[arg-type]
     assert resp.status_code == 200
-    data = json.loads(resp.body)
+    data = json.loads(bytes(resp.body))
     assert data["status"] == 200
     assert data["status_text"] == "OK"
     assert data["body"] == mock  # echoed verbatim — no real send
@@ -63,7 +63,7 @@ async def test_execute_rejects_non_object_body() -> None:
 
 
 def test_execute_route_registered() -> None:
-    paths = {r.path for r in chains.router.routes}
+    paths = {getattr(r, "path", "") for r in chains.router.routes}
     assert "/send-htmx/execute" in paths
 
 

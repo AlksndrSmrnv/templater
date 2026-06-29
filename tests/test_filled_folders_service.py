@@ -47,7 +47,7 @@ class _FakeFilledRepo:
         }
 
     async def list_all(
-        self, *, search: str = "", limit: int | None = 200, visible_group_ids=None
+        self, *, search: str = "", limit: int | None = 200, visible_group_ids: Any = None
     ) -> list[SimpleNamespace]:
         term = search.strip().lower()
         rows = self.items
@@ -57,7 +57,7 @@ class _FakeFilledRepo:
         # ``limit=None`` disables the cap.
         return list(rows[:limit])
 
-    async def get(self, filled_id: uuid.UUID, *, visible_group_ids=None) -> SimpleNamespace | None:
+    async def get(self, filled_id: uuid.UUID, *, visible_group_ids: Any = None) -> SimpleNamespace | None:
         return next((i for i in self.items if i.id == filled_id), None)
 
     async def get_many(self, ids):  # type: ignore[no-untyped-def]
@@ -109,7 +109,7 @@ class _FakeChainRepo:
         wanted = set(ids)
         return [c for c in self.chains if c.id in wanted]
 
-    async def list_all(self, *, limit=200, visible_group_ids=None) -> list[SimpleNamespace]:
+    async def list_all(self, *, limit: int = 200, visible_group_ids: Any = None) -> list[SimpleNamespace]:
         return list(self.chains)
 
     async def step_counts(self) -> dict[uuid.UUID, int]:
@@ -179,7 +179,7 @@ async def test_create_folder_persists_to_settings_and_rejects_duplicate() -> Non
     # Arbitrary nesting: subfolder under subfolder.
     await svc.create_folder(["Проект"], "Релиз")
     await svc.create_folder(["Проект", "Релиз"], "Фича")
-    assert ["Проект", "Релиз", "Фича"] in settings.values[FILLED_ROOT_FOLDERS_KEY]
+    assert ["Проект", "Релиз", "Фича"] in cast(list[Any], settings.values[FILLED_ROOT_FOLDERS_KEY])
 
     with pytest.raises(ValidationFailed):
         await svc.create_folder([], "Проект")  # duplicate
@@ -253,7 +253,7 @@ async def test_delete_folder_only_when_empty() -> None:
 
     with pytest.raises(ValidationFailed):
         await svc.delete_folder(["Full"])  # has an item
-    assert ["Full"] in settings.values[FILLED_ROOT_FOLDERS_KEY]
+    assert ["Full"] in cast(list[Any], settings.values[FILLED_ROOT_FOLDERS_KEY])
 
 
 @pytest.mark.asyncio

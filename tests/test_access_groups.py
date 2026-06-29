@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from sqlalchemy import select
@@ -91,15 +91,15 @@ def test_unlocked_group_ids_reads_cookie() -> None:
     ids = {uuid.uuid4()}
     token = ag.issue_groups_token(ids)
     request = SimpleNamespace(cookies={ag.COOKIE_NAME: token})
-    assert ag.unlocked_group_ids(request) == ids
-    assert ag.unlocked_group_ids(SimpleNamespace(cookies={})) == set()
+    assert ag.unlocked_group_ids(cast(Any, request)) == ids
+    assert ag.unlocked_group_ids(cast(Any, SimpleNamespace(cookies={}))) == set()
 
 
 # --------------------------- visibility SQL ---------------------------
 
 
 def _compile(stmt: Any) -> str:
-    return " ".join(str(stmt.compile(dialect=postgresql.dialect())).split())
+    return " ".join(str(stmt.compile(dialect=postgresql.dialect())).split())  # type: ignore[no-untyped-call]
 
 
 def test_visibility_predicate_compiles_for_every_model() -> None:
@@ -180,7 +180,7 @@ async def test_create_hashes_password_and_unlock_matches() -> None:
     assert group.password_hash != "secret"
     assert verify_password("secret", group.password_hash)
 
-    assert (await svc.unlock("secret")).id == group.id
+    assert cast(Any, await svc.unlock("secret")).id == group.id
     assert await svc.unlock("nope") is None
     assert await svc.unlock("") is None
 
@@ -273,7 +273,7 @@ def _grouped_client(group_id: Any) -> SimpleNamespace:
 
 def _fill_service(clients: list[Any]) -> FilledTemplateService:
     svc = FilledTemplateService.__new__(FilledTemplateService)
-    svc.session = _FakeClientSession(clients)  # type: ignore[attr-defined]
+    svc.session = _FakeClientSession(clients)  # type: ignore[assignment]
     return svc
 
 

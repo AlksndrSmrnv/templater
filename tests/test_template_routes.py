@@ -124,7 +124,7 @@ def test_template_htmx_panel_route_matches() -> None:
 
 @pytest.mark.asyncio
 async def test_htmx_preview_validation_errors_retarget_form_errors() -> None:
-    response = await templates_reg.htmx_preview(
+    response: Any = await templates_reg.htmx_preview(
         request=cast(Any, FakeFormRequest({"name": "", "format": "json", "content": "{}"})),
         templates=cast(Any, FakeTemplateRenderer()),
         session=cast(Any, object()),
@@ -137,7 +137,7 @@ async def test_htmx_preview_validation_errors_retarget_form_errors() -> None:
 
 @pytest.mark.asyncio
 async def test_htmx_create_validation_errors_retarget_review_errors() -> None:
-    response = await templates_reg.htmx_create(
+    response: Any = await templates_reg.htmx_create(
         request=cast(
             Any,
             FakeFormRequest(
@@ -209,7 +209,7 @@ async def test_htmx_create_marks_processed_only_with_valid_proof(
 
         @staticmethod
         def regenerate_content(template: Any) -> str:
-            return template.content
+            return str(template.content)
 
     async def fake_commit(session: object, item: Any) -> Any:
         saved["llm_meta"] = item.llm_meta
@@ -222,7 +222,7 @@ async def test_htmx_create_marks_processed_only_with_valid_proof(
 
     llm_proof = "" if proof_content is None else sign_processed(proof_content, proof_meta)
 
-    response = await templates_reg.htmx_create(
+    response: Any = await templates_reg.htmx_create(
         request=cast(
             Any,
             FakeFormRequest(
@@ -273,7 +273,7 @@ async def test_htmx_create_strips_client_supplied_import_status(
 
         @staticmethod
         def regenerate_content(template: Any) -> str:
-            return template.content
+            return str(template.content)
 
     async def fake_commit(session: object, item: Any) -> Any:
         saved["llm_meta"] = item.llm_meta
@@ -284,7 +284,7 @@ async def test_htmx_create_strips_client_supplied_import_status(
     monkeypatch.setattr(templates_reg, "normalize_placeholders", lambda p: p)
     monkeypatch.setattr(templates_reg, "placeholders_have_account_owner", lambda p: False)
 
-    response = await templates_reg.htmx_create(
+    response: Any = await templates_reg.htmx_create(
         request=cast(
             Any,
             FakeFormRequest(
@@ -352,7 +352,7 @@ async def test_preview_template_includes_llm_debug_key(monkeypatch: pytest.Monke
     monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
     monkeypatch.setattr(templates_reg, "ProjectRepository", FakeProjectRepository)
 
-    response = await templates_reg.preview_template(
+    response: Any = await templates_reg.preview_template(
         TemplateCreate(name="T", format="json", content='{"a": "x"}', project_id=uuid.uuid4()),
         session=cast(Any, object()),
     )
@@ -403,7 +403,7 @@ async def test_preview_template_marks_llm_unused_when_no_debug_returned(
     monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
     monkeypatch.setattr(templates_reg, "ProjectRepository", FakeProjectRepository)
 
-    response = await templates_reg.preview_template(
+    response: Any = await templates_reg.preview_template(
         TemplateCreate(name="T", format="json", content="{}", project_id=uuid.uuid4()),
         session=cast(Any, object()),
     )
@@ -464,7 +464,7 @@ async def test_granular_reprocess_persists_and_renders_panel(
     monkeypatch.setattr(templates_reg, "_template_panel_context", fake_panel_context)
 
     handler = getattr(templates_reg, handler_name)
-    response = await handler(
+    response: Any = await handler(
         template_id=template_id,
         request=cast(Any, FakeFormRequest({})),
         templates=cast(Any, FakeTemplateRenderer()),
@@ -526,7 +526,7 @@ async def test_htmx_update_persists_llm_meta_only_on_save(monkeypatch: pytest.Mo
     monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit_and_refresh)
     monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
 
-    response = await templates_reg.htmx_update(
+    response: Any = await templates_reg.htmx_update(
         template_id=template_id,
         request=cast(
             Any,
@@ -600,7 +600,7 @@ async def test_htmx_update_pending_review_confirmation_refreshes_full_panel(
     monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit_and_refresh)
     monkeypatch.setattr(templates_reg, "_template_panel_context", fake_panel_context)
 
-    response = await templates_reg.htmx_update(
+    response: Any = await templates_reg.htmx_update(
         template_id=template_id,
         request=cast(
             Any,
@@ -760,7 +760,7 @@ async def test_htmx_update_strips_client_supplied_import_status(
     monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
     monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
 
-    response = await templates_reg.htmx_update(
+    response: Any = await templates_reg.htmx_update(
         template_id=uuid.uuid4(),
         request=cast(
             Any,
@@ -829,7 +829,7 @@ async def test_htmx_update_pending_review_cannot_be_faked_via_llm_meta(
     monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
     monkeypatch.setattr(templates_reg, "render_template_html", lambda template: "<pre></pre>")
 
-    response = await templates_reg.htmx_update(
+    response: Any = await templates_reg.htmx_update(
         template_id=uuid.uuid4(),
         request=cast(
             Any,
@@ -907,7 +907,7 @@ async def test_htmx_fill_render_refuses_pending_review_template(
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
 
-    response = await templates_reg.htmx_fill_render(
+    response: Any = await templates_reg.htmx_fill_render(
         template_id=template.id,
         request=cast(Any, FakeFormRequest({})),
         templates=cast(Any, FakeTemplateRenderer()),
@@ -943,7 +943,7 @@ async def test_htmx_fill_save_refuses_pending_review_template(
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
 
-    response = await templates_reg.htmx_fill_save(
+    response: Any = await templates_reg.htmx_fill_save(
         template_id=template.id,
         request=cast(
             Any,
@@ -990,7 +990,7 @@ async def test_page_fill_redirects_pending_review_template(
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
 
-    response = await templates_reg.page_fill(
+    response: Any = await templates_reg.page_fill(
         template_id=template.id,
         request=cast(Any, SimpleNamespace(query_params={})),
         templates=cast(Any, FakeTemplateRenderer()),
@@ -1004,7 +1004,7 @@ async def test_page_fill_redirects_pending_review_template(
 
 @pytest.mark.asyncio
 async def test_htmx_update_rejects_non_object_llm_meta() -> None:
-    response = await templates_reg.htmx_update(
+    response: Any = await templates_reg.htmx_update(
         template_id=uuid.uuid4(),
         request=cast(
             Any,
@@ -1031,7 +1031,7 @@ async def test_htmx_fill_render_reports_unparsable_body(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(templates_reg, "_render_fill", boom)
 
-    response = await templates_reg.htmx_fill_render(
+    response: Any = await templates_reg.htmx_fill_render(
         template_id=uuid.uuid4(),
         request=cast(Any, FakeFormRequest({})),
         templates=cast(Any, FakeTemplateRenderer()),
@@ -1071,7 +1071,7 @@ async def test_htmx_process_llm_reports_plain_llm_failure(monkeypatch: pytest.Mo
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
     monkeypatch.setattr(templates_reg, "llm_service", lambda *a, **k: FakeLlmContext())
 
-    response = await templates_reg.htmx_process_llm(
+    response: Any = await templates_reg.htmx_process_llm(
         template_id=template_id,
         request=cast(Any, FakeFormRequest({})),
         templates=cast(Any, FakeTemplateRenderer()),
@@ -1152,7 +1152,7 @@ async def test_htmx_regenerate_meta_reports_plain_llm_failure(monkeypatch: pytes
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
     monkeypatch.setattr(templates_reg, "llm_service", lambda *a, **k: FakeLlmContext())
 
-    response = await templates_reg.htmx_regenerate_meta(
+    response: Any = await templates_reg.htmx_regenerate_meta(
         template_id=template_id,
         request=cast(Any, FakeFormRequest({})),
         templates=cast(Any, FakeTemplateRenderer()),
@@ -1196,7 +1196,7 @@ async def test_htmx_set_project_refreshes_tree_and_panel(
     monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
     monkeypatch.setattr(templates_reg, "_template_panel_context", fake_panel_context)
 
-    response = await templates_reg.htmx_set_project(
+    response: Any = await templates_reg.htmx_set_project(
         template_id,
         request=cast(Any, FakeFormRequest({"project_id": str(project_id)})),
         templates=cast(Any, FakeTemplateRenderer()),
@@ -1211,7 +1211,7 @@ async def test_htmx_set_project_refreshes_tree_and_panel(
 
 @pytest.mark.asyncio
 async def test_htmx_set_project_rejects_missing_project_id() -> None:
-    response = await templates_reg.htmx_set_project(
+    response: Any = await templates_reg.htmx_set_project(
         uuid.uuid4(),
         request=cast(Any, FakeFormRequest({"project_id": ""})),
         templates=cast(Any, FakeTemplateRenderer()),
@@ -1265,7 +1265,7 @@ async def test_htmx_edit_content_success_renders_panel_with_toast(
     monkeypatch.setattr(templates_reg, "commit_and_refresh", fake_commit)
     monkeypatch.setattr(templates_reg, "_template_panel_context", fake_panel_context)
 
-    response = await templates_reg.htmx_edit_content(
+    response: Any = await templates_reg.htmx_edit_content(
         template_id=template_id,
         request=cast(Any, FakeFormRequest({"content": '{"a": "x"}'})),
         templates=cast(Any, FakeTemplateRenderer()),
@@ -1295,7 +1295,7 @@ async def test_htmx_edit_content_parse_error_retargets_and_carries_line(
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
 
-    response = await templates_reg.htmx_edit_content(
+    response: Any = await templates_reg.htmx_edit_content(
         template_id=template_id,
         request=cast(Any, FakeFormRequest({"content": "{broken"})),
         templates=cast(Any, FakeTemplateRenderer()),
@@ -1329,7 +1329,7 @@ async def test_htmx_edit_content_plain_validation_error_has_no_line_event(
 
     monkeypatch.setattr(templates_reg, "TemplateService", FakeTemplateService)
 
-    response = await templates_reg.htmx_edit_content(
+    response: Any = await templates_reg.htmx_edit_content(
         template_id=template_id,
         request=cast(Any, FakeFormRequest({"content": "  "})),
         templates=cast(Any, FakeTemplateRenderer()),

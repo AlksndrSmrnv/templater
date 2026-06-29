@@ -10,7 +10,9 @@ with non-parsable bodies (GET, urlencoded, …) are still imported.
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from collections.abc import Sequence
+from datetime import datetime
+from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,8 +55,21 @@ def _new_node() -> dict[str, Any]:
     return {"folders": {}, "templates": [], "chains": []}
 
 
+class _FolderItem(Protocol):
+    """Structural view of what :func:`build_folder_tree` reads from a row.
+
+    Satisfied by both ``MessageTemplate`` and ``FilledTemplate`` (the filled
+    «Заполненные шаблоны» tree reuses this grouping), so the function accepts
+    either without an explicit union.
+    """
+
+    display_order: int
+    created_at: datetime
+    folder_path: list[str]
+
+
 def build_folder_tree(
-    templates: list[MessageTemplate],
+    templates: Sequence[_FolderItem],
     extra_folders: list[list[str]] | None = None,
 ) -> dict[str, Any]:
     """Group templates into a nested ``{"folders": {...}, "templates": [...]}``.
