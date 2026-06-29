@@ -55,9 +55,19 @@ class _FakeChainRepo:
         orders = [c.display_order for c in self.chains if list(c.folder_path or []) == list(folder_path)]
         return (max(orders) + 1) if orders else 0
 
+    async def list_by_folder(self, folder_path: Any) -> Any:
+        return sorted(
+            (c for c in self.chains if list(c.folder_path or []) == list(folder_path)),
+            key=lambda c: (c.display_order, c.created_at),
+        )
+
     async def add(self, chain: Any) -> Any:
         if getattr(chain, "id", None) is None:
             chain.id = uuid.uuid4()
+        # Real chains carry a server-default created_at; the in-memory model
+        # leaves it None, so stamp one (move sorts siblings by it).
+        if getattr(chain, "created_at", None) is None:
+            chain.created_at = self._tick()
         self.chains.append(chain)
         return chain
 
@@ -286,6 +296,60 @@ async def test_remove_last_step_clears_project_lock() -> None:
     # A different project can now seed the (empty) chain.
     await svc.add_step(chain.id, b.id)
     assert chain.project_name_snapshot == "Выписки"
+
+
+# ---- move_chain (mirrors FilledTemplateService.move_filled) --------------------
+
+
+def _chain_ns(name: str, folder: list[str], order: int, created: datetime) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(), name=name, folder_path=folder,
+        display_order=order, created_at=created, steps=[],
+    )
+
+
+@pytest.mark.asyncio
+async def test_move_chain_sets_folder_and_reorders_siblings() -> None:
+    svc = _service()
+    c1 = _chain_ns("c1", ["A"], 0, datetime(2026, 6, 25, 12, 0))
+    c2 = _chain_ns("c2", ["B"], 0, datetime(2026, 6, 25, 12, 1))
+    svc.repo.chains.extend([c1, c2])  # type: ignore[attr-defined]
+
+    await svc.move_chain(c1.id, ["B"], [c2.id, c1.id])
+    assert c1.folder_path == ["B"]
+    assert c2.display_order == 0 and c1.display_order == 1
+
+
+@pytest.mark.asyncio
+async def test_move_chain_ignores_non_sibling_ids_in_order() -> None:
+    svc = _service()
+    c1 = _chain_ns("c1", ["A"], 0, datetime(2026, 6, 25, 12, 0))
+    elsewhere = _chain_ns("elsewhere", ["B"], 7, datetime(2026, 6, 25, 12, 1))
+    svc.repo.chains.extend([c1, elsewhere])  # type: ignore[attr-defined]
+
+    # A crafted order including a chain from another folder must not renumber it.
+    await svc.move_chain(c1.id, ["A"], [c1.id, elsewhere.id])
+    assert c1.display_order == 0
+    assert elsewhere.display_order == 7  # untouched
+
+
+@pytest.mark.asyncio
+async def test_move_chain_keeps_hidden_siblings_without_duplicate_order() -> None:
+    # Search/truncation can hide part of a folder: the DnD payload then covers
+    # only visible chains. Hidden siblings keep their slots and the folder ends
+    # up renumbered without duplicates.
+    svc = _service()
+    hidden = _chain_ns("hidden", ["F"], 0, datetime(2026, 6, 25, 12, 0))
+    v1 = _chain_ns("v1", ["F"], 1, datetime(2026, 6, 25, 12, 1))
+    v2 = _chain_ns("v2", ["F"], 2, datetime(2026, 6, 25, 12, 2))
+    svc.repo.chains.extend([hidden, v1, v2])  # type: ignore[attr-defined]
+
+    # The user sees only v1/v2 and drags v2 above v1.
+    await svc.move_chain(v2.id, ["F"], [v2.id, v1.id])
+    assert hidden.display_order == 0  # hidden slot preserved
+    assert v2.display_order == 1 and v1.display_order == 2
+    orders = [hidden.display_order, v1.display_order, v2.display_order]
+    assert len(set(orders)) == len(orders), "display_order must stay unique"
 
 
 @pytest.mark.asyncio

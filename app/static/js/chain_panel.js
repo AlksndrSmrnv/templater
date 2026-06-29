@@ -418,6 +418,11 @@ window.chainPanel = function (config) {
             step.error = '';
             step.sending = true;
             step.statusCode = null;
+            // Clear any prior run's response up front: it's a stale signal for
+            // «did this run reach the server» (sendAll's chain-badge check reads
+            // s.response), and it must not linger next to a fresh error in the
+            // step card (chain_panel.html shows response and error together).
+            step.response = null;
             const res = this.resolveBody(idx);
             step.resolvedRequestHtml = res.html;
             step.resolvedRefs = res.refs > 0;
