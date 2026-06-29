@@ -145,7 +145,7 @@
                                 <span class="role-cell-label">
                                     {% set cid = role_client_ids.get(role) %}
                                     {% if cid and cid in alive_client_ids %}
-                                        <a href="/templater/clients/{{ cid }}">{{ label or '—' }}</a>
+                                        <a href="/templater/clients?open={{ cid }}">{{ label or '—' }}</a>
                                     {% elif cid %}
                                         <span class="muted">{{ label or '—' }} (удалён)</span>
                                     {% else %}
