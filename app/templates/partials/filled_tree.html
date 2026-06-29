@@ -90,7 +90,6 @@
             <button type="submit" class="btn small" title="Сохранить">✓</button>
         </form>
         <span class="tree-chain-actions">
-            <a class="tree-act" href="/templater/chains/{{ ch.id }}" title="Открыть на отдельной странице" @click.stop><iconify-icon icon="lucide:external-link"></iconify-icon></a>
             <button type="button" class="tree-act" title="Переименовать"
                     @click.stop="editing = true; $nextTick(() => $refs.chainRename.focus())"><iconify-icon icon="lucide:pencil"></iconify-icon></button>
             <button type="button" class="tree-act danger" title="Удалить цепочку"

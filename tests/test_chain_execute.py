@@ -67,16 +67,6 @@ def test_execute_route_registered() -> None:
     assert "/send-htmx/execute" in paths
 
 
-def test_step_dependencies_only_counts_prior_steps() -> None:
-    steps = [
-        {"body": '{"a": 1}'},                                  # step 1: none
-        {"body": '{"id": "{{ $1.transferId }}"}'},             # step 2: -> 1
-        {"body": '{"x": "{{ $2.id }}", "self": "{{ $3.y }}", "fwd": "{{ $9.z }}"}'},
-    ]
-    deps = chains._step_dependencies(steps)
-    assert deps == {1: [], 2: [1], 3: [2]}  # self ($3) and forward ($9) dropped
-
-
 def test_default_mock_response_is_utc_z_json() -> None:
     import json
 

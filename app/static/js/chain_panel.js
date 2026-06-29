@@ -142,6 +142,12 @@ window.chainPanel = function (config) {
             }
             return out.sort((a, b) => a - b);
         },
+        // True when at least one step references an earlier step's response —
+        // drives the «Зависимости сообщений» overview (which recomputes from the
+        // reactive `steps`, so it stays correct after bind/unbind/reorder/remove).
+        hasAnyDeps() {
+            return this.steps.some((_, i) => this.stepDeps(i).length > 0);
+        },
         priorSteps(idx) {
             return this.steps.slice(0, idx).map((s, i) => ({
                 num: i + 1, name: s.name, sent: !!s.response,

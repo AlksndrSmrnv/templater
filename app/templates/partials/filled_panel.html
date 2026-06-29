@@ -1,8 +1,6 @@
-{# Detail body of a filled template. Used in two homes:
-   - the workspace panel (#filled-panel), standalone=false — header with
-     actions, delete swaps in the empty-state and refreshes the tree;
-   - the standalone page (filled_templates/view.html), standalone=true —
-     the page renders its own header, delete redirects to the workspace. #}
+{# Detail body of a filled template, rendered in the workspace panel
+   (#filled-panel). The header carries the actions; delete swaps in the
+   empty-state and refreshes the tree. #}
 {% set standalone = standalone | default(false) %}
 <div id="filled-panel-body" x-data="{
     /*
@@ -77,7 +75,6 @@
             {% endif %}
         </div>
         <div class="panel-actions">
-            <a class="btn" href="/templater/filled-templates/{{ ft.id }}" title="Открыть на отдельной странице"><iconify-icon icon="lucide:external-link"></iconify-icon></a>
             {% if ft.message_template_id %}
                 <a class="btn" href="/templater/templates?template={{ ft.message_template_id }}">К исходному шаблону</a>
             {% endif %}

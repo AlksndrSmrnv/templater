@@ -3,7 +3,6 @@
 Pages:
 - ``GET /filled-templates`` — workspace: folder tree on the left, detail panel
   on the right. ``?open=<uuid>`` opens that item's panel on load.
-- ``GET /filled-templates/{id}`` — standalone detail page (direct links).
 
 HTMX:
 - ``GET /filled-templates-htmx/tree?search=...`` — tree partial.
@@ -85,7 +84,7 @@ async def _detail_context(
     *,
     visible_group_ids: set[uuid.UUID] | None = None,
 ) -> dict[str, Any]:
-    """Context shared by the standalone view page and the workspace panel."""
+    """Context for the workspace detail panel (and its HTMX refreshes)."""
 
     item = await FilledTemplateService(session).get(filled_id, visible_group_ids=visible_group_ids)
     rendered_html = render_filled_html(
@@ -162,22 +161,6 @@ async def page_list(
             "open_filled_id": open_filled_id,
             **tree_context,
         },
-    )
-
-
-@router.get("/filled-templates/{filled_id}")
-async def page_view(
-    filled_id: uuid.UUID,
-    request: Request,
-    templates: Jinja2Templates = TemplatesDep,
-    session: AsyncSession = SessionDep,
-    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
-) -> Response:
-    context = await _detail_context(session, filled_id, visible_group_ids=group_ids)
-    return templates.TemplateResponse(
-        request,
-        "filled_templates/view.html",
-        {"active": "templates", "standalone": True, **context},
     )
 
 
@@ -457,7 +440,6 @@ async def htmx_switch_role(
 async def htmx_delete(
     filled_id: uuid.UUID,
     request: Request,
-    redirect: bool = False,
     panel: bool = False,
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
@@ -479,7 +461,7 @@ async def htmx_delete(
                 )
             },
         )
-    headers = {"HX-Trigger": toast_header("Заполненный шаблон удалён")}
-    if redirect:
-        headers["HX-Redirect"] = "/templater/filled-templates"
-    return Response(status_code=204 if redirect else 200, headers=headers)
+    return Response(
+        status_code=200,
+        headers={"HX-Trigger": toast_header("Заполненный шаблон удалён")},
+    )

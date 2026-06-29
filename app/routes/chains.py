@@ -18,12 +18,11 @@ from __future__ import annotations
 import asyncio
 import json
 import random
-import re
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -197,25 +196,6 @@ async def _manage_context(
     return {"chain_roles": chain_roles, "manage_template_id": any_template_id}
 
 
-def _step_dependencies(steps: list[dict[str, Any]]) -> dict[int, list[int]]:
-    """Map each step position (1-based) to the prior step numbers it references
-    via ``{{ $N.path }}`` tokens in its body — drives the «зависит от шага N»
-    badges on the standalone chain page."""
-
-    pattern = re.compile(r"\{\{\s*\$(\d+)\.[^}\s]+\s*\}\}")
-    deps: dict[int, list[int]] = {}
-    for idx, step in enumerate(steps, start=1):
-        found: list[int] = []
-        for m in pattern.finditer(step.get("body") or ""):
-            n = int(m.group(1))
-            # Only prior steps are real dependencies; a self/forward reference
-            # ($N with N >= this step) can't resolve, so don't badge it.
-            if 1 <= n < idx and n not in found:
-                found.append(n)
-        deps[idx] = sorted(found)
-    return deps
-
-
 # ---------- tree / panel rendering ----------
 
 
@@ -270,7 +250,6 @@ async def _panel_context(
         "chain": chain,
         "chain_data": data,
         "available": available,
-        "dependencies": _step_dependencies(data["steps"]),
         "execute_url": "/templater/send-htmx/execute",
         **manage,
     }
@@ -361,7 +340,6 @@ async def htmx_delete_chain(
     chain_id: uuid.UUID,
     request: Request,
     panel: bool = False,
-    redirect: bool = False,
     search: str = "",
     templates: Jinja2Templates = TemplatesDep,
     session: AsyncSession = SessionDep,
@@ -372,23 +350,14 @@ async def htmx_delete_chain(
         await commit_or_409(session)
     except DomainError as exc:
         await session.rollback()
-        # From the standalone page (redirect) or the inline panel (panel) there
-        # is no tree to swap into — show a toast and keep the current view.
-        if redirect or panel:
+        # From the inline panel (panel) there is no tree to swap into — show a
+        # toast and keep the current view.
+        if panel:
             return _toast_only(exc.message, "error")
         return await _tree_response(
             request, templates, session, search=search,
             headers={"HX-Trigger": toast_header(exc.message, toast_type="error")},
             visible_group_ids=group_ids,
-        )
-    if redirect:
-        # Deleted from the standalone page — send the user back to the workspace.
-        return Response(
-            status_code=200,
-            headers={
-                "HX-Redirect": "/templater/filled-templates",
-                "HX-Trigger": toast_header("Цепочка удалена"),
-            },
         )
     if panel:
         # Deleted from the workspace panel: swap in the empty-state and let the
@@ -406,7 +375,7 @@ async def htmx_delete_chain(
     )
 
 
-# ---------- chain panel + standalone page ----------
+# ---------- chain panel ----------
 
 
 @router.get("/filled-templates-htmx/chains/{chain_id}/panel")
@@ -433,27 +402,6 @@ async def htmx_chain_panel(
         )
 
 
-@router.get("/chains/{chain_id}")
-async def page_chain(
-    chain_id: uuid.UUID,
-    request: Request,
-    templates: Jinja2Templates = TemplatesDep,
-    session: AsyncSession = SessionDep,
-    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
-) -> Response:
-    try:
-        context = await _panel_context(session, chain_id, visible_group_ids=group_ids)
-    except DomainError:
-        # Full-page nav to a missing/hidden chain — send the user to the
-        # workspace rather than rendering a raw JSON 404 in the browser.
-        return RedirectResponse("/templater/filled-templates", status_code=303)
-    return templates.TemplateResponse(
-        request,
-        "chains/view.html",
-        {"active": "templates", "standalone": True, **context},
-    )
-
-
 # ---------- steps (return the chain panel) ----------
 
 
@@ -466,8 +414,8 @@ async def htmx_add_step(
     group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     form = await request.form()
-    # The picker rides on both the inline workspace panel and the standalone
-    # page; ``standalone`` keeps the re-rendered partial's header consistent.
+    # ``standalone`` keeps the re-rendered partial's header consistent (the
+    # workspace panel always renders its own header).
     standalone = form_str(form, "standalone") == "1"
     try:
         filled_id = uuid.UUID(form_str(form, "filled_id"))
