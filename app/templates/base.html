@@ -8,6 +8,10 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/templater/static/css/app.css">
+    {# Применяем сохранённую ширину дерева до первой отрисовки — без визуального
+       скачка при загрузке workspace-страниц. #}
+    <script>(function(){try{var w=localStorage.getItem('tm:treeWidth');
+        if(w)document.documentElement.style.setProperty('--tree-w',w+'px');}catch(e){}})();</script>
     <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"
             integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+"
             crossorigin="anonymous"
@@ -65,7 +69,7 @@
           hx-trigger="load"
           hx-swap="innerHTML"></span>
 </header>
-<main class="content">
+<main class="content {% block main_class %}{% endblock %}">
     {% block content %}{% endblock %}
 </main>
 <div id="toast"
@@ -75,6 +79,9 @@
      :class="toastType"
      x-text="toastMessage"></div>
 {% block scripts %}{% endblock %}
+{# Resizer дерева + мгновенные тултипы имён. Грузится на всех страницах, но
+   активируется только при наличии .workspace (иначе no-op). #}
+<script src="/templater/static/js/workspace_ui.js" defer></script>
 {# Alpine loads LAST so every page-level component-definition script (e.g.
    client_switch_modal.js) has defined its window.* factory before Alpine runs.
    Alpine's CDN build starts initializing the DOM as soon as its own script

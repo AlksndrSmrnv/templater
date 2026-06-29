@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Заполненные шаблоны — Template Maker{% endblock %}
+{% block main_class %}content-wide{% endblock %}
 {% block content %}
 <div class="workspace" x-data="{ selected: {{ (open_filled_id | default('') or none) | tojson | forceescape }} }">
     <aside class="workspace-left">
