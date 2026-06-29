@@ -42,6 +42,26 @@
 </div>
 {# Single client-switch modal, page-level so it survives #filled-panel swaps. #}
 {% include "partials/client_switch_modal.html" %}
+
+{# Page-level send-history drawer; survives #filled-panel swaps. The «История
+   отправок» buttons in the filled/chain panels hx-get the table into
+   #send-history-content and dispatch open-send-history to slide it in. #}
+<div x-data="{ open: false, loading: false }"
+     @open-send-history.window="open = true; loading = true"
+     @keydown.escape.window="open && (open = false)">
+    <div class="detail-drawer"
+         :class="{ open: open }"
+         role="dialog"
+         aria-modal="true"
+         x-cloak
+         x-effect="document.body.style.overflow = open ? 'hidden' : ''"
+         @click.self="open = false">
+        <div class="drawer-panel" @click.stop @htmx:after-swap="loading = false">
+            <div class="drawer-body muted" x-show="loading">Загрузка…</div>
+            <div id="send-history-content" x-show="!loading"></div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}

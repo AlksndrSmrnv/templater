@@ -64,6 +64,10 @@ window.chainPanel = function (config) {
                 error: '',
                 response: null,
                 statusCode: null,  // parsed from the response body (any case, nested)
+                // Last successful / failed send (server-seeded, updated locally
+                // after each send so the badge moves without a panel re-render).
+                lastSuccessAt: s.last_success_at || '',
+                lastErrorAt: s.last_error_at || '',
                 resolvedRequestHtml: null,
                 resolvedRefs: false,        // resolved body contains purple references
                 resolvedUnresolved: false,  // ...and some couldn't be resolved (red)
@@ -423,6 +427,11 @@ window.chainPanel = function (config) {
                         body: res.resolved,
                         format: step.format,
                         mock_response: step.mockResponse,
+                        // Context so the send is recorded against this chain step.
+                        source_kind: 'chain_step',
+                        chain_id: this.chainId,
+                        chain_step_id: step.id,
+                        name: step.name,
                     }),
                 });
                 if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -434,7 +443,14 @@ window.chainPanel = function (config) {
                     body: this.prettyJson(d.body),
                 };
                 step.statusCode = window.extractStatusCode(d.body);
+                // Mirror the server's ok rule: absent/zero statusCode = success.
+                // The server already recorded this send; ISO «now» matches that.
+                if (step.statusCode === null || step.statusCode === 0) step.lastSuccessAt = window.nowSendTs();
+                else step.lastErrorAt = window.nowSendTs();
             } catch (e) {
+                // No usable response — we can't tell if the server recorded a
+                // send (or even received it), so leave the badges to the next
+                // panel render (the history is the source of truth).
                 step.error = 'Ошибка отправки (мок)';
             } finally {
                 step.sending = false;
