@@ -40,8 +40,12 @@ window.chainPanel = function (config) {
         pickerOpen: false,
         pickerSearch: '',
         running: false,
-        // Aggregate statusCode of the last «Запустить всё» run (null = hide).
-        chainStatus: null,
+        // Roll-up of the last «Запустить всё» run (null = hide): how many steps
+        // succeeded / failed / were skipped. Replaces the old single-statusCode
+        // badge so a batch of independent requests reports «N ✓ · M ✗».
+        chainSummary: null,
+        // Live «i / N» counter while a «Запустить всё» run is in flight.
+        progress: { current: 0, total: 0 },
         // Chain-level «последний запуск» badges (ISO; server-seeded, updated
         // locally after sendAll). Rendered via window.formatSendTs.
         chainLastSuccessAt: config.chainLastSuccessAt || '',
@@ -70,6 +74,8 @@ window.chainPanel = function (config) {
                 collapsed: true,
                 sending: false,
                 error: '',
+                skipped: false,    // sendAll skipped it (a step it references failed)
+                skipReason: '',    // «Пропущен: шаг N не выполнен»
                 response: null,
                 statusCode: null,  // parsed from the response body (any case, nested)
                 operuid: null,     // business id, recursively pulled from the body
@@ -418,6 +424,8 @@ window.chainPanel = function (config) {
         async send(idx) {
             const step = this.steps[idx];
             step.error = '';
+            step.skipped = false;
+            step.skipReason = '';
             step.sending = true;
             step.statusCode = null;
             step.operuid = null;
@@ -485,48 +493,73 @@ window.chainPanel = function (config) {
         },
         async sendAll() {
             this.running = true;
-            this.chainStatus = null;
-            // Clear last run's per-step state so the aggregate below can't pick
-            // up a stale statusCode/error from steps that don't run this time.
-            // operuid/suit too: on an early break, steps after the failure never
-            // hit send(), so their badges would otherwise keep last run's values
-            // while statusCode is cleared (a mismatch).
-            this.steps.forEach((s) => { s.statusCode = null; s.operuid = null; s.suit = null; s.error = ''; });
-            let ranCount = 0;
+            this.chainSummary = null;
+            this.progress = { current: 0, total: this.steps.length };
+            // Clear last run's per-step state so the summary below can't pick up a
+            // stale statusCode/error/skip from a previous run. operuid/suit too:
+            // skipped steps never hit send(), so their badges would otherwise keep
+            // last run's values while statusCode is cleared (a mismatch).
+            this.steps.forEach((s) => {
+                s.statusCode = null; s.operuid = null; s.suit = null;
+                s.error = ''; s.skipped = false; s.skipReason = '';
+            });
+            // 1-based numbers of steps that didn't produce a usable response this
+            // run — either an execution error or a skip. A later step that
+            // references any of these can't resolve, so it's skipped too; since
+            // skipped numbers are added here as well, transitive skips fall out
+            // for free. A non-zero statusCode is NOT in here: the response exists
+            // and references still resolve, so dependents keep running.
+            const broken = new Set();
             try {
                 for (let i = 0; i < this.steps.length; i++) {
+                    const step = this.steps[i];
+                    const blockedBy = this.stepDeps(i).filter((n) => broken.has(n));
+                    if (blockedBy.length) {
+                        step.skipped = true;
+                        // Name each blocking step by why it broke — «завершился
+                        // ошибкой» (it ran and errored) vs «пропущен» (it was
+                        // itself skipped) — rather than a blanket «не выполнен».
+                        const reasons = blockedBy.map((n) => 'шаг ' + n
+                            + (this.steps[n - 1] && this.steps[n - 1].skipped ? ' пропущен' : ' завершился ошибкой'));
+                        step.skipReason = 'Пропущен: ' + reasons.join(', ');
+                        step.response = null;
+                        step.statusCode = null;
+                        // Drop the previous run's «Итоговый запрос» preview — send()
+                        // never runs for a skipped step, so it would otherwise linger
+                        // next to the «пропущен» badge with no response.
+                        step.resolvedRequestHtml = null;
+                        step.resolvedRefs = false;
+                        step.resolvedUnresolved = false;
+                        broken.add(i + 1);
+                        this.progress.current = i + 1;
+                        continue;
+                    }
                     await this.send(i);
-                    ranCount = i + 1;
-                    // Stop on the first errored step — later steps may reference
-                    // its (now absent) response. A non-zero statusCode is a
-                    // logical failure but not an execution error, so the chain
-                    // keeps going (it's surfaced red in the aggregate below).
-                    if (this.steps[i].error) break;
+                    this.progress.current = i + 1;
+                    // Only an execution error (no usable response) breaks dependents.
+                    if (step.error) broken.add(i + 1);
                 }
             } finally {
                 this.running = false;
+                this.progress = { current: 0, total: 0 };
             }
-            // Aggregate over the steps that actually ran (0..ranCount-1): red on
-            // the first execution error or non-zero statusCode; green only when
-            // every run step succeeded and at least one reported statusCode 0;
-            // hidden when nothing reported a statusCode and nothing errored.
-            const ran = this.steps.slice(0, ranCount);
-            const failed = ran.find((s) => s.error || (s.statusCode !== null && s.statusCode !== 0));
-            if (failed) {
-                // `title` carries the step's own reason (e.g. «Не разрешены
-                // ссылки: …») so it shows on hover without expanding the step.
-                this.chainStatus = { ok: false, code: failed.error ? null : failed.statusCode, title: failed.error || '' };
-            } else if (ran.some((s) => s.statusCode === 0)) {
-                this.chainStatus = { ok: true, code: 0, title: '' };
-            } else {
-                this.chainStatus = null;
-            }
-            // Advance the chain-level «последний запуск» badge only for steps
-            // that actually reached the server (have a response) — a step aborted
-            // before fetch (e.g. «Не разрешены ссылки») writes no message_sends
+            // Roll up the run: skipped first, then steps that actually reached
+            // send() — failed = execution error or non-zero statusCode, ok = rest.
+            // Steps that never ran (no response, no error, not skipped) don't count.
+            let ok = 0, failed = 0, skipped = 0;
+            this.steps.forEach((s) => {
+                if (s.skipped) { skipped += 1; return; }
+                if (s.response === null && !s.error) return;
+                if (s.error || (s.statusCode !== null && s.statusCode !== 0)) failed += 1;
+                else ok += 1;
+            });
+            this.chainSummary = (ok || failed || skipped) ? { ok, failed, skipped } : null;
+            // Advance the chain-level «последний запуск» badge only for steps that
+            // actually reached the server (have a response) — a step aborted before
+            // fetch (e.g. «Не разрешены ссылки») or skipped writes no message_sends
             // row and leaves its own badge untouched, so the chain badge must not
             // move either. Among sent steps, a non-zero statusCode = failure.
-            const sent = ran.filter((s) => s.response !== null);
+            const sent = this.steps.filter((s) => s.response !== null);
             if (sent.length > 0) {
                 const failedSent = sent.some((s) => s.statusCode !== null && s.statusCode !== 0);
                 if (failedSent) this.chainLastErrorAt = window.nowSendTs();
@@ -546,13 +579,15 @@ window.chainPanel = function (config) {
             step.statusCode = null;
             step.operuid = null;
             step.suit = null;
-            // The «Запустить всё» aggregate may have included this step — it's
-            // now stale, so drop it rather than keep showing the old colour.
-            this.chainStatus = null;
+            // The «Запустить всё» summary may have counted this step — it's now
+            // stale, so drop it rather than keep showing the old counts.
+            this.chainSummary = null;
             step.resolvedRequestHtml = null;
             step.resolvedRefs = false;
             step.resolvedUnresolved = false;
             step.error = '';
+            step.skipped = false;
+            step.skipReason = '';
             for (let j = idx + 1; j < this.steps.length; j++) {
                 this.steps[j].resolvedRequestHtml = null;
                 this.steps[j].resolvedRefs = false;
