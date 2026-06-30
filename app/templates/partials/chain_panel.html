@@ -101,7 +101,7 @@
                 <span class="chain-role-value {% if not r.label %}muted{% endif %}">
                     {{ r.label if r.label else ('разные' if not r.uniform else '—') }}
                 </span>
-                <button type="button" class="btn small"
+                <button type="button" class="btn small" :disabled="running"
                         @click="$dispatch('open-client-switch', {
                             role: {{ r.role | tojson | forceescape }},
                             title: {{ ('Заменить во всей цепочке: ' ~ r.title) | tojson | forceescape }},
@@ -186,7 +186,7 @@
                                     <span class="chain-role-title" x-text="r.title"></span>
                                     <span class="chain-role-value" x-text="r.label"></span>
                                     <button type="button" class="btn small"
-                                            :disabled="!step.message_template_id"
+                                            :disabled="!step.message_template_id || running"
                                             :title="step.message_template_id ? '' : 'Исходный шаблон удалён'"
                                             @click="$dispatch('open-client-switch', {
                                                 role: r.role,
