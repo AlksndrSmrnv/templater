@@ -51,8 +51,11 @@ def _haystack(template: MessageTemplate) -> str:
 def _new_node() -> dict[str, Any]:
     # ``chains`` is only populated for the «Заполненные шаблоны» tree (request
     # chains live alongside filled templates); the collections tree leaves it
-    # empty and its macro never reads it.
-    return {"folders": {}, "templates": [], "chains": []}
+    # empty and its macro never reads it. ``entries`` is the unified, kind-tagged
+    # view (templates + chains) consumed by the filled-tree macro; the
+    # collections tree ignores it. (Named ``entries`` rather than ``items`` to
+    # avoid clashing with ``dict.items()`` when the macro does ``node.x``.)
+    return {"folders": {}, "templates": [], "chains": [], "entries": []}
 
 
 class _FolderItem(Protocol):
@@ -68,17 +71,78 @@ class _FolderItem(Protocol):
     folder_path: list[str]
 
 
+class _RenumberRow(Protocol):
+    """Structural view of a row :func:`reorder_folder_unified` resequences —
+    satisfied by ``FilledTemplate`` and ``RequestChain`` alike."""
+
+    id: uuid.UUID
+    display_order: int
+    created_at: datetime
+
+
+def reorder_folder_unified(
+    filled_siblings: Sequence[_RenumberRow],
+    chain_siblings: Sequence[_RenumberRow],
+    payload: list[tuple[str, uuid.UUID]],
+) -> None:
+    """Renumber ``display_order`` across a folder's filled templates *and*
+    request chains as one shared sequence.
+
+    Filled templates and chains previously kept independent per-folder order
+    sequences, so the tree always rendered templates first, then chains — a
+    chain could only land below a folder's templates regardless of where it was
+    dropped. With a shared sequence the two interleave in their real folder
+    order.
+
+    ``payload`` is the ``(kind, id)`` order the client currently *sees* — the
+    tree may be filtered by search or truncated, so it can be a subset of the
+    folder. Visible items are re-sequenced in payload order across the slots
+    they currently occupy; hidden siblings keep their positions. The whole
+    folder is renumbered 0..n-1, so a partial payload can never produce
+    duplicate ``display_order`` values. ``(kind, id)`` keys that don't belong to
+    the folder (crafted or stale payloads) are ignored. Rows are mutated
+    in place — both ``FilledTemplate`` and ``RequestChain`` expose a settable
+    ``display_order``.
+    """
+
+    merged: list[tuple[_RenumberRow, str]] = (
+        [(row, "t") for row in filled_siblings]
+        + [(row, "c") for row in chain_siblings]
+    )
+    full = sorted(merged, key=lambda rk: (rk[0].display_order, rk[0].created_at))
+    by_key: dict[tuple[str, uuid.UUID], _RenumberRow] = {
+        (kind, row.id): row for row, kind in full
+    }
+    payload_keys: list[tuple[str, uuid.UUID]] = []
+    seen: set[tuple[str, uuid.UUID]] = set()
+    for key in payload:
+        if key in by_key and key not in seen:
+            payload_keys.append(key)
+            seen.add(key)
+    payload_iter = iter(payload_keys)
+    for position, (row, kind) in enumerate(full):
+        if (kind, row.id) in seen:
+            by_key[next(payload_iter)].display_order = position
+        else:
+            row.display_order = position
+
+
 def build_folder_tree(
     templates: Sequence[_FolderItem],
     extra_folders: list[list[str]] | None = None,
 ) -> dict[str, Any]:
-    """Group templates into a nested ``{"folders": {...}, "templates": [...]}``.
+    """Group templates into a nested ``{"folders": {...}, "templates": [...],
+    "entries": [...]}``.
 
     Folders come from each template's materialised ``folder_path``. Order within
     a level follows ``display_order`` then ``created_at`` (preserving import
     order). ``extra_folders`` (a collection's explicit folder paths) are seeded
     into the tree even when empty, so folders with no requests still appear.
-    Consumed by ``partials/collections_tree.html`` via a recursive macro.
+
+    Each node also carries an ``entries`` list — a unified, kind-tagged view of
+    its leaf entries (here only templates; the filled-templates tree grafts
+    chains into it later) sorted by ``(display_order, created_at)``. Consumed by
+    ``partials/filled_tree.html`` via a recursive macro.
     """
 
     root = _new_node()
@@ -88,6 +152,10 @@ def build_folder_tree(
         for folder in template.folder_path or []:
             node = node["folders"].setdefault(str(folder), _new_node())
         node["templates"].append(template)
+        node["entries"].append(
+            {"kind": "template", "row": template,
+             "order": template.display_order, "created_at": template.created_at}
+        )
     for path in extra_folders or []:
         node = root
         for folder in path:

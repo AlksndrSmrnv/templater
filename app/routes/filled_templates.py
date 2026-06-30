@@ -35,7 +35,12 @@ from app.repositories.message_send import MessageSendRepository
 from app.repositories.request_chain import RequestChainRepository
 from app.routes.client_switch_utils import SWITCH_ROLES, role_ids_from_form
 from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
-from app.routes.htmx_utils import form_str, parse_json_path, parse_uuid_list, toast_header
+from app.routes.htmx_utils import (
+    form_str,
+    parse_json_path,
+    parse_reorder_payload,
+    toast_header,
+)
 from app.routes.uow import commit_or_409
 from app.services.filled_templates import FilledTemplateService, iter_role_labels
 from app.services.template_render import render_filled_html
@@ -340,7 +345,7 @@ async def htmx_move(
             visible_group_ids=group_ids,
         )
     folder = parse_json_path(form_str(form, "folder"))
-    order = parse_uuid_list(form_str(form, "order"))
+    order = parse_reorder_payload(form_str(form, "order"))
     try:
         await FilledTemplateService(session).move_filled(
             filled_id, folder, order, visible_group_ids=group_ids

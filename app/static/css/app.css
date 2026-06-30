@@ -806,7 +806,15 @@ body.workspace-resizing { cursor: col-resize; user-select: none; }
 .tree-search:focus { outline: none; border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
 
 .collections-tree { padding: 8px; overflow: auto; flex: 1; }
-.tree-list { list-style: none; margin: 0; padding-left: 16px; }
+.tree-list { list-style: none; margin: 0; padding-left: 18px; }
+/* Вертикальная направляющая каждого уровня дерева (кроме корня) — тонкая линия
+   вдоль левого края списка, как в проводнике файлов: наглядно показывает, какие
+   узлы принадлежат одной папке. Корневой уровень линию не несит. */
+.tree-list:not(.tree-root) {
+    border-left: 1px solid var(--border);
+    margin-left: 8px;
+    padding-left: 10px;
+}
 .tree-list.tree-root { padding-left: 6px; }
 
 .tree-collection { margin-bottom: 6px; }
@@ -855,7 +863,6 @@ body.workspace-resizing { cursor: col-resize; user-select: none; }
 .tree-item {
     display: flex; align-items: center; gap: 8px;
     padding: 5px 8px; border-radius: var(--radius-sm); cursor: pointer;
-    margin-left: 18px;
 }
 .tree-item:hover { background: var(--surface-2); }
 .tree-item.active { background: var(--surface-2); color: var(--text); font-weight: 500; box-shadow: inset 3px 0 0 var(--primary); }
@@ -1206,7 +1213,6 @@ input[type="file"]::-webkit-file-upload-button:hover { background: var(--surface
 .tree-chain {
     display: flex; align-items: center; gap: 8px;
     padding: 5px 8px; border-radius: var(--radius-sm); cursor: pointer;
-    margin-left: 18px;
 }
 .tree-chain:hover { background: var(--surface-2); }
 .tree-chain.active { background: var(--surface-2); color: var(--text); font-weight: 500; box-shadow: inset 3px 0 0 #c084fc; }

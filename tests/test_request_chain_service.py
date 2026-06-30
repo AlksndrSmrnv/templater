@@ -111,6 +111,9 @@ class _FakeFilledRepo:
     async def list_folder_paths(self) -> Any:
         return [list(f.folder_path or []) for f in self.filled]
 
+    async def list_by_folder(self, folder_path: Any) -> Any:
+        return [f for f in self.filled if list(f.folder_path or []) == list(folder_path)]
+
 
 class _FakeSettingsRepo:
     def __init__(self, values: dict[str, object] | None = None) -> None:
@@ -315,7 +318,7 @@ async def test_move_chain_sets_folder_and_reorders_siblings() -> None:
     c2 = _chain_ns("c2", ["B"], 0, datetime(2026, 6, 25, 12, 1))
     svc.repo.chains.extend([c1, c2])  # type: ignore[attr-defined]
 
-    await svc.move_chain(c1.id, ["B"], [c2.id, c1.id])
+    await svc.move_chain(c1.id, ["B"], [("c", c2.id), ("c", c1.id)])
     assert c1.folder_path == ["B"]
     assert c2.display_order == 0 and c1.display_order == 1
 
@@ -328,7 +331,7 @@ async def test_move_chain_ignores_non_sibling_ids_in_order() -> None:
     svc.repo.chains.extend([c1, elsewhere])  # type: ignore[attr-defined]
 
     # A crafted order including a chain from another folder must not renumber it.
-    await svc.move_chain(c1.id, ["A"], [c1.id, elsewhere.id])
+    await svc.move_chain(c1.id, ["A"], [("c", c1.id), ("c", elsewhere.id)])
     assert c1.display_order == 0
     assert elsewhere.display_order == 7  # untouched
 
@@ -345,10 +348,36 @@ async def test_move_chain_keeps_hidden_siblings_without_duplicate_order() -> Non
     svc.repo.chains.extend([hidden, v1, v2])  # type: ignore[attr-defined]
 
     # The user sees only v1/v2 and drags v2 above v1.
-    await svc.move_chain(v2.id, ["F"], [v2.id, v1.id])
+    await svc.move_chain(v2.id, ["F"], [("c", v2.id), ("c", v1.id)])
     assert hidden.display_order == 0  # hidden slot preserved
     assert v2.display_order == 1 and v1.display_order == 2
     orders = [hidden.display_order, v1.display_order, v2.display_order]
+    assert len(set(orders)) == len(orders), "display_order must stay unique"
+
+
+@pytest.mark.asyncio
+async def test_move_chain_interleaves_with_filled_templates() -> None:
+    # Unified per-folder order: moving a chain renumbers it among the folder's
+    # filled templates too — the chain can land above a template, not only
+    # below the template block.
+    t0 = _filled(name="t0")
+    t0.folder_path = ["F"]
+    t0.display_order = 0
+    t0.created_at = datetime(2026, 6, 25, 12, 0)
+    t2 = _filled(name="t2")
+    t2.folder_path = ["F"]
+    t2.display_order = 2
+    t2.created_at = datetime(2026, 6, 25, 12, 2)
+    svc = _service([t0, t2])
+    c1 = _chain_ns("c1", ["F"], 1, datetime(2026, 6, 25, 12, 1))
+    svc.repo.chains.append(c1)  # type: ignore[attr-defined]
+
+    # Drop the chain between the templates: order t0, c1, t2.
+    await svc.move_chain(c1.id, ["F"], [("t", t0.id), ("c", c1.id), ("t", t2.id)])
+    assert t0.display_order == 0
+    assert c1.display_order == 1
+    assert t2.display_order == 2
+    orders = [t0.display_order, c1.display_order, t2.display_order]
     assert len(set(orders)) == len(orders), "display_order must stay unique"
 
 

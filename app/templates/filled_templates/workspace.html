@@ -126,16 +126,25 @@
                         const target = evt.to;
                         if (!id || !target) return;
                         const isChain = item.dataset.kind === 'chain';
-                        const sel = isChain ? ':scope > li.tree-chain' : ':scope > li.tree-item';
-                        const order = Array.from(target.querySelectorAll(sel))
-                            .map((li) => li.dataset.id).filter(Boolean);
+                        // Unified order: the visible sibling order across BOTH
+                        // filled templates and chains in the target folder, as
+                        // tokens "<kind>:<id>". The dragged item's kind is
+                        // taken from its data-kind; the rest from their DOM
+                        // order. The server renumbers the folder's whole
+                        // shared display_order sequence from this payload.
+                        const order = Array.from(
+                            target.querySelectorAll(':scope > li.tree-item, :scope > li.tree-chain')
+                        ).map((li) => {
+                            const kind = li.dataset.kind === 'chain' ? 'c' : 't';
+                            return `${kind}:${li.dataset.id}`;
+                        }).filter(Boolean).join(',');
                         const searchInput = document.querySelector('.tree-search');
                         const url = isChain
                             ? '/templater/filled-templates-htmx/chains/move'
                             : '/templater/filled-templates-htmx/move';
                         const values = {
                             folder: target.dataset.folderPath || '[]',
-                            order: order.join(','),
+                            order: order,
                             // Keep the current filter so the refreshed tree shows
                             // what the user was looking at.
                             search: searchInput ? searchInput.value : '',

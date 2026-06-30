@@ -112,6 +112,11 @@ class _FakeChainRepo:
     async def list_all(self, *, limit: int = 200, visible_group_ids: Any = None) -> list[SimpleNamespace]:
         return list(self.chains)
 
+    async def list_by_folder(self, folder_path: list[str]) -> list[SimpleNamespace]:
+        return [
+            c for c in self.chains if list(c.folder_path or []) == list(folder_path)
+        ]
+
     async def step_counts(self) -> dict[uuid.UUID, int]:
         return {}
 
@@ -282,7 +287,7 @@ async def test_move_filled_sets_folder_and_reorders_siblings() -> None:
     t2 = _item("t2", ["B"], 0)
     svc = _service([t1, t2])
 
-    await svc.move_filled(t1.id, ["B"], [t2.id, t1.id])
+    await svc.move_filled(t1.id, ["B"], [("t", t2.id), ("t", t1.id)])
     assert t1.folder_path == ["B"]
     assert t2.display_order == 0 and t1.display_order == 1
 
@@ -294,7 +299,7 @@ async def test_move_filled_ignores_non_sibling_ids_in_order() -> None:
     svc = _service([t1, elsewhere])
 
     # A crafted order including an item from another folder must not renumber it.
-    await svc.move_filled(t1.id, ["A"], [t1.id, elsewhere.id])
+    await svc.move_filled(t1.id, ["A"], [("t", t1.id), ("t", elsewhere.id)])
     assert t1.display_order == 0
     assert elsewhere.display_order == 7  # untouched
 
@@ -310,10 +315,32 @@ async def test_move_filled_keeps_hidden_siblings_without_duplicate_order() -> No
     svc = _service([hidden, v1, v2])
 
     # The user sees only v1/v2 and drags v2 above v1.
-    await svc.move_filled(v2.id, ["F"], [v2.id, v1.id])
+    await svc.move_filled(v2.id, ["F"], [("t", v2.id), ("t", v1.id)])
     assert hidden.display_order == 0  # hidden slot preserved
     assert v2.display_order == 1 and v1.display_order == 2
     orders = [hidden.display_order, v1.display_order, v2.display_order]
+    assert len(set(orders)) == len(orders), "display_order must stay unique"
+
+
+@pytest.mark.asyncio
+async def test_move_chain_interleaves_with_filled_templates() -> None:
+    # Unified per-folder order: a chain can be dropped between two filled
+    # templates. After the move, the chain sits at display_order 1 (between
+    # the templates), not below them.
+    t0 = _item("t0", ["F"], 0)
+    t2 = _item("t2", ["F"], 2)
+    chain = _chain("c1", ["F"], 1)
+    svc = _service([t0, t2])
+    svc.chains = _FakeChainRepo([chain])  # type: ignore[assignment]
+
+    # move_filled renumbers the whole folder from the unified payload
+    # regardless of which item moved; the chain's display_order is updated in
+    # place by the shared renumber. Order is t0, c1, t2 → chain lands between.
+    await svc.move_filled(t2.id, ["F"], [("t", t0.id), ("c", chain.id), ("t", t2.id)])
+    assert t0.display_order == 0
+    assert chain.display_order == 1
+    assert t2.display_order == 2
+    orders = [t0.display_order, chain.display_order, t2.display_order]
     assert len(set(orders)) == len(orders), "display_order must stay unique"
 
 
@@ -339,7 +366,7 @@ async def test_move_filled_to_root_and_missing_id() -> None:
     t = _item("t", ["A"], 3)
     svc = _service([t])
 
-    await svc.move_filled(t.id, [], [t.id])
+    await svc.move_filled(t.id, [], [("t", t.id)])
     assert t.folder_path == [] and t.display_order == 0
 
     with pytest.raises(NotFoundError):

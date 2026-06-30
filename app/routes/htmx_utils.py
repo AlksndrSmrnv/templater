@@ -52,6 +52,29 @@ def parse_uuid_list(raw: str) -> list[uuid.UUID]:
     return out
 
 
+def parse_reorder_payload(raw: str) -> list[tuple[str, uuid.UUID]]:
+    """Decode the unified drag-and-drop ``order`` payload: a comma-separated
+    list of ``<kind>:<uuid>`` tokens where ``kind`` is ``t`` (filled template)
+    or ``c`` (request chain). Unknown kinds and malformed UUIDs are dropped —
+    the service ignores ids that don't belong to the target folder anyway, so a
+    crafted/stale token can't corrupt the renumber."""
+
+    out: list[tuple[str, uuid.UUID]] = []
+    for token in (raw or "").split(","):
+        token = token.strip()
+        if not token:
+            continue
+        kind, _, raw_id = token.partition(":")
+        kind = kind.strip().lower()
+        if kind not in ("t", "c"):
+            continue
+        try:
+            out.append((kind, uuid.UUID(raw_id.strip())))
+        except ValueError:
+            continue
+    return out
+
+
 def read_entity_attributes(form: FormData, schema: list[AttributeDefinition]) -> dict[str, Any]:
     attrs: dict[str, Any] = {}
     for field in schema:

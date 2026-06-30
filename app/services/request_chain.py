@@ -26,7 +26,7 @@ from app.db.models import RequestChain, RequestChainStep
 from app.repositories.filled_template import FilledTemplateRepository
 from app.repositories.request_chain import RequestChainRepository
 from app.repositories.settings import SettingsRepository
-from app.services.collections import _norm_path
+from app.services.collections import _norm_path, reorder_folder_unified
 from app.services.fill_access import assert_fill_visible
 from app.services.filled_templates import (
     _ROLE_COLUMNS,
@@ -212,20 +212,20 @@ class RequestChainService:
         self,
         chain_id: uuid.UUID,
         target_folder_path: list[str],
-        order: list[uuid.UUID],
+        order: list[tuple[str, uuid.UUID]],
         *,
         visible_group_ids: set[uuid.UUID] | None = None,
     ) -> None:
         """Move a chain into ``target_folder_path`` and renumber ``display_order``
-        across the target folder's chain siblings.
+        across the target folder's filled templates *and* chains as one shared
+        sequence (so a chain can sit anywhere among the folder's templates).
 
-        Mirrors ``FilledTemplateService.move_filled``: chains have their own
-        ``display_order`` sequence (independent of filled templates — in the tree
-        they render after the templates of a folder), so only chain siblings are
-        renumbered. ``order`` is the ids the client sees (may be a filtered
-        subset); visible chains are re-sequenced across the slots they occupy and
-        the whole folder is renumbered 0..n-1, so a partial payload can't produce
-        duplicate orders. Unknown ids are ignored.
+        Mirrors ``FilledTemplateService.move_filled``: the renumber is delegated
+        to the shared :func:`reorder_folder_unified`, which treats both kinds as
+        one sequence. ``order`` is the ``(kind, id)`` tokens the client sees (may
+        be a filtered subset); visible items are re-sequenced across the slots
+        they occupy and the whole folder is renumbered 0..n-1, so a partial
+        payload can't produce duplicate orders. Unknown tokens are ignored.
         """
 
         chain = await self.get(chain_id, visible_group_ids=visible_group_ids)
@@ -235,21 +235,9 @@ class RequestChainService:
         # new folder (else a stale display_order could collide on renumber).
         await self.session.flush()
 
-        siblings = await self.repo.list_by_folder(target_folder)
-        full = sorted(siblings, key=lambda row: (row.display_order, row.created_at))
-        by_id = {row.id: row for row in full}
-        payload: list[uuid.UUID] = []
-        payload_ids: set[uuid.UUID] = set()
-        for raw_id in order:
-            if raw_id in by_id and raw_id not in payload_ids:
-                payload.append(raw_id)
-                payload_ids.add(raw_id)
-        payload_iter = iter(payload)
-        resequenced = (
-            by_id[next(payload_iter)] if row.id in payload_ids else row for row in full
-        )
-        for position, row in enumerate(resequenced):
-            row.display_order = position
+        filled_siblings = await self.filled.list_by_folder(target_folder)
+        chain_siblings = await self.repo.list_by_folder(target_folder)
+        reorder_folder_unified(filled_siblings, chain_siblings, order)
         await self.session.flush()
 
     # ---- steps ----

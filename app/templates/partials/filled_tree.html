@@ -53,42 +53,44 @@
         </ul>
     </li>
     {% endfor %}
-    {% for f in node.templates %}
+    {% for it in node.entries | default([]) %}
+    {% set row = it.row %}
+    {% if it.kind == 'template' %}
     <li class="tree-item"
-        data-id="{{ f.id }}"
-        :class="{ active: selected === '{{ f.id }}' }"
-        @click="selected = '{{ f.id }}'"
-        hx-get="/templater/filled-templates-htmx/{{ f.id }}/panel"
+        data-id="{{ row.id }}"
+        data-kind="template"
+        :class="{ active: selected === '{{ row.id }}' }"
+        @click="selected = '{{ row.id }}'"
+        hx-get="/templater/filled-templates-htmx/{{ row.id }}/panel"
         hx-target="#filled-panel"
         hx-swap="innerHTML">
         <span class="tree-drag-handle" title="Перетащите шаблон" @click.stop><iconify-icon icon="lucide:grip-vertical"></iconify-icon></span>
-        <span class="tree-method method-{{ (f.http_method_snapshot or '')|lower }}">{{ f.http_method_snapshot or '·' }}</span>
-        <span class="tree-name" title="{{ f.name }}">{{ f.name }}</span>
-        {% if f.project_name_snapshot %}<span class="project-badge" title="Проект: {{ f.project_name_snapshot }}"><span class="project-dot" style="background: {{ f.project_color_snapshot or '#9E9E9E' }}"></span>{{ f.project_name_snapshot }}</span>{% endif %}
-        {% if f.group_name_snapshot %}<span class="group-badge" title="Группа доступа: {{ f.group_name_snapshot }}"><span class="group-dot" style="background: {{ f.group_color_snapshot or '#9E9E9E' }}"></span>{{ f.group_name_snapshot }}</span>{% endif %}
-        {% if f.unresolved %}<span class="tree-flag" title="Есть незаполненные плейсхолдеры"><iconify-icon icon="lucide:triangle-alert"></iconify-icon></span>{% endif %}
+        <span class="tree-method method-{{ (row.http_method_snapshot or '')|lower }}">{{ row.http_method_snapshot or '·' }}</span>
+        <span class="tree-name" title="{{ row.name }}">{{ row.name }}</span>
+        {% if row.project_name_snapshot %}<span class="project-badge" title="Проект: {{ row.project_name_snapshot }}"><span class="project-dot" style="background: {{ row.project_color_snapshot or '#9E9E9E' }}"></span>{{ row.project_name_snapshot }}</span>{% endif %}
+        {% if row.group_name_snapshot %}<span class="group-badge" title="Группа доступа: {{ row.group_name_snapshot }}"><span class="group-dot" style="background: {{ row.group_color_snapshot or '#9E9E9E' }}"></span>{{ row.group_name_snapshot }}</span>{% endif %}
+        {% if row.unresolved %}<span class="tree-flag" title="Есть незаполненные плейсхолдеры"><iconify-icon icon="lucide:triangle-alert"></iconify-icon></span>{% endif %}
     </li>
-    {% endfor %}
-    {% for ch in node.chains | default([]) %}
+    {% else %}
     <li class="tree-chain"
-        data-id="{{ ch.id }}"
+        data-id="{{ row.id }}"
         data-kind="chain"
-        :class="{ active: selected === '{{ ch.id }}' }"
-        @click="selected = '{{ ch.id }}'"
-        hx-get="/templater/filled-templates-htmx/chains/{{ ch.id }}/panel"
+        :class="{ active: selected === '{{ row.id }}' }"
+        @click="selected = '{{ row.id }}'"
+        hx-get="/templater/filled-templates-htmx/chains/{{ row.id }}/panel"
         hx-target="#filled-panel"
         hx-swap="innerHTML"
         x-data="{ editing: false }">
         <span class="tree-drag-handle" title="Перетащите цепочку" @click.stop><iconify-icon icon="lucide:grip-vertical"></iconify-icon></span>
         <span class="tree-chain-icon" title="Цепочка запросов"><iconify-icon icon="lucide:workflow"></iconify-icon></span>
-        <span class="tree-name" x-show="!editing" title="{{ ch.name }}">{{ ch.name }}</span>
-        <span class="tree-chain-count" title="Шагов в цепочке">{{ ch.step_count }}</span>
-        {% if ch.project_name_snapshot %}<span class="project-badge" title="Проект: {{ ch.project_name_snapshot }}"><span class="project-dot" style="background: {{ ch.project_color_snapshot or '#9E9E9E' }}"></span>{{ ch.project_name_snapshot }}</span>{% endif %}
+        <span class="tree-name" x-show="!editing" title="{{ row.name }}">{{ row.name }}</span>
+        <span class="tree-chain-count" title="Шагов в цепочке">{{ row.step_count }}</span>
+        {% if row.project_name_snapshot %}<span class="project-badge" title="Проект: {{ row.project_name_snapshot }}"><span class="project-dot" style="background: {{ row.project_color_snapshot or '#9E9E9E' }}"></span>{{ row.project_name_snapshot }}</span>{% endif %}
         <form class="tree-inline-form" x-show="editing" x-cloak @click.stop
-              hx-post="/templater/filled-templates-htmx/chains/{{ ch.id }}/rename"
+              hx-post="/templater/filled-templates-htmx/chains/{{ row.id }}/rename"
               hx-include=".tree-search"
               hx-target="#filled-tree" hx-swap="innerHTML">
-            <input class="tree-rename-input" type="text" name="name" value="{{ ch.name }}"
+            <input class="tree-rename-input" type="text" name="name" value="{{ row.name }}"
                    required x-ref="chainRename"
                    @click.stop @keydown.escape.stop="editing = false">
             <button type="submit" class="btn small" title="Сохранить">✓</button>
@@ -97,13 +99,14 @@
             <button type="button" class="tree-act" title="Переименовать"
                     @click.stop="editing = true; $nextTick(() => $refs.chainRename.focus())"><iconify-icon icon="lucide:pencil"></iconify-icon></button>
             <button type="button" class="tree-act danger" title="Удалить цепочку"
-                    hx-delete="/templater/filled-templates-htmx/chains/{{ ch.id }}"
+                    hx-delete="/templater/filled-templates-htmx/chains/{{ row.id }}"
                     hx-include=".tree-search"
-                    hx-confirm="Удалить цепочку «{{ ch.name }}»?"
+                    hx-confirm="Удалить цепочку «{{ row.name }}»?"
                     hx-target="#filled-tree" hx-swap="innerHTML"
                     @click.stop><iconify-icon icon="lucide:trash-2"></iconify-icon></button>
         </span>
     </li>
+    {% endif %}
     {% endfor %}
 {% endmacro %}
 
@@ -143,7 +146,7 @@
     </ul>
 </div>
 
-{% if not tree.folders and not tree.templates and not (tree.chains | default([])) %}
+{% if not tree.folders and not tree.templates and not (tree.chains | default([])) and not (tree.entries | default([])) %}
 <p class="muted tree-empty">
     {% if search %}Ничего не найдено.{% else %}Пока нет заполненных шаблонов. Откройте шаблон, заполните его и сохраните сюда.{% endif %}
 </p>
