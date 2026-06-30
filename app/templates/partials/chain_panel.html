@@ -59,7 +59,8 @@
             </div>
         </div>
         <button class="btn" type="button" @click="sendAll()" x-show="steps.length" :disabled="running">
-            <iconify-icon icon="lucide:play"></iconify-icon> Запустить всё
+            <iconify-icon :icon="running ? 'lucide:loader-2' : 'lucide:play'" :class="{ 'icon-spin': running }"></iconify-icon>
+            <span x-text="running ? ('Запуск… ' + progress.current + ' / ' + progress.total) : 'Запустить всё'"></span>
         </button>
         <button class="btn" type="button"
                 hx-get="/templater/send-history-htmx/chain/{{ chain.id }}"
@@ -67,10 +68,13 @@
                 @click="$dispatch('open-send-history')">
             <iconify-icon icon="lucide:history"></iconify-icon> История отправок
         </button>
-        <span class="send-status-code" x-show="chainStatus !== null" x-cloak
-              :class="chainStatus && chainStatus.ok ? 'is-ok' : 'is-err'"
-              :title="chainStatus ? chainStatus.title : ''"
-              x-text="chainStatus && chainStatus.code !== null ? ('statusCode = ' + chainStatus.code) : 'ошибка'"></span>
+        <span class="chain-summary" x-show="chainSummary" x-cloak
+              :class="chainSummary && chainSummary.failed ? 'is-err' : 'is-ok'"
+              :title="chainSummary ? (chainSummary.ok + ' успешно, ' + chainSummary.failed + ' с ошибкой' + (chainSummary.skipped ? ', ' + chainSummary.skipped + ' пропущено' : '')) : ''">
+            <span x-text="(chainSummary ? chainSummary.ok : 0) + ' ✓'"></span>
+            <span x-text="' · ' + (chainSummary ? chainSummary.failed : 0) + ' ✗'"></span>
+            <span x-show="chainSummary && chainSummary.skipped" x-text="' · ' + (chainSummary ? chainSummary.skipped : 0) + ' пропущено'"></span>
+        </span>
         <span class="send-last is-ok" x-show="chainLastSuccessAt" x-cloak
               :title="'Последний успешный запуск: ' + window.formatSendTs(chainLastSuccessAt)">
             <iconify-icon icon="lucide:check"></iconify-icon><span x-text="window.formatSendTs(chainLastSuccessAt)"></span>
@@ -149,6 +153,8 @@
                         <span class="send-status-code" x-show="step.statusCode !== null" x-cloak
                               :class="step.statusCode === 0 ? 'is-ok' : 'is-err'"
                               x-text="'statusCode = ' + step.statusCode"></span>
+                        <span class="send-skip-badge" x-show="step.skipped" x-cloak
+                              :title="step.skipReason" x-text="'пропущен'"></span>
                         <span class="send-last is-ok" x-show="step.lastSuccessAt" x-cloak
                               :title="'Последняя успешная отправка: ' + window.formatSendTs(step.lastSuccessAt)">
                             <iconify-icon icon="lucide:check"></iconify-icon><span x-text="window.formatSendTs(step.lastSuccessAt)"></span>
