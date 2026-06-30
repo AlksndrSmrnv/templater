@@ -25,17 +25,25 @@
         return w;
     }
 
+    var saveTimer = null;
+    // Немедленное сохранение/сброс отменяют отложенный таймер, иначе pending
+    // save перезапишет результат: ArrowRight → Home (reset удалит localStorage,
+    // а таймер через 300мс вернёт старую ширину), либо клавиатурный resize →
+    // drag (pending save перетрёт fresh-значение от drag).
+    function cancelPendingSave() {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+    }
     function save(px) {
+        cancelPendingSave();
         try { localStorage.setItem(STORAGE_KEY, String(px)); } catch (e) {}
     }
-
-    var saveTimer = null;
     // Отложенное сохранение для клавиатурного ресайза: при зажатой стрелке
     // keydown повторяется ~30 раз/сек, и синхронная запись в localStorage на
     // каждое нажатие избыточна. Финальное значение пишется по тихому таймеру.
     function scheduleSave(px) {
-        clearTimeout(saveTimer);
-        saveTimer = setTimeout(function () { save(px); saveTimer = null; }, 300);
+        cancelPendingSave();
+        saveTimer = setTimeout(function () { save(px); }, 300);
     }
 
     // ---- Resizer ----------------------------------------------------------
@@ -56,18 +64,32 @@
         resizer.tabIndex = 0;
         resizer.setAttribute('aria-label', 'Изменить ширину дерева (стрелки ←/→, Home или двойной клик — сброс)');
         resizer.title = 'Перетащите, чтобы изменить ширину • двойной клик или Home — сброс';
+        // ARIA-значения для screen reader: границы и текущая ширина. valuenow
+        // обновляется в applyWidth при каждом изменении, valuemax — на resize
+        // окна (maxWidth зависит от вьюпорта).
+        resizer.setAttribute('aria-valuemin', String(MIN_WIDTH));
+        resizer.setAttribute('aria-valuemax', String(maxWidth()));
+        resizer.setAttribute('aria-valuenow', String(currentWidth()));
         left.insertAdjacentElement('afterend', resizer);
 
         var startX = 0;
         var startW = 0;
         var lastClickAt = 0;
 
+        // Применяет ширину и держит aria-valuenow в sync с реальным значением.
+        function applyWidth(px) {
+            var w = setWidth(workspace, px);
+            resizer.setAttribute('aria-valuenow', String(w));
+            return w;
+        }
+
         function onMove(e) {
-            setWidth(workspace, startW + (e.clientX - startX));
+            applyWidth(startW + (e.clientX - startX));
         }
 
         function reset() {
-            setWidth(workspace, DEFAULT_WIDTH);
+            cancelPendingSave();
+            applyWidth(DEFAULT_WIDTH);
             try { localStorage.removeItem(STORAGE_KEY); } catch (err) {}
         }
 
@@ -116,7 +138,7 @@
             if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
                 e.preventDefault();
                 var delta = e.key === 'ArrowLeft' ? -KEY_STEP : KEY_STEP;
-                scheduleSave(setWidth(workspace, currentWidth() + delta));
+                scheduleSave(applyWidth(currentWidth() + delta));
             } else if (e.key === 'Home') {
                 e.preventDefault();
                 reset();
@@ -124,13 +146,17 @@
         });
 
         // При выгрузке страницы — сбрасываем отложенный save, чтобы серия
-        // клавиатурных нажатий не потеряла последнее значение.
+        // клавиатурных нажатий не потеряла последнее значение. save() сам
+        // отменяет pending-таймер, поэтому отдельный clear не нужен.
         window.addEventListener('pagehide', function () {
-            if (saveTimer !== null) {
-                clearTimeout(saveTimer);
-                saveTimer = null;
-                save(currentWidth());
-            }
+            if (saveTimer !== null) save(currentWidth());
+        });
+
+        // valuemax зависит от вьюпорта (60vw), valuenow — от clamp() колонки:
+        // при resize окна оба могут меняться без участия applyWidth.
+        window.addEventListener('resize', function () {
+            resizer.setAttribute('aria-valuemax', String(maxWidth()));
+            resizer.setAttribute('aria-valuenow', String(currentWidth()));
         });
     }
 
