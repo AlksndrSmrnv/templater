@@ -9,8 +9,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/templater/static/css/app.css">
     {# Применяем сохранённую ширину дерева до первой отрисовки — без визуального
-       скачка при загрузке workspace-страниц. #}
-    <script>(function(){try{var w=localStorage.getItem('tm:treeWidth');
+       скачка при загрузке workspace-страниц. Значение валидируется через
+       parseInt: мусор в localStorage не должен инвалидить var(--tree-w). #}
+    <script>(function(){try{var w=parseInt(localStorage.getItem('tm:treeWidth'),10);
         if(w)document.documentElement.style.setProperty('--tree-w',w+'px');}catch(e){}})();</script>
     <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"
             integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+"

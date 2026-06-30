@@ -29,6 +29,15 @@
         try { localStorage.setItem(STORAGE_KEY, String(px)); } catch (e) {}
     }
 
+    var saveTimer = null;
+    // Отложенное сохранение для клавиатурного ресайза: при зажатой стрелке
+    // keydown повторяется ~30 раз/сек, и синхронная запись в localStorage на
+    // каждое нажатие избыточна. Финальное значение пишется по тихому таймеру.
+    function scheduleSave(px) {
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(function () { save(px); saveTimer = null; }, 300);
+    }
+
     // ---- Resizer ----------------------------------------------------------
     function initResizer(workspace) {
         var left = workspace.querySelector('.workspace-left');
@@ -45,8 +54,8 @@
         resizer.setAttribute('role', 'separator');
         resizer.setAttribute('aria-orientation', 'vertical');
         resizer.tabIndex = 0;
-        resizer.setAttribute('aria-label', 'Изменить ширину дерева (стрелки ←/→, двойной клик — сброс)');
-        resizer.title = 'Перетащите, чтобы изменить ширину • двойной клик — сброс';
+        resizer.setAttribute('aria-label', 'Изменить ширину дерева (стрелки ←/→, Home или двойной клик — сброс)');
+        resizer.title = 'Перетащите, чтобы изменить ширину • двойной клик или Home — сброс';
         left.insertAdjacentElement('afterend', resizer);
 
         var startX = 0;
@@ -84,6 +93,9 @@
                 else lastClickAt = now;
                 return;
             }
+            // Драг разрывает кликовую пару — иначе «клик → драг → клик» в пределах
+            // DBLCLICK_MS ложно сработал бы как двойной клик и сбросил ширину.
+            lastClickAt = 0;
             save(currentWidth());
         }
 
@@ -104,10 +116,20 @@
             if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
                 e.preventDefault();
                 var delta = e.key === 'ArrowLeft' ? -KEY_STEP : KEY_STEP;
-                save(setWidth(workspace, currentWidth() + delta));
+                scheduleSave(setWidth(workspace, currentWidth() + delta));
             } else if (e.key === 'Home') {
                 e.preventDefault();
                 reset();
+            }
+        });
+
+        // При выгрузке страницы — сбрасываем отложенный save, чтобы серия
+        // клавиатурных нажатий не потеряла последнее значение.
+        window.addEventListener('pagehide', function () {
+            if (saveTimer !== null) {
+                clearTimeout(saveTimer);
+                saveTimer = null;
+                save(currentWidth());
             }
         });
     }
