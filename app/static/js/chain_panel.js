@@ -488,7 +488,10 @@ window.chainPanel = function (config) {
             this.chainStatus = null;
             // Clear last run's per-step state so the aggregate below can't pick
             // up a stale statusCode/error from steps that don't run this time.
-            this.steps.forEach((s) => { s.statusCode = null; s.error = ''; });
+            // operuid/suit too: on an early break, steps after the failure never
+            // hit send(), so their badges would otherwise keep last run's values
+            // while statusCode is cleared (a mismatch).
+            this.steps.forEach((s) => { s.statusCode = null; s.operuid = null; s.suit = null; s.error = ''; });
             let ranCount = 0;
             try {
                 for (let i = 0; i < this.steps.length; i++) {
