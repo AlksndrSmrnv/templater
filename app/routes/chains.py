@@ -352,8 +352,10 @@ async def htmx_move_chain(
     group_ids: set[uuid.UUID] = UnlockedGroupsDep,
 ) -> Response:
     """Drag-and-drop move/reorder of a chain in the folder tree (mirrors the
-    filled-template ``/move``). ``order`` is the visible chain ids in the target
-    folder; chains renumber independently of filled templates."""
+    filled-template ``/move``). ``order`` is the visible ``(kind, id)`` order
+    across the target folder's filled templates AND chains — the two share one
+    ``display_order`` sequence, so the whole folder is renumbered from the
+    payload, not just the chain siblings."""
 
     form = await request.form()
     search = form_str(form, "search")

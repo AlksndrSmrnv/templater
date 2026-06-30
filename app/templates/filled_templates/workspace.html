@@ -112,9 +112,10 @@
                 instances.push(Sortable.create(ul, {
                     group: 'filled-tree',
                     handle: '.tree-drag-handle',
-                    // Both filled templates and chains are draggable; they keep
-                    // separate display_order sequences, so on drop we post the
-                    // sibling order of the dragged item's own kind only.
+                    // Both filled templates and chains are draggable; they
+                    // share one display_order sequence per folder, so on drop
+                    // we post the visible sibling order across BOTH kinds as
+                    // tokens "<kind>:<id>" (see onEnd below).
                     draggable: '.tree-item, .tree-chain',
                     animation: 150,
                     fallbackOnBody: true,
