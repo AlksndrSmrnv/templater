@@ -157,6 +157,10 @@
                               :title="'Последняя неуспешная отправка: ' + window.formatSendTs(step.lastErrorAt)">
                             <iconify-icon icon="lucide:x"></iconify-icon><span x-text="window.formatSendTs(step.lastErrorAt)"></span>
                         </span>
+                        <span class="send-field-badge" x-show="step.operuid" x-cloak
+                              :title="'operuid: ' + step.operuid" x-text="'operuid: ' + step.operuid"></span>
+                        <span class="send-field-badge" x-show="step.suit" x-cloak
+                              :title="'suit: ' + step.suit" x-text="'suit: ' + step.suit"></span>
                         <button class="btn small" type="button" title="Выше" @click="moveStep(idx, -1)" :disabled="idx === 0"><iconify-icon icon="lucide:chevron-up"></iconify-icon></button>
                         <button class="btn small" type="button" title="Ниже" @click="moveStep(idx, 1)" :disabled="idx === steps.length - 1"><iconify-icon icon="lucide:chevron-down"></iconify-icon></button>
                         <button class="btn small danger" type="button" title="Удалить шаг" @click="removeStep(idx)"><iconify-icon icon="lucide:trash-2"></iconify-icon></button>
@@ -168,8 +172,8 @@
                 </div>
 
                 <div class="send-step-body" x-show="!step.collapsed" x-cloak>
-                    <section class="send-block" x-show="step.roles && step.roles.length">
-                        <h3>Клиенты шага</h3>
+                    <details class="filled-meta" x-show="step.roles && step.roles.length">
+                        <summary><iconify-icon class="filled-meta-chevron" icon="lucide:chevron-right"></iconify-icon>Клиенты шага</summary>
                         <div class="chain-role-rows">
                             <template x-for="r in step.roles" :key="r.role">
                                 <div class="chain-role-row">
@@ -192,10 +196,10 @@
                                 </div>
                             </template>
                         </div>
-                    </section>
+                    </details>
 
-                    <section class="send-block" x-show="step.headers && step.headers.length">
-                        <h3>Заголовки</h3>
+                    <details class="filled-meta" x-show="step.headers && step.headers.length">
+                        <summary><iconify-icon class="filled-meta-chevron" icon="lucide:chevron-right"></iconify-icon>Заголовки <span class="muted">(<span x-text="step.headers.length"></span>)</span></summary>
                         <table class="headers-table">
                             <tbody>
                                 <template x-for="(h, hi) in step.headers" :key="hi">
@@ -209,8 +213,19 @@
                                 </template>
                             </tbody>
                         </table>
-                    </section>
+                    </details>
 
+                    <div class="send-actions">
+                        <button class="btn primary" type="button" @click="send(idx)" :disabled="step.sending">
+                            <iconify-icon :icon="step.sending ? 'lucide:loader-2' : 'lucide:send'"
+                                          :class="{ 'icon-spin': step.sending }"></iconify-icon>
+                            <span x-text="step.sending ? 'Отправка…' : 'Отправить'"></span>
+                        </button>
+                        <span class="send-error" x-show="step.error" x-text="step.error"></span>
+                    </div>
+
+                    <section class="filled-io">
+                    <div class="filled-io-col">
                     <section class="send-block" @click.outside="if (picker.stepIdx === idx) closePicker()">
                         <div class="send-block-title">
                             <h3>Тело сообщения</h3>
@@ -287,24 +302,6 @@
                         </div>
                     </section>
 
-                    <div class="send-actions">
-                        <button class="btn primary" type="button" @click="send(idx)" :disabled="step.sending">
-                            <iconify-icon :icon="step.sending ? 'lucide:loader-2' : 'lucide:send'"
-                                          :class="{ 'icon-spin': step.sending }"></iconify-icon>
-                            <span x-text="step.sending ? 'Отправка…' : 'Отправить'"></span>
-                        </button>
-                        <span class="send-error" x-show="step.error" x-text="step.error"></span>
-                    </div>
-
-                    <section class="send-block send-response" x-show="step.response" x-cloak>
-                        <h3>Итоговый ответ (мок)</h3>
-                        <div class="send-status-line">
-                            <span class="send-status-pill" x-text="(step.response?.status || '') + ' ' + (step.response?.statusText || '')"></span>
-                            <span class="muted" x-text="(step.response?.latencyMs ?? '') + ' мс · мок'"></span>
-                        </div>
-                        <pre class="template-code" x-text="step.response?.body"></pre>
-                    </section>
-
                     <section class="send-block" x-show="step.resolvedRequestHtml && idx > 0" x-cloak>
                         <h3>Итоговый запрос</h3>
                         <p class="muted send-sub" x-text="step.resolvedUnresolved
@@ -314,6 +311,22 @@
                                 : 'Тело запроса, которое будет отправлено.')"></p>
                         <pre class="template-code" x-html="step.resolvedRequestHtml"></pre>
                     </section>
+                    </div>{# /.filled-io-col (запрос) #}
+
+                    <div class="filled-io-col">
+                        <section class="send-block send-response" x-show="step.response" x-cloak>
+                            <h3>Итоговый ответ (мок)</h3>
+                            <div class="send-status-line">
+                                <span class="send-status-pill" x-text="(step.response?.status || '') + ' ' + (step.response?.statusText || '')"></span>
+                                <span class="muted" x-text="(step.response?.latencyMs ?? '') + ' мс · мок'"></span>
+                            </div>
+                            <pre class="template-code" x-text="step.response?.body"></pre>
+                        </section>
+                        <div class="filled-io-empty muted" x-show="!step.response" x-cloak>
+                            Нажмите «Отправить», чтобы увидеть ответ.
+                        </div>
+                    </div>{# /.filled-io-col (ответ) #}
+                    </section>{# /.filled-io #}
                 </div>
             </section>
         </template>

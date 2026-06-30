@@ -1381,7 +1381,7 @@ input[type="file"]::-webkit-file-upload-button:hover { background: var(--surface
    is narrow even on a wide screen, so a viewport media query would leave two
    cramped columns with horizontal scroll. #filled-panel-body is the query
    container (its inline size == the panel width). */
-#filled-panel-body { container-type: inline-size; }
+#filled-panel-body, #chain-panel { container-type: inline-size; }
 .filled-io {
     display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start;
 }

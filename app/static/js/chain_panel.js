@@ -72,6 +72,8 @@ window.chainPanel = function (config) {
                 error: '',
                 response: null,
                 statusCode: null,  // parsed from the response body (any case, nested)
+                operuid: null,     // business id, recursively pulled from the body
+                suit: null,        // optional; shown only when present
                 // Last successful / failed send (server-seeded, updated locally
                 // after each send so the badge moves without a panel re-render).
                 lastSuccessAt: s.last_success_at || '',
@@ -418,6 +420,8 @@ window.chainPanel = function (config) {
             step.error = '';
             step.sending = true;
             step.statusCode = null;
+            step.operuid = null;
+            step.suit = null;
             // Clear any prior run's response up front: it's a stale signal for
             // «did this run reach the server» (sendAll's chain-badge check reads
             // s.response), and it must not linger next to a fresh error in the
@@ -459,7 +463,13 @@ window.chainPanel = function (config) {
                     latencyMs: d.latency_ms,
                     body: this.prettyJson(d.body),
                 };
-                step.statusCode = window.extractStatusCode(d.body);
+                // Parse the body once, then pull statusCode + business identifiers
+                // (operuid/suit) recursively from anywhere within it.
+                let parsed = null;
+                try { parsed = JSON.parse(d.body); } catch (e) { /* leave fields null */ }
+                step.statusCode = window.extractStatusCode(parsed);
+                step.operuid = window.extractField(parsed, 'operuid');
+                step.suit = window.extractField(parsed, 'suit');
                 // Mirror the server's ok rule: absent/zero statusCode = success.
                 // The server already recorded this send; ISO «now» matches that.
                 if (step.statusCode === null || step.statusCode === 0) step.lastSuccessAt = window.nowSendTs();
@@ -478,7 +488,10 @@ window.chainPanel = function (config) {
             this.chainStatus = null;
             // Clear last run's per-step state so the aggregate below can't pick
             // up a stale statusCode/error from steps that don't run this time.
-            this.steps.forEach((s) => { s.statusCode = null; s.error = ''; });
+            // operuid/suit too: on an early break, steps after the failure never
+            // hit send(), so their badges would otherwise keep last run's values
+            // while statusCode is cleared (a mismatch).
+            this.steps.forEach((s) => { s.statusCode = null; s.operuid = null; s.suit = null; s.error = ''; });
             let ranCount = 0;
             try {
                 for (let i = 0; i < this.steps.length; i++) {
@@ -531,6 +544,8 @@ window.chainPanel = function (config) {
             const step = this.steps[idx];
             step.response = null;
             step.statusCode = null;
+            step.operuid = null;
+            step.suit = null;
             // The «Запустить всё» aggregate may have included this step — it's
             // now stale, so drop it rather than keep showing the old colour.
             this.chainStatus = null;
