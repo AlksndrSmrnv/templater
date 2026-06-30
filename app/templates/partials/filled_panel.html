@@ -22,6 +22,10 @@
       :title="'Последняя неуспешная отправка: ' + window.formatSendTs(lastErrorAt)">
     <iconify-icon icon="lucide:x"></iconify-icon><span x-text="window.formatSendTs(lastErrorAt)"></span>
 </span>
+<span class="send-field-badge" x-show="operuid" x-cloak
+      :title="'operuid: ' + operuid" x-text="'operuid: ' + operuid"></span>
+<span class="send-field-badge" x-show="suit" x-cloak
+      :title="'suit: ' + suit" x-text="'suit: ' + suit"></span>
 {% endmacro %}
 <div id="filled-panel-body" x-data="{
     /*
@@ -50,6 +54,8 @@
     sending: false,
     response: null,
     statusCode: null,  // parsed from the response body (any case, nested)
+    operuid: null,     // business id, recursively pulled from the response body
+    suit: null,        // optional; shown only when present
     chainMenuOpen: false,
     // Last successful / failed send as ISO-8601 (server-seeded, updated locally
     // after each send). Rendered through window.formatSendTs so the badge reads
@@ -64,12 +70,20 @@
             status: 'SUCCESS',
             transferId: 'TRF-' + Math.floor(100000 + Math.random() * 900000),
             processedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+            // Nested on purpose: operuid/suit are surfaced via a recursive
+            // lookup (window.extractField), so they need not sit at the top.
+            operation: {
+                operuid: 'OPER-' + Math.floor(100000 + Math.random() * 900000),
+                suit: 'A1',
+            },
         }, null, 2);
     },
     sendOnce() {
         this.sending = true;
         this.response = null;
         this.statusCode = null;
+        this.operuid = null;
+        this.suit = null;
         fetch('/templater/send-htmx/execute', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -90,6 +104,9 @@
             .then(d => {
                 this.response = { status: d.status, statusText: d.status_text, latencyMs: d.latency_ms, body: d.body };
                 this.statusCode = window.extractStatusCode(d.body);
+                // Recursively pull business identifiers from anywhere in the body.
+                this.operuid = window.extractField(d.body, 'operuid');
+                this.suit = window.extractField(d.body, 'suit');
                 // Mirror the server's ok rule: absent/zero statusCode = success.
                 // The server already recorded this send; ISO «now» matches it.
                 if (this.statusCode === null || this.statusCode === 0) this.lastSuccessAt = window.nowSendTs();
@@ -143,8 +160,8 @@
     {% endif %}
 
     {% if ft.headers_snapshot %}
-    <section style="margin-top:14px;">
-        <h3>Заголовки</h3>
+    <details class="filled-meta">
+        <summary><iconify-icon class="filled-meta-chevron" icon="lucide:chevron-right"></iconify-icon>Заголовки <span class="muted">({{ ft.headers_snapshot | length }})</span></summary>
         <table class="headers-table">
             <tbody>
                 {% for h in ft.headers_snapshot %}
@@ -158,11 +175,11 @@
                 {% endfor %}
             </tbody>
         </table>
-    </section>
+    </details>
     {% endif %}
 
-    <section style="margin-top:14px;">
-        <h3>Параметры подстановки</h3>
+    <details class="filled-meta">
+        <summary><iconify-icon class="filled-meta-chevron" icon="lucide:chevron-right"></iconify-icon>Параметры подстановки</summary>
         <table class="data-table">
             <thead><tr><th>Роль</th><th>Сущность</th></tr></thead>
             <tbody>
@@ -225,11 +242,35 @@
                 </tr>
             </tbody>
         </table>
-    </section>
+    </details>
 
     {% with unresolved = ft.unresolved %}
         {% include "partials/unresolved_notice.html" %}
     {% endwith %}
+
+    {# Postman-style request/response split: left is the filled request body,
+       right is the mock response (empty until «Отправить» is pressed). Both are
+       visible without scrolling right after the panel opens. #}
+    <section class="filled-io" style="margin-top:14px;">
+        <div class="filled-io-col">
+            <h3>Запрос</h3>
+            <pre class="template-code">{{ rendered_html | safe }}</pre>
+        </div>
+        <div class="filled-io-col">
+            <h3>Ответ</h3>
+            <div class="send-block send-response" x-show="response" x-cloak>
+                <p class="muted send-sub">Реальная отправка не выполняется — показан пример JSON-ответа.</p>
+                <div class="send-status-line">
+                    <span class="send-status-pill" x-text="(response?.status || '') + ' ' + (response?.statusText || '')"></span>
+                    <span class="muted" x-text="(response?.latencyMs ?? '') + ' мс · мок'"></span>
+                </div>
+                <pre class="template-code" x-text="response?.body"></pre>
+            </div>
+            <div class="filled-io-empty muted" x-show="!response" x-cloak>
+                Нажмите «Отправить», чтобы увидеть ответ.
+            </div>
+        </div>
+    </section>
 
     <div class="form-actions" style="margin-top:18px;">
         <button class="btn primary" type="button" @click="copy()"><iconify-icon icon="lucide:clipboard-copy"></iconify-icon> Копировать</button>
@@ -264,17 +305,5 @@
         </div>
     </div>
 
-    <section class="send-block send-response" x-show="response" x-cloak style="margin-top:14px;">
-        <h3>Пример ответа (мок)</h3>
-        <p class="muted send-sub">Реальная отправка не выполняется — показан пример JSON-ответа.</p>
-        <div class="send-status-line">
-            <span class="send-status-pill" x-text="(response?.status || '') + ' ' + (response?.statusText || '')"></span>
-            <span class="muted" x-text="(response?.latencyMs ?? '') + ' мс · мок'"></span>
-        </div>
-        <pre class="template-code" x-text="response?.body"></pre>
-    </section>
-
-    <h3 style="margin-top:18px;">Результат</h3>
-    <pre class="template-code">{{ rendered_html | safe }}</pre>
 
 </div>

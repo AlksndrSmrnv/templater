@@ -146,6 +146,12 @@ def default_mock_response(now: datetime | None = None) -> str:
             "status": "SUCCESS",
             "transferId": f"TRF-{random.randint(100000, 999999)}",
             "processedAt": moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            # Nested business identifiers — surfaced in the UI via a recursive
+            # field lookup, so they need not sit at the top level.
+            "operation": {
+                "operuid": f"OPER-{random.randint(100000, 999999)}",
+                "suit": "A1",
+            },
         },
         ensure_ascii=False,
         indent=2,
