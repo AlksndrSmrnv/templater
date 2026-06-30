@@ -53,6 +53,11 @@
     },
     sending: false,
     response: null,
+    // Parsed from the last send's response body. Known limitation: these three
+    // are session-local — set in sendOnce() and lost on reload — whereas the
+    // «last send» timestamps are server-seeded (last_send). After a reload the
+    // time badges persist but these don't; re-send to repopulate. (last_send is
+    // an aggregate of success/error timestamps and carries no body to seed from.)
     statusCode: null,  // parsed from the response body (any case, nested)
     operuid: null,     // business id, recursively pulled from the response body
     suit: null,        // optional; shown only when present
@@ -103,10 +108,13 @@
             .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
             .then(d => {
                 this.response = { status: d.status, statusText: d.status_text, latencyMs: d.latency_ms, body: d.body };
-                this.statusCode = window.extractStatusCode(d.body);
-                // Recursively pull business identifiers from anywhere in the body.
-                this.operuid = window.extractField(d.body, 'operuid');
-                this.suit = window.extractField(d.body, 'suit');
+                // Parse the body once, then pull statusCode + business identifiers
+                // (operuid/suit) recursively from anywhere within it.
+                let parsed = null;
+                try { parsed = JSON.parse(d.body); } catch (e) { /* leave fields null */ }
+                this.statusCode = window.extractStatusCode(parsed);
+                this.operuid = window.extractField(parsed, 'operuid');
+                this.suit = window.extractField(parsed, 'suit');
                 // Mirror the server's ok rule: absent/zero statusCode = success.
                 // The server already recorded this send; ISO «now» matches it.
                 if (this.statusCode === null || this.statusCode === 0) this.lastSuccessAt = window.nowSendTs();
@@ -178,7 +186,9 @@
     </details>
     {% endif %}
 
-    <details class="filled-meta">
+    {# Open by default: this table holds the «Заменить» (open-client-switch)
+       buttons — a key action that shouldn't be hidden behind an extra click. #}
+    <details class="filled-meta" open>
         <summary><iconify-icon class="filled-meta-chevron" icon="lucide:chevron-right"></iconify-icon>Параметры подстановки</summary>
         <table class="data-table">
             <thead><tr><th>Роль</th><th>Сущность</th></tr></thead>

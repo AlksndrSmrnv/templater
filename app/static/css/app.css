@@ -1377,13 +1377,17 @@ input[type="file"]::-webkit-file-upload-button:hover { background: var(--surface
 .filled-meta > .data-table td { padding: 5px 10px; }
 
 /* Postman-style request/response columns. Collapses to one column when the
-   panel is narrow (e.g. the tree is dragged wide). */
+   PANEL (not the viewport) is narrow — when the tree is dragged wide the panel
+   is narrow even on a wide screen, so a viewport media query would leave two
+   cramped columns with horizontal scroll. #filled-panel-body is the query
+   container (its inline size == the panel width). */
+#filled-panel-body { container-type: inline-size; }
 .filled-io {
     display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start;
 }
 .filled-io-col { min-width: 0; }
 .filled-io-col h3 { margin: 0 0 8px; font-size: var(--fs-lg); }
-@media (max-width: 980px) {
+@container (max-width: 700px) {
     .filled-io { grid-template-columns: 1fr; }
 }
 .filled-io-empty {
