@@ -1348,6 +1348,55 @@ input[type="file"]::-webkit-file-upload-button:hover { background: var(--surface
 .send-last.is-err { color: var(--danger); }
 .send-last + .send-last { margin-left: 6px; }
 
+/* operuid / suit pills next to the send button — neutral, recursively pulled
+   from the response body after a send. */
+.send-field-badge {
+    display: inline-flex; align-items: center; max-width: 220px;
+    padding: 2px 10px; border-radius: var(--radius-pill);
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); font-weight: 600; font-size: var(--fs-sm);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Collapsible meta blocks (Заголовки / Параметры подстановки) — compact and
+   collapsed on open, so the request/response split is visible without scrolling. */
+.filled-meta { margin-top: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.filled-meta > summary {
+    display: flex; align-items: center; gap: 6px;
+    padding: 7px 10px; cursor: pointer; list-style: none;
+    font-weight: 600; font-size: var(--fs-sm); color: var(--text);
+}
+.filled-meta > summary::-webkit-details-marker { display: none; }
+.filled-meta-chevron { transition: transform 0.15s ease; flex-shrink: 0; color: var(--muted); }
+.filled-meta[open] > summary .filled-meta-chevron { transform: rotate(90deg); }
+.filled-meta > summary:hover { background: var(--surface-2); }
+.filled-meta > .headers-table,
+.filled-meta > .data-table { font-size: var(--fs-sm); }
+.filled-meta > .headers-table td,
+.filled-meta > .data-table th,
+.filled-meta > .data-table td { padding: 5px 10px; }
+
+/* Postman-style request/response columns. Collapses to one column when the
+   PANEL (not the viewport) is narrow — when the tree is dragged wide the panel
+   is narrow even on a wide screen, so a viewport media query would leave two
+   cramped columns with horizontal scroll. #filled-panel-body is the query
+   container (its inline size == the panel width). */
+#filled-panel-body { container-type: inline-size; }
+.filled-io {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start;
+}
+.filled-io-col { min-width: 0; }
+.filled-io-col h3 { margin: 0 0 8px; font-size: var(--fs-lg); }
+@container (max-width: 700px) {
+    .filled-io { grid-template-columns: 1fr; }
+}
+.filled-io-empty {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 110px; padding: 16px; text-align: center;
+    border: 1px dashed var(--border); border-radius: var(--radius-sm);
+    font-size: var(--fs-sm);
+}
+
 /* Send-history drawer table (#send-history-content). */
 .send-history-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
 .send-history-table th,

@@ -7,19 +7,30 @@
  * page that renders the filled-template panel, exposed as window.extractStatusCode.
  */
 (function () {
-    // Recursively find the first `statusCode` field (case-insensitive) at any
-    // nesting depth, checking the current object's keys before descending.
-    // Only real numbers and numeric strings count — booleans are NOT coerced
-    // (true→1 / false→0 would be misleading). Returns the number or null.
-    function findStatusCode(node) {
+    // Depth-first search for the first non-null result `pick(obj)` yields, with
+    // the SAME order both lookups below rely on: an object's own keys are tried
+    // (via pick) before descending into its values; arrays are walked in order.
+    function findFirst(node, pick) {
         if (node === null || typeof node !== 'object') return null;
         if (Array.isArray(node)) {
             for (const v of node) {
-                const r = findStatusCode(v);
+                const r = findFirst(v, pick);
                 if (r !== null) return r;
             }
             return null;
         }
+        const hit = pick(node);
+        if (hit !== null) return hit;
+        for (const k of Object.keys(node)) {
+            const r = findFirst(node[k], pick);
+            if (r !== null) return r;
+        }
+        return null;
+    }
+
+    // Picker for `statusCode` (case-insensitive). Only real numbers and numeric
+    // strings count — booleans are NOT coerced (true→1 / false→0 would mislead).
+    function pickStatusCode(node) {
         for (const k of Object.keys(node)) {
             if (k.toLowerCase() === 'statuscode') {
                 const v = node[k];
@@ -27,19 +38,40 @@
                 if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v.trim())) return Number(v);
             }
         }
-        for (const k of Object.keys(node)) {
-            const r = findStatusCode(node[k]);
-            if (r !== null) return r;
-        }
         return null;
     }
 
-    // Parse a JSON response body and pull out its statusCode (see findStatusCode).
-    // null on parse error or when the field is absent / non-numeric.
-    window.extractStatusCode = function (jsonStr) {
-        let obj;
-        try { obj = JSON.parse(jsonStr); } catch (e) { return null; }
-        return findStatusCode(obj);
+    // Picker for an arbitrary scalar field named `target` (already lower-cased).
+    function pickField(target) {
+        return function (node) {
+            for (const k of Object.keys(node)) {
+                if (k.toLowerCase() === target) {
+                    const v = node[k];
+                    if (typeof v === 'string' || typeof v === 'number') return String(v);
+                }
+            }
+            return null;
+        };
+    }
+
+    // Accept either a JSON string or an already-parsed value, so a caller that
+    // needs several fields can JSON.parse once and pass the object to each call.
+    function asNode(input) {
+        if (input !== null && typeof input === 'object') return input;
+        try { return JSON.parse(input); } catch (e) { return null; }
+    }
+
+    // Pull the statusCode out of a response body. null on parse error or when the
+    // field is absent / non-numeric. A statusCode of 0 is returned as 0 (≠ null).
+    window.extractStatusCode = function (input) {
+        return findFirst(asNode(input), pickStatusCode);
+    };
+
+    // Recursive lookup of the first scalar field named `name` (any case) at any
+    // nesting depth — used to surface business identifiers (operuid, suit) buried
+    // anywhere in a response body. Returns the value as a string, or null.
+    window.extractField = function (input, name) {
+        return findFirst(asNode(input), pickField(String(name).toLowerCase()));
     };
 
     // ---- «last send» timestamp formatting (shared by both send panels) ----
