@@ -516,9 +516,20 @@ window.chainPanel = function (config) {
                     const blockedBy = this.stepDeps(i).filter((n) => broken.has(n));
                     if (blockedBy.length) {
                         step.skipped = true;
-                        step.skipReason = 'Пропущен: шаг ' + blockedBy.join(', ') + ' не выполнен';
+                        // Name each blocking step by why it broke — «завершился
+                        // ошибкой» (it ran and errored) vs «пропущен» (it was
+                        // itself skipped) — rather than a blanket «не выполнен».
+                        const reasons = blockedBy.map((n) => 'шаг ' + n
+                            + (this.steps[n - 1] && this.steps[n - 1].skipped ? ' пропущен' : ' завершился ошибкой'));
+                        step.skipReason = 'Пропущен: ' + reasons.join(', ');
                         step.response = null;
                         step.statusCode = null;
+                        // Drop the previous run's «Итоговый запрос» preview — send()
+                        // never runs for a skipped step, so it would otherwise linger
+                        // next to the «пропущен» badge with no response.
+                        step.resolvedRequestHtml = null;
+                        step.resolvedRefs = false;
+                        step.resolvedUnresolved = false;
                         broken.add(i + 1);
                         this.progress.current = i + 1;
                         continue;
@@ -530,6 +541,7 @@ window.chainPanel = function (config) {
                 }
             } finally {
                 this.running = false;
+                this.progress = { current: 0, total: 0 };
             }
             // Roll up the run: skipped first, then steps that actually reached
             // send() — failed = execution error or non-zero statusCode, ok = rest.

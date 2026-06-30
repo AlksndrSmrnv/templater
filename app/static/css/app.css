@@ -1277,6 +1277,7 @@ input[type="file"]::-webkit-file-upload-button:hover { background: var(--surface
 }
 .send-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .send-error { color: var(--danger); font-size: var(--fs-sm); }
+.send-skip-reason { color: var(--muted); font-size: var(--fs-sm); }
 
 /* Click-to-bind field picker: a popover anchored at the clicked body field. */
 .chain-body-wrap { position: relative; }

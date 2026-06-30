@@ -34,7 +34,7 @@
 
     <div class="chain-toolbar">
         <div class="send-picker" @click.outside="pickerOpen = false">
-            <button class="btn primary" type="button" @click="pickerOpen = !pickerOpen">
+            <button class="btn primary" type="button" @click="pickerOpen = !pickerOpen" :disabled="running">
                 <iconify-icon icon="lucide:plus"></iconify-icon> Добавить шаг
             </button>
             <div class="send-picker-menu" x-show="pickerOpen" x-cloak>
@@ -145,7 +145,7 @@
                     <div class="send-step-actions">
                         <button class="btn small primary" type="button"
                                 :title="step.sending ? 'Отправка…' : ('Отправить шаг ' + (idx + 1))"
-                                x-show="step.collapsed" :disabled="step.sending" @click="send(idx)">
+                                x-show="step.collapsed" :disabled="step.sending || running" @click="send(idx)">
                             <iconify-icon :icon="step.sending ? 'lucide:loader-2' : 'lucide:send'"
                                           :class="{ 'icon-spin': step.sending }"></iconify-icon>
                             <span x-text="step.sending ? 'Отправка…' : 'Отправить'"></span>
@@ -167,9 +167,9 @@
                               :title="'operuid: ' + step.operuid" x-text="'operuid: ' + step.operuid"></span>
                         <span class="send-field-badge" x-show="step.suit" x-cloak
                               :title="'suit: ' + step.suit" x-text="'suit: ' + step.suit"></span>
-                        <button class="btn small" type="button" title="Выше" @click="moveStep(idx, -1)" :disabled="idx === 0"><iconify-icon icon="lucide:chevron-up"></iconify-icon></button>
-                        <button class="btn small" type="button" title="Ниже" @click="moveStep(idx, 1)" :disabled="idx === steps.length - 1"><iconify-icon icon="lucide:chevron-down"></iconify-icon></button>
-                        <button class="btn small danger" type="button" title="Удалить шаг" @click="removeStep(idx)"><iconify-icon icon="lucide:trash-2"></iconify-icon></button>
+                        <button class="btn small" type="button" title="Выше" @click="moveStep(idx, -1)" :disabled="idx === 0 || running"><iconify-icon icon="lucide:chevron-up"></iconify-icon></button>
+                        <button class="btn small" type="button" title="Ниже" @click="moveStep(idx, 1)" :disabled="idx === steps.length - 1 || running"><iconify-icon icon="lucide:chevron-down"></iconify-icon></button>
+                        <button class="btn small danger" type="button" title="Удалить шаг" @click="removeStep(idx)" :disabled="running"><iconify-icon icon="lucide:trash-2"></iconify-icon></button>
                     </div>
                 </div>
 
@@ -222,12 +222,13 @@
                     </details>
 
                     <div class="send-actions">
-                        <button class="btn primary" type="button" @click="send(idx)" :disabled="step.sending">
+                        <button class="btn primary" type="button" @click="send(idx)" :disabled="step.sending || running">
                             <iconify-icon :icon="step.sending ? 'lucide:loader-2' : 'lucide:send'"
                                           :class="{ 'icon-spin': step.sending }"></iconify-icon>
                             <span x-text="step.sending ? 'Отправка…' : 'Отправить'"></span>
                         </button>
                         <span class="send-error" x-show="step.error" x-text="step.error"></span>
+                        <span class="send-skip-reason" x-show="step.skipped" x-cloak x-text="step.skipReason"></span>
                     </div>
 
                     <section class="filled-io">
