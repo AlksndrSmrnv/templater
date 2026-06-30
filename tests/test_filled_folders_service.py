@@ -13,6 +13,7 @@ from typing import Any, cast
 
 import pytest
 
+from app.services.collections import next_display_order_unified
 from app.services.filled_templates import (
     FILLED_ROOT_FOLDERS_KEY,
     FilledTemplateService,
@@ -116,6 +117,14 @@ class _FakeChainRepo:
         return [
             c for c in self.chains if list(c.folder_path or []) == list(folder_path)
         ]
+
+    async def next_display_order(self, folder_path: list[str]) -> int:
+        orders = [
+            c.display_order
+            for c in self.chains
+            if list(c.folder_path or []) == list(folder_path)
+        ]
+        return (max(orders) + 1) if orders else 0
 
     async def step_counts(self) -> dict[uuid.UUID, int]:
         return {}
@@ -371,6 +380,30 @@ async def test_move_filled_to_root_and_missing_id() -> None:
 
     with pytest.raises(NotFoundError):
         await svc.move_filled(uuid.uuid4(), [], [])
+
+
+@pytest.mark.asyncio
+async def test_next_display_order_unified_appends_after_both_kinds() -> None:
+    # Shared per-folder display_order: the next order for a new row must be
+    # 1 + max across BOTH filled templates and chains in the folder, not just
+    # the row's own kind. Mirror of test_create_chain_appends_after_filled_.
+    # Folder ["F"] holds two chains (orders 0, 1) and no filled templates.
+    chain_repo = _FakeChainRepo([_chain("c0", ["F"], 0), _chain("c1", ["F"], 1)])
+    filled_repo = _FakeFilledRepo([])
+
+    next_order = await next_display_order_unified(filled_repo, chain_repo, ["F"])
+    assert next_order == 2  # after both chains, not 0
+
+    # Mixed folder: a filled template at 0, a chain at 1 → next is 2.
+    filled_repo = _FakeFilledRepo([_item("t0", ["F"], 0)])
+    chain_repo = _FakeChainRepo([_chain("c1", ["F"], 1)])
+    next_order = await next_display_order_unified(filled_repo, chain_repo, ["F"])
+    assert next_order == 2
+
+    # Empty folder → 0.
+    assert await next_display_order_unified(
+        _FakeFilledRepo([]), _FakeChainRepo([]), ["F"]
+    ) == 0
 
 
 # ---- build_tree / list_folder_paths --------------------------------------------

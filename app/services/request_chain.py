@@ -26,7 +26,11 @@ from app.db.models import RequestChain, RequestChainStep
 from app.repositories.filled_template import FilledTemplateRepository
 from app.repositories.request_chain import RequestChainRepository
 from app.repositories.settings import SettingsRepository
-from app.services.collections import _norm_path, reorder_folder_unified
+from app.services.collections import (
+    _norm_path,
+    next_display_order_unified,
+    reorder_folder_unified,
+)
 from app.services.fill_access import assert_fill_visible
 from app.services.filled_templates import (
     _ROLE_COLUMNS,
@@ -183,7 +187,10 @@ class RequestChainService:
         chain = RequestChain(
             name=clean_name[:NAME_MAX_LEN],
             folder_path=parent,
-            display_order=await self.repo.next_display_order(parent),
+            # Append after the folder's combined siblings (filled templates +
+            # chains share one display_order sequence) — a per-table max would
+            # collide/interleave with the other kind's rows.
+            display_order=await next_display_order_unified(self.filled, self.repo, parent),
         )
         return await self.repo.add(chain)
 

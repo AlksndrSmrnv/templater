@@ -34,6 +34,7 @@ from app.services.collections import (
     _norm_path,
     _starts_with,
     build_folder_tree,
+    next_display_order_unified,
     reorder_folder_unified,
 )
 from app.services.fill_access import assert_fill_visible
@@ -626,9 +627,13 @@ class FilledTemplateService:
             changed_locations=list(changed or []),
             unresolved=list(unresolved or []),
             folder_path=target_folder,
-            # Append after the folder's manually ordered siblings — a default
-            # of 0 would jump the new row to the top of a sorted folder.
-            display_order=await self.repo.next_display_order(target_folder),
+            # Append after the folder's combined siblings (filled templates +
+            # chains share one display_order sequence) — a per-table max would
+            # collide/interleave with the other kind's rows. A default of 0
+            # would jump the new row to the top of a sorted folder.
+            display_order=await next_display_order_unified(
+                self.repo, self.chains, target_folder
+            ),
             # HTTP request snapshot for the future "send request" feature —
             # copied now so it survives source-template edits and deletes.
             # getattr-safe like ``project`` above.

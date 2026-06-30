@@ -80,6 +80,33 @@ class _RenumberRow(Protocol):
     created_at: datetime
 
 
+class _NextOrderRepo(Protocol):
+    """Structural view of a repo exposing ``next_display_order`` — satisfied by
+    :class:`FilledTemplateRepository` and :class:`RequestChainRepository`."""
+
+    async def next_display_order(self, folder_path: list[str]) -> int: ...
+
+
+async def next_display_order_unified(
+    filled_repo: _NextOrderRepo,
+    chain_repo: _NextOrderRepo,
+    folder_path: list[str],
+) -> int:
+    """Next ``display_order`` for a new row appended to ``folder_path`` across
+    BOTH filled templates and request chains — the folder's two kinds share one
+    ``display_order`` sequence (see :func:`reorder_folder_unified`), so a new
+    item must land after the highest-ordered sibling of either kind, not just
+    its own. Each repo's ``next_display_order`` already returns ``1 + max`` of
+    its own table; the unified next is the max of the two, i.e. ``1 + max(max)``
+    of the folder's combined siblings. ``folder_path`` must be normalised
+    (``_norm_path``) by the caller — the repos compare it verbatim against the
+    stored JSONB ``folder_path``."""
+
+    filled_next = await filled_repo.next_display_order(folder_path)
+    chain_next = await chain_repo.next_display_order(folder_path)
+    return max(filled_next, chain_next)
+
+
 def reorder_folder_unified(
     filled_siblings: Sequence[_RenumberRow],
     chain_siblings: Sequence[_RenumberRow],

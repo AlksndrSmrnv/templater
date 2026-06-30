@@ -114,6 +114,14 @@ class _FakeFilledRepo:
     async def list_by_folder(self, folder_path: Any) -> Any:
         return [f for f in self.filled if list(f.folder_path or []) == list(folder_path)]
 
+    async def next_display_order(self, folder_path: Any) -> Any:
+        orders = [
+            f.display_order
+            for f in self.filled
+            if list(f.folder_path or []) == list(folder_path)
+        ]
+        return (max(orders) + 1) if orders else 0
+
 
 class _FakeSettingsRepo:
     def __init__(self, values: dict[str, object] | None = None) -> None:
@@ -141,6 +149,10 @@ def _filled(
         filled_content='{"amount": 100}',
         changed_locations=["/amount"],
         folder_path=[],
+        # The real column is NOT NULL with default 0; next_display_order and
+        # the unified append helper read it, so the fake carries it too.
+        display_order=0,
+        created_at=datetime(2026, 6, 25, 12, 0),
         group_id=group_id,
         group_name_snapshot=group_name,
         group_color_snapshot="#fff",
@@ -182,6 +194,26 @@ async def test_create_chain_in_known_folder_and_rejects_ghost() -> None:
     assert chain.folder_path == ["Проект"]
     with pytest.raises(ValidationFailed):
         await svc.create_chain(["Призрак"], "x")
+
+
+@pytest.mark.asyncio
+async def test_create_chain_appends_after_filled_templates_in_folder() -> None:
+    # Shared per-folder display_order: a new chain must land after the folder's
+    # filled templates, not at order 0 between them. Folder ["F"] holds two
+    # templates (orders 0, 1) and no chains yet.
+    t0 = _filled(name="t0")
+    t0.folder_path = ["F"]
+    t0.display_order = 0
+    t0.created_at = datetime(2026, 6, 25, 12, 0)
+    t1 = _filled(name="t1")
+    t1.folder_path = ["F"]
+    t1.display_order = 1
+    t1.created_at = datetime(2026, 6, 25, 12, 1)
+    svc = _service([t0, t1])
+
+    chain = await svc.create_chain(["F"], "Новая цепочка")
+    assert chain.folder_path == ["F"]
+    assert chain.display_order == 2  # after both templates, not 0 between them
 
 
 @pytest.mark.asyncio
