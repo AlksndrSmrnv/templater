@@ -29,7 +29,14 @@ from app.repositories.request_chain import RequestChainRepository
 from app.repositories.settings import SettingsRepository
 from app.routes.entities_htmx import entity_label
 from app.schemas.template import TemplateFillRequest
-from app.services.collections import _new_node, _norm_path, _starts_with, build_folder_tree
+from app.services.collections import (
+    _new_node,
+    _norm_path,
+    _starts_with,
+    build_folder_tree,
+    next_display_order_unified,
+    reorder_folder_unified,
+)
 from app.services.fill_access import assert_fill_visible
 from app.services.placeholders import PlaceholderFiller
 from app.services.templates import TemplateService
@@ -56,6 +63,17 @@ def _expand_prefixes(paths: list[list[str]]) -> set[tuple[str, ...]]:
         for i in range(1, len(segments) + 1):
             out.add(tuple(segments[:i]))
     return out
+
+
+def _resort_entries(node: dict[str, Any]) -> None:
+    """Recursively re-sort every node's unified ``entries`` list by the shared
+    ``(display_order, created_at)`` key so templates and chains interleave in
+    their real folder order. ``entries`` items are ``{"kind", "row", "order",
+    "created_at"}``; chains carry a ``created_at`` snapshot from the ORM row."""
+
+    node["entries"].sort(key=lambda it: (it["order"], it["created_at"]))
+    for child in node["folders"].values():
+        _resort_entries(child)
 
 
 def _truncate(text: str, *, limit: int = NAME_MAX_LEN) -> str:
@@ -366,9 +384,13 @@ class FilledTemplateService:
 
         Each chain is appended to its folder node's ``chains`` list as a
         lightweight dict (the ORM rows' ``steps`` are not loaded, so we never
-        touch the lazy relationship here). While searching, chains are filtered
-        by name — mirroring how filled templates collapse to matches. Returns the
-        number of chains placed.
+        touch the lazy relationship here) and into the unified ``entries`` list
+        alongside the folder's filled templates. While searching, chains are
+        filtered by name — mirroring how filled templates collapse to matches.
+        After grafting, every node's ``entries`` is re-sorted by the shared
+        ``(display_order, created_at)`` key so the tree renders templates and
+        chains interleaved in their real folder order. Returns the number of
+        chains placed.
         """
 
         chains = await self.chains.list_all(visible_group_ids=visible_group_ids)
@@ -381,17 +403,21 @@ class FilledTemplateService:
             node = tree
             for folder in chain.folder_path or []:
                 node = node["folders"].setdefault(str(folder), _new_node())
-            node.setdefault("chains", []).append(
-                {
-                    "id": str(chain.id),
-                    "name": chain.name,
-                    "step_count": counts.get(chain.id, 0),
-                    "group_name_snapshot": getattr(chain, "group_name_snapshot", "") or "",
-                    "group_color_snapshot": getattr(chain, "group_color_snapshot", "") or "",
-                    "project_name_snapshot": getattr(chain, "project_name_snapshot", "") or "",
-                    "project_color_snapshot": getattr(chain, "project_color_snapshot", "") or "",
-                }
+            chain_dict = {
+                "id": str(chain.id),
+                "name": chain.name,
+                "step_count": counts.get(chain.id, 0),
+                "group_name_snapshot": getattr(chain, "group_name_snapshot", "") or "",
+                "group_color_snapshot": getattr(chain, "group_color_snapshot", "") or "",
+                "project_name_snapshot": getattr(chain, "project_name_snapshot", "") or "",
+                "project_color_snapshot": getattr(chain, "project_color_snapshot", "") or "",
+            }
+            node.setdefault("chains", []).append(chain_dict)
+            node.setdefault("entries", []).append(
+                {"kind": "chain", "row": chain_dict,
+                 "order": chain.display_order, "created_at": chain.created_at}
             )
+        _resort_entries(tree)
         return len(ordered)
 
     async def create_folder(self, parent_path: list[str], name: str) -> list[str]:
@@ -504,19 +530,21 @@ class FilledTemplateService:
         self,
         filled_id: uuid.UUID,
         target_folder_path: list[str],
-        order: list[uuid.UUID],
+        order: list[tuple[str, uuid.UUID]],
         *,
         visible_group_ids: set[uuid.UUID] | None = None,
     ) -> None:
         """Move a filled template into ``target_folder_path`` and renumber
-        ``display_order`` across the target folder's siblings.
+        ``display_order`` across the target folder's filled templates *and*
+        request chains as one shared sequence (so a chain can sit anywhere
+        among the folder's templates).
 
-        ``order`` carries the ids the client currently *sees* — the tree may
-        be filtered by search or truncated, so it can be a subset of the
-        folder. Visible items are re-sequenced in payload order across the
-        slots they currently occupy; hidden siblings keep their positions.
+        ``order`` carries the ``(kind, id)`` tokens the client currently *sees*
+        — the tree may be filtered by search or truncated, so it can be a subset
+        of the folder. Visible items are re-sequenced in payload order across
+        the slots they currently occupy; hidden siblings keep their positions.
         The whole folder is renumbered 0..n-1, so a partial payload can never
-        produce duplicate ``display_order`` values. Ids that don't belong to
+        produce duplicate ``display_order`` values. Tokens that don't belong to
         the folder (crafted or stale payloads) are ignored.
         """
 
@@ -529,21 +557,9 @@ class FilledTemplateService:
         # collide with the renumbered siblings.
         await self.session.flush()
 
-        siblings = await self.repo.list_by_folder(target_folder)
-        full = sorted(siblings, key=lambda row: (row.display_order, row.created_at))
-        by_id = {row.id: row for row in full}
-        payload: list[uuid.UUID] = []
-        payload_ids: set[uuid.UUID] = set()
-        for raw_id in order:
-            if raw_id in by_id and raw_id not in payload_ids:
-                payload.append(raw_id)
-                payload_ids.add(raw_id)
-        payload_iter = iter(payload)
-        resequenced = (
-            by_id[next(payload_iter)] if row.id in payload_ids else row for row in full
-        )
-        for position, row in enumerate(resequenced):
-            row.display_order = position
+        filled_siblings = await self.repo.list_by_folder(target_folder)
+        chain_siblings = await self.chains.list_by_folder(target_folder)
+        reorder_folder_unified(filled_siblings, chain_siblings, order)
         await self.session.flush()
 
     async def list_folder_paths(self) -> list[list[str]]:
@@ -611,9 +627,13 @@ class FilledTemplateService:
             changed_locations=list(changed or []),
             unresolved=list(unresolved or []),
             folder_path=target_folder,
-            # Append after the folder's manually ordered siblings — a default
-            # of 0 would jump the new row to the top of a sorted folder.
-            display_order=await self.repo.next_display_order(target_folder),
+            # Append after the folder's combined siblings (filled templates +
+            # chains share one display_order sequence) — a per-table max would
+            # collide/interleave with the other kind's rows. A default of 0
+            # would jump the new row to the top of a sorted folder.
+            display_order=await next_display_order_unified(
+                self.repo, self.chains, target_folder
+            ),
             # HTTP request snapshot for the future "send request" feature —
             # copied now so it survives source-template edits and deletes.
             # getattr-safe like ``project`` above.

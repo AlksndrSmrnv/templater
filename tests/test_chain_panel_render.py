@@ -105,13 +105,16 @@ def test_chain_panel_omits_dependency_overview() -> None:
 
 def test_filled_tree_renders_chain_node() -> None:
     chain_id = str(uuid.uuid4())
+    chain_row = {
+        "id": chain_id, "name": "Моя цепочка", "step_count": 3,
+        "group_name_snapshot": "", "group_color_snapshot": "",
+    }
     tree = {
         "folders": {},
         "templates": [],
-        "chains": [
-            {"id": chain_id, "name": "Моя цепочка", "step_count": 3,
-             "group_name_snapshot": "", "group_color_snapshot": ""},
-        ],
+        "chains": [chain_row],
+        "entries": [{"kind": "chain", "row": chain_row, "order": 0,
+                     "created_at": datetime(2026, 6, 25, 12, 0)}],
     }
     html = render_template(
         "partials/filled_tree.html",
