@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 from app.repositories.message_send import MessageSendRepository
 
@@ -82,3 +83,64 @@ async def test_last_for_chain_no_history_is_empty() -> None:
     last = await repo.last_for_chain(uuid.uuid4())
     assert last.success_at is None
     assert last.error_at is None
+
+
+# --- global history search (SQL asserted by compiling; no live DB) ---------
+
+
+def _compiled_search(**kwargs: Any) -> str:
+    repo = MessageSendRepository(_FakeSession([]))  # type: ignore[arg-type]
+    stmt = repo.build_search_stmt(**kwargs)
+    # literal_binds inlines the pattern so the test asserts the actual %term%
+    # string, catching a regression where the wildcards are dropped.
+    # ``named`` paramstyle avoids the pyformat ``%`` → ``%%`` doubling so the
+    # inlined LIKE pattern reads back verbatim.
+    return str(
+        stmt.compile(
+            dialect=postgresql.dialect(paramstyle="named"),
+            compile_kwargs={"literal_binds": True},
+        )
+    ).lower()
+
+
+def test_search_stmt_matches_bodies_case_insensitively() -> None:
+    sql = _compiled_search(query="operuid")
+    # The term must reach the request/response bodies (where operuid lives) and
+    # the JSON headers cast to text — case-insensitively, with the wildcards.
+    assert "message_sends.request_body ilike '%operuid%'" in sql
+    assert "message_sends.response_body ilike '%operuid%'" in sql
+    assert "cast(message_sends.request_headers as text) ilike '%operuid%'" in sql
+
+
+def test_search_stmt_escapes_like_metacharacters() -> None:
+    # A ``_`` in the query (e.g. an ``oper_uid`` key) must match literally, not
+    # as a LIKE «any char» wildcard — the pattern escapes it and sets ESCAPE.
+    sql = _compiled_search(query="oper_uid")
+    # Backslashes are doubled by SQL string-literal escaping (one backslash on
+    # the wire): the ``_`` is preceded by an escape and ESCAPE '\' is set.
+    assert r"ilike '%oper\\_uid%'" in sql
+    assert r"escape '\\'" in sql
+
+
+def test_search_stmt_orders_by_created_at_then_id() -> None:
+    sql = _compiled_search(query="x")
+    # Stable tiebreaker: id.desc() after created_at.desc().
+    assert "order by message_sends.created_at desc, message_sends.id desc" in sql
+
+
+def test_search_stmt_blank_query_has_no_ilike() -> None:
+    sql = _compiled_search(query="   ")
+    assert "ilike" not in sql
+
+
+def test_search_stmt_applies_group_visibility() -> None:
+    sql = _compiled_search(query="", visible_group_ids={uuid.uuid4()})
+    # Visibility is inherited from the source object via correlated EXISTS.
+    assert "exists" in sql
+    assert "filled_templates" in sql
+    assert "request_chains" in sql
+
+
+def test_search_stmt_no_visibility_filter_when_group_ids_none() -> None:
+    sql = _compiled_search(query="x", visible_group_ids=None)
+    assert "exists" not in sql

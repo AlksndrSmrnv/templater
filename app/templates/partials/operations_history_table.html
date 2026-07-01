@@ -1,0 +1,61 @@
+{# Results table for the global «История операций» search page. Swapped into
+   #operations-history-results by the search box. Mirrors the per-object drawer
+   table (partials/send_history.html) but stands alone — no drawer wrapper. #}
+<div class="drawer-body" x-data="{ expanded: null }">
+    {% if not sends %}
+    <div class="muted">
+        {% if q | default('') %}Ничего не найдено.{% else %}Отправок пока не было.{% endif %}
+    </div>
+    {% else %}
+    {% if truncated | default(false) %}
+    <div class="muted">Показаны новейшие {{ list_limit | default(sends | length) }} записей — уточните запрос, чтобы увидеть остальные.</div>
+    {% endif %}
+    <table class="send-history-table">
+        <thead>
+            <tr>
+                <th>Дата и время</th>
+                <th>Сообщение</th>
+                <th>Запрос</th>
+                <th>Результат</th>
+                <th>HTTP</th>
+                <th>statusCode</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in sends %}
+            {% set rid = s.id | string %}
+            <tr class="send-history-row"
+                :class="{ 'is-open': expanded === {{ rid | tojson | forceescape }} }"
+                @click="expanded = (expanded === {{ rid | tojson | forceescape }} ? null : {{ rid | tojson | forceescape }})">
+                <td>{{ s.created_at.strftime('%d.%m.%Y %H:%M:%S') if s.created_at else '—' }}</td>
+                <td>{{ s.name_snapshot or '—' }}</td>
+                <td>
+                    <span class="tree-method method-{{ (s.http_method or '')|lower }}">{{ s.http_method or '·' }}</span>
+                    <code class="send-history-url" title="{{ s.url }}">{{ s.url or '—' }}</code>
+                </td>
+                <td><span class="send-badge {{ 'is-ok' if s.ok else 'is-err' }}">{{ 'успех' if s.ok else 'ошибка' }}</span></td>
+                <td>{{ s.http_status if s.http_status is not none else '—' }}</td>
+                <td>{{ s.status_code if s.status_code is not none else '—' }}</td>
+            </tr>
+            <tr class="send-history-detail" x-show="expanded === {{ rid | tojson | forceescape }}" x-cloak>
+                <td colspan="6">
+                    {% if s.error_message %}
+                    <div class="send-history-error">{{ s.error_message }}</div>
+                    {% endif %}
+                    <div class="send-history-pair">
+                        <div>
+                            <h4>Запрос (тело)</h4>
+                            <pre class="template-code">{{ s.request_body or '—' }}</pre>
+                        </div>
+                        <div>
+                            <h4>Ответ</h4>
+                            <pre class="template-code">{{ s.response_body or '—' }}</pre>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>

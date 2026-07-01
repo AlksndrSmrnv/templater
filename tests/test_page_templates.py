@@ -1393,6 +1393,71 @@ def test_assistant_result_partial_warns_on_unresolved() -> None:
     assert "sender.account.number" in html
 
 
+# ---------- Global operations-history search page ----------
+
+
+def _history_send(**overrides: Any) -> SimpleNamespace:
+    base: dict[str, Any] = {
+        "id": uuid.uuid4(),
+        "created_at": datetime(2026, 6, 30, 15, 45, 23),
+        "name_snapshot": "A2A Transfer",
+        "http_method": "POST",
+        "url": "https://api.example.com/v1/transfer",
+        "ok": True,
+        "http_status": 200,
+        "status_code": 0,
+        "request_body": '{"operuid": "OPER-567890"}',
+        "response_body": '{"operation": {"operuid": "OPER-567890"}}',
+        "error_message": "",
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_operations_history_page_wires_global_search_box() -> None:
+    html = render_template(
+        "operations_history/page.html",
+        {"active": "operations-history", "q": "operuid", "sends": [_history_send()]},
+    )
+    search = [t for t in start_tags(html, "input") if t.get("name") == "q"]
+    assert len(search) == 1
+    assert search[0].get("value") == "operuid"
+    assert search[0].get("hx-get") == "/templater/operations-history-htmx/search"
+    assert search[0].get("hx-target") == "#operations-history-results"
+    assert start_tag_by_id(html, "div", "operations-history-results")
+    # The row (and its operuid-bearing body) render inside the results container.
+    assert "A2A Transfer" in html
+    assert "OPER-567890" in html
+
+
+def test_operations_history_table_empty_states_depend_on_query() -> None:
+    # With a query but no matches → «Ничего не найдено».
+    found_none = render_template(
+        "partials/operations_history_table.html", {"q": "zzz", "sends": []}
+    )
+    assert "Ничего не найдено" in found_none
+    # Without a query and no history → «Отправок пока не было».
+    empty = render_template(
+        "partials/operations_history_table.html", {"sends": []}
+    )
+    assert "Отправок пока не было" in empty
+
+
+def test_operations_history_table_flags_truncated_result_cap() -> None:
+    # When the search hits the row cap the table warns that only the newest N are
+    # shown; without truncation there is no such notice.
+    truncated = render_template(
+        "partials/operations_history_table.html",
+        {"q": "a", "sends": [_history_send()], "list_limit": 200, "truncated": True},
+    )
+    assert "Показаны новейшие 200" in truncated
+    not_truncated = render_template(
+        "partials/operations_history_table.html",
+        {"q": "a", "sends": [_history_send()], "list_limit": 200, "truncated": False},
+    )
+    assert "Показаны новейшие" not in not_truncated
+
+
 # ---------------------------------------------------------------------------
 # Project badges: explicit colored chip on tree items, panel and filled views.
 # ---------------------------------------------------------------------------

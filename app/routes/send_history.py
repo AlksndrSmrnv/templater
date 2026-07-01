@@ -11,6 +11,7 @@ caller has not unlocked yields an empty drawer rather than leaking its sends.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
@@ -19,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import MessageSend
 from app.repositories.filled_template import FilledTemplateRepository
-from app.repositories.message_send import MessageSendRepository
+from app.repositories.message_send import DEFAULT_HISTORY_LIMIT, MessageSendRepository
 from app.repositories.request_chain import RequestChainRepository
 from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 
@@ -68,3 +69,53 @@ async def htmx_history_chain(
         return _render(request, templates, title="История отправок", sends=[])
     sends = await MessageSendRepository(session).list_for_chain(chain_id)
     return _render(request, templates, title=f"История отправок · {chain.name}", sends=sends)
+
+
+async def _history_context(
+    session: AsyncSession, *, q: str, group_ids: set[uuid.UUID]
+) -> dict[str, Any]:
+    sends = await MessageSendRepository(session).search(query=q, visible_group_ids=group_ids)
+    # The search caps at DEFAULT_HISTORY_LIMIT (no paging UI); flag the cap so the
+    # table can tell the user the newest N are shown and there may be more.
+    return {
+        "q": q,
+        "sends": sends,
+        "list_limit": DEFAULT_HISTORY_LIMIT,
+        "truncated": len(sends) >= DEFAULT_HISTORY_LIMIT,
+    }
+
+
+@router.get("/operations-history")
+async def page_operations_history(
+    request: Request,
+    q: str = "",
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
+) -> Response:
+    """Global «История операций» page — search across every send's history."""
+
+    context = await _history_context(session, q=q, group_ids=group_ids)
+    return templates.TemplateResponse(
+        request,
+        "operations_history/page.html",
+        {"active": "operations-history", **context},
+    )
+
+
+@router.get("/operations-history-htmx/search")
+async def htmx_operations_history_search(
+    request: Request,
+    q: str = "",
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
+) -> Response:
+    """Results-table partial for the global history search box (live filter)."""
+
+    context = await _history_context(session, q=q, group_ids=group_ids)
+    return templates.TemplateResponse(
+        request,
+        "partials/operations_history_table.html",
+        context,
+    )

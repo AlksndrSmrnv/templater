@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}История операций — Template Maker{% endblock %}
+{% block main_class %}content-wide{% endblock %}
+{% block content %}
+<div class="operations-history">
+    <div class="workspace-left-header">
+        <div class="workspace-left-title">
+            <h2><iconify-icon icon="lucide:history"></iconify-icon> История операций</h2>
+        </div>
+        <input class="tree-search"
+               type="search"
+               name="q"
+               value="{{ q | default('') }}"
+               placeholder="Поиск по всей истории (operuid, URL, тело…)"
+               hx-get="/templater/operations-history-htmx/search"
+               hx-target="#operations-history-results"
+               hx-swap="innerHTML"
+               hx-trigger="input changed delay:200ms">
+    </div>
+    <div id="operations-history-results">
+        {% include "partials/operations_history_table.html" %}
+    </div>
+</div>
+{% endblock %}
