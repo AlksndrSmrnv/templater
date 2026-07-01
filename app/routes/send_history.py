@@ -68,3 +68,43 @@ async def htmx_history_chain(
         return _render(request, templates, title="История отправок", sends=[])
     sends = await MessageSendRepository(session).list_for_chain(chain_id)
     return _render(request, templates, title=f"История отправок · {chain.name}", sends=sends)
+
+
+@router.get("/operations-history")
+async def page_operations_history(
+    request: Request,
+    q: str = "",
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
+) -> Response:
+    """Global «История операций» page — search across every send's history."""
+
+    sends = await MessageSendRepository(session).search(
+        query=q, visible_group_ids=group_ids
+    )
+    return templates.TemplateResponse(
+        request,
+        "operations_history/page.html",
+        {"active": "operations-history", "q": q, "sends": sends},
+    )
+
+
+@router.get("/operations-history-htmx/search")
+async def htmx_operations_history_search(
+    request: Request,
+    q: str = "",
+    templates: Jinja2Templates = TemplatesDep,
+    session: AsyncSession = SessionDep,
+    group_ids: set[uuid.UUID] = UnlockedGroupsDep,
+) -> Response:
+    """Results-table partial for the global history search box (live filter)."""
+
+    sends = await MessageSendRepository(session).search(
+        query=q, visible_group_ids=group_ids
+    )
+    return templates.TemplateResponse(
+        request,
+        "partials/operations_history_table.html",
+        {"q": q, "sends": sends},
+    )

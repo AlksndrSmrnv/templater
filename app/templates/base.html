@@ -51,11 +51,12 @@
                 <a href="/templater/cards"><iconify-icon icon="lucide:credit-card"></iconify-icon> Карты</a>
             </div>
         </span>
-        <span class="nav-group{% if active == 'templates' %} active{% endif %}" title="Шаблоны сообщений">
+        <span class="nav-group{% if active in ['templates', 'operations-history'] %} active{% endif %}" title="Шаблоны сообщений">
             <span class="nav-icon"><iconify-icon icon="lucide:mail"></iconify-icon></span><span class="nav-label">Шаблоны сообщений</span>
             <div class="nav-submenu">
                 <a href="/templater/templates"><iconify-icon icon="lucide:file-text"></iconify-icon> Шаблоны</a>
                 <a href="/templater/filled-templates"><iconify-icon icon="lucide:package"></iconify-icon> Заполненные шаблоны</a>
+                <a href="/templater/operations-history"><iconify-icon icon="lucide:history"></iconify-icon> История операций</a>
             </div>
         </span>
         <a href="/templater/send" class="{% if active == 'send' %}active{% endif %} disabled" title="Отправка сообщений — в разработке">
