@@ -282,6 +282,7 @@ def test_every_mutating_settings_route_is_gated() -> None:
         ("/settings-htmx/header-presets/{preset_id}", "PUT"),
         ("/settings-htmx/header-presets/{preset_id}", "DELETE"),
         ("/settings-htmx/import_policy", "PUT"),
+        ("/settings-htmx/dynamic-fields", "PUT"),
         ("/settings-htmx/prompts/{key}", "PUT"),
     }
 

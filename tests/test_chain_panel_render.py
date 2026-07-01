@@ -58,6 +58,26 @@ def test_chain_panel_renders_steps_and_controls() -> None:
     assert "Удалить" in html
 
 
+def test_chain_panel_seeds_dynamic_patterns_into_config() -> None:
+    # The Alpine config carries the per-field generation patterns so the client
+    # can generate & substitute dynamic values at send time.
+    ctx = _chain_panel_context([_step("Создать перевод", '{"rqUID": "{{rqUID}}"}')])
+    ctx["dynamic_patterns"] = {"rqUID": "REQ-{uuid}", "operUID": "{uuid}"}
+    html = render_template("partials/chain_panel.html", ctx)
+    assert "dynamicPatterns:" in html
+    assert "REQ-{uuid}" in html
+
+
+def test_chain_panel_dynamic_patterns_default_when_absent() -> None:
+    # No dynamic_patterns key → the | default({}) guard renders an empty object,
+    # keeping the hand-built-context render tests working.
+    html = render_template(
+        "partials/chain_panel.html",
+        _chain_panel_context([_step("a", "{}")]),
+    )
+    assert "dynamicPatterns:" in html
+
+
 def test_chain_panel_drops_example_and_insert_link_adds_collapse() -> None:
     html = render_template(
         "partials/chain_panel.html",

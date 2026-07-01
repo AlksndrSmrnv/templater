@@ -39,6 +39,12 @@ from app.schemas.header_preset import HeaderPresetCreate, HeaderPresetUpdate
 from app.schemas.project import ProjectCreate, ProjectUpdate
 from app.services.access_groups import AccessGroupService
 from app.services.attribute_schema import AttributeSchemaService
+from app.services.dynamic_patterns import (
+    DYNAMIC_PATTERN_FIELDS,
+    dynamic_pattern_fields,
+    load_dynamic_patterns,
+    save_dynamic_patterns,
+)
 from app.services.header_presets import HeaderPresetService
 from app.services.projects import ProjectService
 from app.utils.edit_mode import (
@@ -102,6 +108,7 @@ async def page_settings(
     s = get_settings()
     saved_policy = await SettingsRepository(session).get("import_policy", "skip")
     default_policy = saved_policy if saved_policy in {"skip", "overwrite", "fail"} else "skip"
+    dynamic_patterns = await load_dynamic_patterns(session)
     svc = AttributeSchemaService(session)
     attributes = await svc.list_all()
     usage_counts = await svc.usage(attributes)
@@ -129,6 +136,8 @@ async def page_settings(
             "usage_counts": usage_counts,
             "selected_entity_type": "",
             "default_policy": default_policy,
+            "dynamic_patterns": dynamic_patterns,
+            "dynamic_pattern_fields": dynamic_pattern_fields(),
             "projects": await ProjectService(session).list_all(),
             "groups": await AccessGroupService(session).list_all(),
             "header_presets": await HeaderPresetService(session).list_all(),
@@ -644,6 +653,25 @@ async def htmx_import_policy(request: Request, session: AsyncSession = SessionDe
     if policy not in {"skip", "overwrite", "fail"}:
         policy = "skip"
     await SettingsRepository(session).set("import_policy", policy)
+    await commit_or_409(session)
+    return Response(status_code=204, headers={"HX-Redirect": "/templater/settings?saved=1"})
+
+
+@edit_router.put("/settings-htmx/dynamic-fields")
+async def htmx_dynamic_fields(request: Request, session: AsyncSession = SessionDep) -> Response:
+    """Persist the generation patterns for the dynamic envelope fields.
+
+    Each field is submitted as ``pattern_<token>``; blanks fall back to that
+    field's default in :func:`normalize_dynamic_patterns`, so the stored map
+    always covers every field.
+    """
+
+    form = await request.form()
+    raw = {
+        field["name"]: form_str(form, f"pattern_{field['name']}")
+        for field in DYNAMIC_PATTERN_FIELDS
+    }
+    await save_dynamic_patterns(session, raw)
     await commit_or_409(session)
     return Response(status_code=204, headers={"HX-Redirect": "/templater/settings?saved=1"})
 

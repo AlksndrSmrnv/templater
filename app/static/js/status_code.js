@@ -91,4 +91,79 @@
     // ISO-8601 (UTC) for «now» — store this on a badge after a local send, then
     // render it through formatSendTs like any server-seeded value.
     window.nowSendTs = function () { return new Date().toISOString(); };
+
+    // ---- dynamic field generation (rqUID / operUID / rqTm / channelDateTime) ----
+    // A per-field pattern string (configured in settings) is expanded into a
+    // concrete value at send time and substituted into the request body/headers.
+    // Grammar (mirrors the settings help): {uuid} {uuid_upper} {rand:N} {hex:N}
+    // {seq} {timestamp} {timestamp_ms} {date:FORMAT}. Unknown {...} tokens are
+    // left verbatim so a typo is visible rather than silently dropped.
+    let dynamicSeq = 0;
+
+    function uuidv4() {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            return window.crypto.randomUUID();
+        }
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+            const r = (Math.random() * 16) | 0;
+            const v = c === 'x' ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+        });
+    }
+    function randDigits(n) {
+        let out = '';
+        for (let i = 0; i < n; i++) out += Math.floor(Math.random() * 10);
+        return out;
+    }
+    function randHex(n) {
+        let out = '';
+        for (let i = 0; i < n; i++) out += Math.floor(Math.random() * 16).toString(16);
+        return out;
+    }
+    // Signed timezone offset for the given date, as ±HH:MM (colon) / ±HHMM.
+    function tzOffset(d, colon) {
+        const mins = -d.getTimezoneOffset();
+        const sign = mins >= 0 ? '+' : '-';
+        const abs = Math.abs(mins);
+        const hh = pad(Math.floor(abs / 60));
+        const mm = pad(abs % 60);
+        return sign + hh + (colon ? ':' : '') + mm;
+    }
+    // moment-like date formatting in the browser's local zone. Longest tokens
+    // first so YYYY isn't eaten by YY, SSS before ss, ZZ before Z.
+    function formatDate(fmt, d) {
+        const map = {
+            YYYY: String(d.getFullYear()),
+            YY: pad(d.getFullYear() % 100),
+            MM: pad(d.getMonth() + 1),
+            DD: pad(d.getDate()),
+            HH: pad(d.getHours()),
+            mm: pad(d.getMinutes()),
+            ss: pad(d.getSeconds()),
+            SSS: String(d.getMilliseconds()).padStart(3, '0'),
+            ZZ: tzOffset(d, true),
+            Z: tzOffset(d, false),
+        };
+        return fmt.replace(/YYYY|YY|MM|DD|HH|mm|ss|SSS|ZZ|Z/g, function (t) { return map[t]; });
+    }
+    // Expand one pattern. `now` is passed in so several fields generated for the
+    // same message share a single timestamp.
+    window.generateDynamicValue = function (pattern, now) {
+        const d = now || new Date();
+        const src = (typeof pattern === 'string' && pattern) ? pattern : '';
+        return src.replace(/\{(uuid|uuid_upper|rand|hex|seq|timestamp|timestamp_ms|date)(?::([^}]*))?\}/g,
+            function (whole, name, arg) {
+                switch (name) {
+                    case 'uuid': return uuidv4();
+                    case 'uuid_upper': return uuidv4().toUpperCase();
+                    case 'rand': return randDigits(Math.max(0, parseInt(arg, 10) || 0));
+                    case 'hex': return randHex(Math.max(0, parseInt(arg, 10) || 0));
+                    case 'seq': return String(++dynamicSeq);
+                    case 'timestamp': return String(Math.floor(d.getTime() / 1000));
+                    case 'timestamp_ms': return String(d.getTime());
+                    case 'date': return formatDate(arg || '', d);
+                    default: return whole;
+                }
+            });
+    };
 })();

@@ -48,6 +48,7 @@ from app.routes.htmx_utils import (
     toast_header,
 )
 from app.routes.uow import commit_or_409
+from app.services.dynamic_patterns import load_dynamic_patterns
 from app.services.filled_templates import (
     _ROLE_COLUMNS,
     ROLE_TITLES,
@@ -286,6 +287,10 @@ async def _panel_context(
         "chain_data": data,
         "available": available,
         "execute_url": "/templater/send-htmx/execute",
+        # Per-field generation patterns for the dynamic envelope tokens
+        # (rqUID/operUID/rqTm/channelDateTime). The client generates & substitutes
+        # the values at send time; operUID is shared across a real chain's steps.
+        "dynamic_patterns": await load_dynamic_patterns(session),
         # ISO timestamps for the chain-level «последний запуск» badges; the
         # client formats them (window.formatSendTs) like the per-step ones.
         "chain_last_success_at": chain_last.success_at.isoformat() if chain_last.success_at else "",

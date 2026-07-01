@@ -10,7 +10,8 @@
         steps: {{ chain_data.steps | tojson | forceescape }},
         chainLastSuccessAt: {{ (chain_last_success_at | default('')) | tojson | forceescape }},
         chainLastErrorAt: {{ (chain_last_error_at | default('')) | tojson | forceescape }},
-        chainProject: {{ (chain.project_name_snapshot | default('') or '') | tojson | forceescape }}
+        chainProject: {{ (chain.project_name_snapshot | default('') or '') | tojson | forceescape }},
+        dynamicPatterns: {{ (dynamic_patterns | default({})) | tojson | forceescape }}
      })">
 
     {% if not standalone %}
@@ -309,7 +310,7 @@
                         </div>
                     </section>
 
-                    <section class="send-block" x-show="step.resolvedRequestHtml && idx > 0" x-cloak>
+                    <section class="send-block" x-show="step.resolvedRequestHtml" x-cloak>
                         <h3>Итоговый запрос</h3>
                         <p class="muted send-sub" x-text="step.resolvedUnresolved
                             ? 'Тело запроса. Красным выделены неразрешённые ссылки.'

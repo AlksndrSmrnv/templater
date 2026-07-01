@@ -36,6 +36,9 @@ window.chainPanel = function (config) {
     return {
         chainId: config.chainId,
         executeUrl: config.executeUrl,
+        // Per-field generation patterns for the dynamic envelope tokens, seeded
+        // from settings. Values are (re)generated and substituted at send time.
+        dynamicPatterns: config.dynamicPatterns || {},
         steps: [],
         pickerOpen: false,
         pickerSearch: '',
@@ -382,11 +385,55 @@ window.chainPanel = function (config) {
             }
             return JSON.stringify(val);
         },
-        resolveBody(idx) {
+        // Generate the dynamic envelope values for one message. `sharedOperuid`,
+        // when non-null, forces operUID to a value minted once for the whole run
+        // (a real chain shares it); everything else is fresh per message. All
+        // share a single `now` so rqTm/channelDateTime line up to the same instant.
+        buildDynamicContext(sharedOperuid) {
+            const p = this.dynamicPatterns || {};
+            const now = new Date();
+            const gen = (pattern, fallback) => window.generateDynamicValue(pattern || fallback, now);
+            return {
+                rqUID: gen(p.rqUID, '{uuid}'),
+                operUID: (sharedOperuid != null && sharedOperuid !== '')
+                    ? sharedOperuid : gen(p.operUID, '{uuid}'),
+                rqTm: gen(p.rqTm, '{date:YYYY-MM-DDTHH:mm:ss}'),
+                channelDateTime: gen(p.channelDateTime, '{date:YYYY-MM-DDTHH:mm:ss}'),
+            };
+        },
+        // Case-insensitive lookup of a bareword {{token}} against a dynamic
+        // context. Returns the generated string, or undefined for a non-dynamic
+        // word (left verbatim by the callers).
+        dynamicLookup(dynCtx, word) {
+            if (!dynCtx) return undefined;
+            const target = String(word).toLowerCase();
+            for (const key of Object.keys(dynCtx)) {
+                if (key.toLowerCase() === target) return dynCtx[key];
+            }
+            return undefined;
+        },
+        // Substitute dynamic tokens into a header value string (plain text, no
+        // JSON encoding). Unknown/reference tokens are left untouched.
+        resolveHeaderValue(value, dynCtx) {
+            return String(value == null ? '' : value).replace(
+                /\{\{\s*([A-Za-z][A-Za-z0-9]*)\s*\}\}/g,
+                (whole, word) => {
+                    const v = this.dynamicLookup(dynCtx, word);
+                    return v === undefined ? whole : String(v);
+                });
+        },
+        // Enabled headers with dynamic tokens substituted, ready to send.
+        resolveHeaders(headers, dynCtx) {
+            return (headers || [])
+                .filter((h) => h && !h.disabled)
+                .map((h) => ({ key: h.key, value: this.resolveHeaderValue(h.value, dynCtx) }));
+        },
+        resolveBody(idx, dynCtx) {
             const step = this.steps[idx];
             const src = step.body || '';
             const isJson = (step.format || 'json') === 'json';
-            const re = /\{\{\s*\$(\d+)\.([^}\s]+)\s*\}\}/g;
+            // Match either a reference ($N.path) or a bareword token (dynamic).
+            const re = /\{\{\s*(?:\$(\d+)\.([^}\s]+)|([A-Za-z][A-Za-z0-9]*))\s*\}\}/g;
             const unresolved = [];
             let refs = 0;
             let html = '';
@@ -395,24 +442,40 @@ window.chainPanel = function (config) {
             let inString = false;
             let m;
             while ((m = re.exec(src)) !== null) {
-                refs++;
                 const before = src.slice(last, m.index);
                 html += this.escapeHtml(before);
                 resolved += before;
                 if (isJson) inString = this.scanJsonStringState(inString, before);
-                const val = this.resolveValue(parseInt(m[1], 10), m[2]);
-                if (val === undefined) {
-                    unresolved.push(m[0]);
-                    html += '<span class="placeholder reference unresolved" title="Не удалось разрешить ссылку">'
-                        + this.escapeHtml(m[0]) + '</span>';
+                last = re.lastIndex;
+                if (m[1] !== undefined) {
+                    // ---- reference to an earlier step's response (purple) ----
+                    refs++;
+                    const val = this.resolveValue(parseInt(m[1], 10), m[2]);
+                    if (val === undefined) {
+                        unresolved.push(m[0]);
+                        html += '<span class="placeholder reference unresolved" title="Не удалось разрешить ссылку">'
+                            + this.escapeHtml(m[0]) + '</span>';
+                        resolved += m[0];
+                    } else {
+                        const strVal = this.encodeRef(val, isJson, inString);
+                        html += '<span class="placeholder reference" title="Из ответа шага ' + m[1] + '">'
+                            + this.escapeHtml(strVal) + '</span>';
+                        resolved += strVal;
+                    }
+                    continue;
+                }
+                // ---- bareword token: dynamic envelope field (blue) or literal ----
+                const dynVal = this.dynamicLookup(dynCtx, m[3]);
+                if (dynVal === undefined) {
+                    // Not a dynamic token (or no context) — leave the text as-is.
+                    html += this.escapeHtml(m[0]);
                     resolved += m[0];
                 } else {
-                    const strVal = this.encodeRef(val, isJson, inString);
-                    html += '<span class="placeholder reference" title="Из ответа шага ' + m[1] + '">'
+                    const strVal = this.encodeRef(String(dynVal), isJson, inString);
+                    html += '<span class="placeholder dynamic" title="Динамическое поле ' + this.escapeHtml(m[3]) + '">'
                         + this.escapeHtml(strVal) + '</span>';
                     resolved += strVal;
                 }
-                last = re.lastIndex;
             }
             const tail = src.slice(last);
             html += this.escapeHtml(tail);
@@ -421,7 +484,10 @@ window.chainPanel = function (config) {
         },
 
         // ---------- "send" (mock) ----------
-        async send(idx) {
+        // `sharedOperuid` (optional) pins operUID to a value minted once for a
+        // whole real-chain run; a single send / independent run leaves it null so
+        // each message gets its own. The other dynamic fields are always fresh.
+        async send(idx, sharedOperuid) {
             const step = this.steps[idx];
             step.error = '';
             step.skipped = false;
@@ -435,7 +501,9 @@ window.chainPanel = function (config) {
             // s.response), and it must not linger next to a fresh error in the
             // step card (chain_panel.html shows response and error together).
             step.response = null;
-            const res = this.resolveBody(idx);
+            const dynCtx = this.buildDynamicContext(sharedOperuid);
+            const res = this.resolveBody(idx, dynCtx);
+            const sentHeaders = this.resolveHeaders(step.headers, dynCtx);
             step.resolvedRequestHtml = res.html;
             step.resolvedRefs = res.refs > 0;
             step.resolvedUnresolved = res.unresolved.length > 0;
@@ -452,7 +520,7 @@ window.chainPanel = function (config) {
                     body: JSON.stringify({
                         method: step.method,
                         url: step.url,
-                        headers: step.headers,
+                        headers: sentHeaders,
                         body: res.resolved,
                         format: step.format,
                         mock_response: step.mockResponse,
@@ -510,6 +578,14 @@ window.chainPanel = function (config) {
             // for free. A non-zero statusCode is NOT in here: the response exists
             // and references still resolve, so dependents keep running.
             const broken = new Set();
+            // A «real chain» is one where some step references another via
+            // {{ $N.path }} (parameter passing) — there operUID identifies the
+            // one business operation, so it's minted once and shared by all steps.
+            // A batch of independent requests gets a fresh operUID per message.
+            const isRealChain = this.steps.some((_, i) => this.stepDeps(i).length > 0);
+            const sharedOperuid = isRealChain
+                ? window.generateDynamicValue((this.dynamicPatterns || {}).operUID || '{uuid}', new Date())
+                : null;
             try {
                 for (let i = 0; i < this.steps.length; i++) {
                     const step = this.steps[i];
@@ -534,7 +610,7 @@ window.chainPanel = function (config) {
                         this.progress.current = i + 1;
                         continue;
                     }
-                    await this.send(i);
+                    await this.send(i, sharedOperuid);
                     this.progress.current = i + 1;
                     // Only an execution error (no usable response) breaks dependents.
                     if (step.error) broken.add(i + 1);
