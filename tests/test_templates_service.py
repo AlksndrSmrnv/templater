@@ -11,6 +11,7 @@ import pytest
 from app.db.models import MessageTemplate
 from app.services.templates import (
     TemplateService,
+    apply_dynamic_headers,
     normalize_placeholders,
     placeholders_have_account_owner,
 )
@@ -273,6 +274,17 @@ async def test_update_keeps_preset_on_noop_save() -> None:
     template = _preset_template(url="https://keep")
     kept = template.preset_id
     await _run_update(template, TemplateUpdate(url="https://keep"))
+    assert template.preset_id == kept
+
+
+@pytest.mark.asyncio
+async def test_update_keeps_preset_on_noop_headers_save() -> None:
+    # Headers resubmitted unchanged (compared against their normalized form,
+    # which apply_dynamic_headers produces idempotently) must not unlink either.
+    raw = [{"key": "X-A", "value": "1"}]
+    template = _preset_template(headers=apply_dynamic_headers(raw))
+    kept = template.preset_id
+    await _run_update(template, TemplateUpdate(headers=raw))
     assert template.preset_id == kept
 
 
