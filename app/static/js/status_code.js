@@ -146,8 +146,17 @@
         };
         return fmt.replace(/YYYY|YY|MM|DD|HH|mm|ss|SSS|ZZ|Z/g, function (t) { return map[t]; });
     }
+    // A positive integer argument, or null when absent/malformed. Used so
+    // {rand}/{hex} without a valid count leave the token verbatim (a visible
+    // mistake) rather than silently expanding to an empty string.
+    function positiveArg(arg) {
+        if (arg === undefined || !/^\d+$/.test(arg)) return null;
+        const n = parseInt(arg, 10);
+        return n > 0 ? n : null;
+    }
     // Expand one pattern. `now` is passed in so several fields generated for the
-    // same message share a single timestamp.
+    // same message share a single timestamp. Unknown tokens, and count/format
+    // tokens with a missing or invalid argument, are left verbatim.
     window.generateDynamicValue = function (pattern, now) {
         const d = now || new Date();
         const src = (typeof pattern === 'string' && pattern) ? pattern : '';
@@ -156,14 +165,80 @@
                 switch (name) {
                     case 'uuid': return uuidv4();
                     case 'uuid_upper': return uuidv4().toUpperCase();
-                    case 'rand': return randDigits(Math.max(0, parseInt(arg, 10) || 0));
-                    case 'hex': return randHex(Math.max(0, parseInt(arg, 10) || 0));
+                    case 'rand': { const n = positiveArg(arg); return n === null ? whole : randDigits(n); }
+                    case 'hex': { const n = positiveArg(arg); return n === null ? whole : randHex(n); }
                     case 'seq': return String(++dynamicSeq);
                     case 'timestamp': return String(Math.floor(d.getTime() / 1000));
                     case 'timestamp_ms': return String(d.getTime());
-                    case 'date': return formatDate(arg || '', d);
+                    case 'date': return arg ? formatDate(arg, d) : whole;
                     default: return whole;
                 }
             });
     };
+
+    // ---- shared dynamic-field context / substitution (chain + filled sends) ----
+    // Canonical envelope tokens whose values are (re)generated per send. Kept in
+    // one place so both send panels agree on names, operUID scoping, and the
+    // header/body substitution rules.
+    const DYNAMIC_FIELD_DEFAULTS = {
+        rqUID: '{uuid}',
+        operUID: '{uuid}',
+        rqTm: '{date:YYYY-MM-DDTHH:mm:ss}',
+        channelDateTime: '{date:YYYY-MM-DDTHH:mm:ss}',
+    };
+    // Case-insensitive lookup of a bareword {{token}} against a context object.
+    // Returns the generated string, or undefined for a non-dynamic word.
+    function dynamicLookup(ctx, word) {
+        if (!ctx) return undefined;
+        const target = String(word).toLowerCase();
+        for (const key of Object.keys(ctx)) {
+            if (key.toLowerCase() === target) return ctx[key];
+        }
+        return undefined;
+    }
+    window.dynamicFields = {
+        DEFAULTS: DYNAMIC_FIELD_DEFAULTS,
+        generate: window.generateDynamicValue,
+        lookup: dynamicLookup,
+        // Generate the four dynamic values for one message. `sharedOperuid`, when
+        // non-empty, pins operUID to a value minted once for a whole real-chain
+        // run; everything else is fresh. All fields share one `now` so the two
+        // datetime fields line up to the same instant.
+        buildContext(patterns, sharedOperuid, now) {
+            const p = patterns || {};
+            const d = now || new Date();
+            const gen = (key) => window.generateDynamicValue(p[key] || DYNAMIC_FIELD_DEFAULTS[key], d);
+            return {
+                rqUID: gen('rqUID'),
+                operUID: (sharedOperuid != null && sharedOperuid !== '') ? sharedOperuid : gen('operUID'),
+                rqTm: gen('rqTm'),
+                channelDateTime: gen('channelDateTime'),
+            };
+        },
+        // Substitute dynamic tokens into a plain-text string (e.g. a header
+        // value); unknown / reference tokens are left untouched.
+        substitute(text, ctx) {
+            return String(text == null ? '' : text).replace(
+                /\{\{\s*([A-Za-z][A-Za-z0-9]*)\s*\}\}/g,
+                (whole, word) => {
+                    const v = dynamicLookup(ctx, word);
+                    return v === undefined ? whole : String(v);
+                });
+        },
+        // Enabled headers ({key,value}) with dynamic tokens substituted.
+        resolveHeaders(headers, ctx) {
+            return (headers || [])
+                .filter((h) => h && !h.disabled)
+                .map((h) => ({ key: h.key, value: this.substitute(h.value, ctx) }));
+        },
+    };
+
+    // Node-only export so the pure logic above can be unit-tested without a
+    // browser/DOM (see tests/js/). No-op in the browser.
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = {
+            generateDynamicValue: window.generateDynamicValue,
+            dynamicFields: window.dynamicFields,
+        };
+    }
 })();

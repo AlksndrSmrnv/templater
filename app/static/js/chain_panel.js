@@ -387,46 +387,15 @@ window.chainPanel = function (config) {
         },
         // Generate the dynamic envelope values for one message. `sharedOperuid`,
         // when non-null, forces operUID to a value minted once for the whole run
-        // (a real chain shares it); everything else is fresh per message. All
-        // share a single `now` so rqTm/channelDateTime line up to the same instant.
+        // (a real chain shares it); everything else is fresh per message. The
+        // generation/substitution rules live in window.dynamicFields so this
+        // panel and the filled-template send stay in lockstep.
         buildDynamicContext(sharedOperuid) {
-            const p = this.dynamicPatterns || {};
-            const now = new Date();
-            const gen = (pattern, fallback) => window.generateDynamicValue(pattern || fallback, now);
-            return {
-                rqUID: gen(p.rqUID, '{uuid}'),
-                operUID: (sharedOperuid != null && sharedOperuid !== '')
-                    ? sharedOperuid : gen(p.operUID, '{uuid}'),
-                rqTm: gen(p.rqTm, '{date:YYYY-MM-DDTHH:mm:ss}'),
-                channelDateTime: gen(p.channelDateTime, '{date:YYYY-MM-DDTHH:mm:ss}'),
-            };
-        },
-        // Case-insensitive lookup of a bareword {{token}} against a dynamic
-        // context. Returns the generated string, or undefined for a non-dynamic
-        // word (left verbatim by the callers).
-        dynamicLookup(dynCtx, word) {
-            if (!dynCtx) return undefined;
-            const target = String(word).toLowerCase();
-            for (const key of Object.keys(dynCtx)) {
-                if (key.toLowerCase() === target) return dynCtx[key];
-            }
-            return undefined;
-        },
-        // Substitute dynamic tokens into a header value string (plain text, no
-        // JSON encoding). Unknown/reference tokens are left untouched.
-        resolveHeaderValue(value, dynCtx) {
-            return String(value == null ? '' : value).replace(
-                /\{\{\s*([A-Za-z][A-Za-z0-9]*)\s*\}\}/g,
-                (whole, word) => {
-                    const v = this.dynamicLookup(dynCtx, word);
-                    return v === undefined ? whole : String(v);
-                });
+            return window.dynamicFields.buildContext(this.dynamicPatterns, sharedOperuid);
         },
         // Enabled headers with dynamic tokens substituted, ready to send.
         resolveHeaders(headers, dynCtx) {
-            return (headers || [])
-                .filter((h) => h && !h.disabled)
-                .map((h) => ({ key: h.key, value: this.resolveHeaderValue(h.value, dynCtx) }));
+            return window.dynamicFields.resolveHeaders(headers, dynCtx);
         },
         resolveBody(idx, dynCtx) {
             const step = this.steps[idx];
@@ -465,7 +434,7 @@ window.chainPanel = function (config) {
                     continue;
                 }
                 // ---- bareword token: dynamic envelope field (blue) or literal ----
-                const dynVal = this.dynamicLookup(dynCtx, m[3]);
+                const dynVal = window.dynamicFields.lookup(dynCtx, m[3]);
                 if (dynVal === undefined) {
                     // Not a dynamic token (or no context) — leave the text as-is.
                     html += this.escapeHtml(m[0]);
@@ -583,8 +552,9 @@ window.chainPanel = function (config) {
             // one business operation, so it's minted once and shared by all steps.
             // A batch of independent requests gets a fresh operUID per message.
             const isRealChain = this.steps.some((_, i) => this.stepDeps(i).length > 0);
+            const p = this.dynamicPatterns || {};
             const sharedOperuid = isRealChain
-                ? window.generateDynamicValue((this.dynamicPatterns || {}).operUID || '{uuid}', new Date())
+                ? window.generateDynamicValue(p.operUID || window.dynamicFields.DEFAULTS.operUID, new Date())
                 : null;
             try {
                 for (let i = 0; i < this.steps.length; i++) {

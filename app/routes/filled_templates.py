@@ -42,6 +42,7 @@ from app.routes.htmx_utils import (
     toast_header,
 )
 from app.routes.uow import commit_or_409
+from app.services.dynamic_patterns import load_dynamic_patterns
 from app.services.filled_templates import FilledTemplateService, iter_role_labels
 from app.services.template_render import render_filled_html
 from app.utils.errors import DomainError
@@ -136,6 +137,9 @@ async def _detail_context(
         "alive_client_ids": alive,
         "chains": [{"id": str(c.id), "name": c.name} for c in chains],
         "last_send": last_send,
+        # Generation patterns for the dynamic envelope tokens; the one-off send
+        # substitutes them into the request headers (same rules as the chain).
+        "dynamic_patterns": await load_dynamic_patterns(session),
     }
 
 

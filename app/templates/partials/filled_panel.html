@@ -51,6 +51,10 @@
         headers: {{ (ft.headers_snapshot or []) | tojson | forceescape }},
         format: {{ (ft.format or 'json') | tojson | forceescape }},
     },
+    // Generation patterns for the dynamic envelope tokens (rqUID/operUID/...),
+    // seeded from settings. A one-off send is a single message, so operUID is
+    // fresh (no shared value) — see window.dynamicFields.buildContext.
+    dynamicPatterns: {{ (dynamic_patterns | default({})) | tojson | forceescape }},
     sending: false,
     response: null,
     // Parsed from the last send's response body. Known limitation: these three
@@ -89,13 +93,18 @@
         this.statusCode = null;
         this.operuid = null;
         this.suit = null;
+        // Regenerate the dynamic envelope values for this message and substitute
+        // them into the headers (a one-off send has its own operUID). Shares the
+        // rules with the chain panel via window.dynamicFields.
+        const dynCtx = window.dynamicFields.buildContext(this.dynamicPatterns, null);
+        const sentHeaders = window.dynamicFields.resolveHeaders(this.envelope.headers, dynCtx);
         fetch('/templater/send-htmx/execute', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 method: this.envelope.method,
                 url: this.envelope.url,
-                headers: this.envelope.headers,
+                headers: sentHeaders,
                 body: '',
                 format: this.envelope.format,
                 mock_response: this.exampleResponse(),
