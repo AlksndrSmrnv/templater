@@ -365,6 +365,19 @@ class MessageTemplate(Base):
     # eager-load on every query (async lazy access would raise MissingGreenlet).
     project: Mapped[Project] = relationship(lazy="selectin")
 
+    # Optional link to the header preset last applied to this template. Applying
+    # a preset still *copies* its url + headers onto the template (no live sync),
+    # but the id is kept so the send flow knows which preset's «connection»
+    # (client certs, held only in the browser's sessionStorage) to use: a
+    # template with a configured preset sends for real, otherwise the send is
+    # mocked. SET NULL so deleting a preset never blocks and just drops the
+    # template back to the mock path.
+    preset_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("header_presets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     # Materialised folder path within the collection, e.g. ["Transfers", "A2A"].
     folder_path: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     # HTTP request headers: list of {"key","value","mode","original","disabled"}.
