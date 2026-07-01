@@ -187,6 +187,62 @@ async def test_send_real_jks_extracts_and_sends(monkeypatch: pytest.MonkeyPatch)
     assert result.http_status == 200
 
 
+class _FakeRedirectClient(_FakeAsyncClient):
+    async def request(self, method, url, headers=None, content=None):  # type: ignore[no-untyped-def]
+        _FakeAsyncClient.captured["request"] = {"method": method, "url": url}
+        return _FakeResponse(302, "", {"Location": "https://elsewhere"})
+
+
+async def test_send_real_3xx_is_not_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Redirects aren't followed, so a 3xx is an unhandled response — not-ok even
+    # though the transport itself succeeded. Only 2xx counts as success.
+    certs = _self_signed()
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeRedirectClient)
+    tls = rest_sender.TlsMaterial(
+        kind="pem", cert_pem=str(certs["cert_pem"]), key_pem=str(certs["key_pem"]), verify=False
+    )
+    result = await rest_sender.send_request(
+        method="GET", url="https://x", headers=[], body="", mock_response="", tls=tls
+    )
+    assert result.http_status == 302
+    assert result.ok is False
+
+
+def test_header_pairs_preserves_falsy_value_and_filters_rows() -> None:
+    pairs = rest_sender._header_pairs(
+        [
+            {"key": "X-Zero", "value": "0"},   # falsy string must survive verbatim
+            {"key": "X-None", "value": None},  # None → empty string, not dropped
+            {"key": "  ", "value": "v"},       # blank key → dropped
+            {"key": "X-Off", "value": "v", "disabled": True},  # disabled → dropped
+        ]
+    )
+    assert ("X-Zero", "0") in pairs
+    assert ("X-None", "") in pairs
+    assert all(k.strip() for k, _ in pairs)
+    assert all(k != "X-Off" for k, _ in pairs)
+
+
+async def test_send_real_missing_pyjks_surfaces_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A missing pyjks must become an actionable error, not a generic failed send.
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _no_jks(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "jks":
+            raise ImportError("No module named 'jks'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_jks)
+    tls = rest_sender.TlsMaterial(kind="jks", jks_b64="YWJj", password="p")
+    result = await rest_sender.send_request(
+        method="GET", url="https://x", headers=[], body="", mock_response="", tls=tls
+    )
+    assert result.ok is False
+    assert "pyjks" in result.error_message
+
+
 async def test_send_real_reports_error_on_bad_material() -> None:
     # Garbage cert/key → OpenSSL raises inside the seam; a failed send, not a crash.
     tls = rest_sender.TlsMaterial(kind="pem", cert_pem="not a cert", key_pem="not a key")

@@ -163,9 +163,11 @@ async def _send_real(*, method: str, url: str, headers: Any, body: str, tls: Tls
         latency_ms = int((time.perf_counter() - started) * 1000)
         response_body = resp.text
         status_code = extract_status_code(response_body)
-        # Overall ok = transport succeeded (2xx/3xx) AND no non-zero business
+        # Overall ok = transport succeeded (2xx) AND no non-zero business
         # statusCode in the body — matching the mock's business-code semantics.
-        ok = 200 <= resp.status_code < 400 and (status_code is None or status_code == 0)
+        # Redirects aren't followed (httpx follow_redirects defaults off), so a
+        # 3xx is an unhandled response, not a success — 3xx/4xx/5xx are not-ok.
+        ok = 200 <= resp.status_code < 300 and (status_code is None or status_code == 0)
         return SendResult(
             ok=ok,
             http_status=resp.status_code,
@@ -198,9 +200,13 @@ def _header_pairs(headers: Any) -> list[tuple[str, str]]:
         for h in headers:
             if not isinstance(h, dict) or h.get("disabled"):
                 continue
-            key = str(h.get("key") or "").strip()
+            raw_key = h.get("key")
+            key = ("" if raw_key is None else str(raw_key)).strip()
             if key:
-                out.append((key, str(h.get("value") or "")))
+                # Guard the value with an explicit None-check, not `or ""`: a
+                # legitimate falsy value (e.g. "0") must survive verbatim.
+                raw_value = h.get("value")
+                out.append((key, "" if raw_value is None else str(raw_value)))
     return out
 
 
@@ -240,7 +246,15 @@ def _materialize_pem(tls: TlsMaterial) -> tuple[str, str, str | None]:
 def _jks_to_pem(jks_b64: str, password: str) -> tuple[str, str]:
     """Extract the first private key + its cert chain from a JKS as PEM text."""
 
-    import jks  # pyjks — imported lazily so the dep is only needed for JKS
+    try:
+        import jks  # pyjks — imported lazily so the dep is only needed for JKS
+    except ImportError as exc:
+        # Surface the missing dependency as an actionable error rather than
+        # letting _send_real's broad except flatten it into a generic
+        # "send failed" toast that hides the real cause.
+        raise RuntimeError(
+            "Отправка с JKS недоступна: не установлена библиотека pyjks"
+        ) from exc
 
     store = jks.KeyStore.loads(base64.b64decode(jks_b64), password)
     for entry in store.private_keys.values():
