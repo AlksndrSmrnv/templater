@@ -74,12 +74,17 @@ window.chainPanel = function (config) {
                 body: s.body || '',
                 bodyHtml: s.body_html || '',
                 mockResponse: s.mock_response || '',
+                // Preset applied to this step's source template. window.tlsCerts
+                // keys the session-only client-cert connection by this id; when
+                // present + stored, send() goes real instead of mocking.
+                presetId: s.preset_id || '',
                 collapsed: true,
                 sending: false,
                 error: '',
                 skipped: false,    // sendAll skipped it (a step it references failed)
                 skipReason: '',    // «Пропущен: шаг N не выполнен»
                 response: null,
+                ok: null,          // server's authoritative outcome of the last send
                 statusCode: null,  // parsed from the response body (any case, nested)
                 operuid: null,     // business id, recursively pulled from the body
                 suit: null,        // optional; shown only when present
@@ -385,6 +390,7 @@ window.chainPanel = function (config) {
             step.skipReason = '';
             step.sending = true;
             step.statusCode = null;
+            step.ok = null;
             step.operuid = null;
             step.suit = null;
             // Clear any prior run's response up front: it's a stale signal for
@@ -404,23 +410,28 @@ window.chainPanel = function (config) {
                 step.sending = false;
                 return;
             }
+            // A configured preset connection (client certs, held only in this
+            // browser session) turns the send real; without one the server mocks.
+            const tls = (window.tlsCerts && step.presetId) ? window.tlsCerts.get(step.presetId) : null;
             try {
+                const payload = {
+                    method: step.method,
+                    url: step.url,
+                    headers: sentHeaders,
+                    body: res.resolved,
+                    format: step.format,
+                    mock_response: step.mockResponse,
+                    // Context so the send is recorded against this chain step.
+                    source_kind: 'chain_step',
+                    chain_id: this.chainId,
+                    chain_step_id: step.id,
+                    name: step.name,
+                };
+                if (tls) payload.tls = tls;
                 const r = await fetch(this.executeUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        method: step.method,
-                        url: step.url,
-                        headers: sentHeaders,
-                        body: res.resolved,
-                        format: step.format,
-                        mock_response: step.mockResponse,
-                        // Context so the send is recorded against this chain step.
-                        source_kind: 'chain_step',
-                        chain_id: this.chainId,
-                        chain_step_id: step.id,
-                        name: step.name,
-                    }),
+                    body: JSON.stringify(payload),
                 });
                 if (!r.ok) throw new Error('HTTP ' + r.status);
                 const d = await r.json();
@@ -437,15 +448,19 @@ window.chainPanel = function (config) {
                 step.statusCode = window.extractStatusCode(parsed);
                 step.operuid = window.extractField(parsed, 'operuid');
                 step.suit = window.extractField(parsed, 'suit');
-                // Mirror the server's ok rule: absent/zero statusCode = success.
+                // A real send can fail at transport (no body) — surface the
+                // server's error text and trust its authoritative `ok` for badges.
+                if (d.error) step.error = d.error;
+                step.ok = !!d.ok;
                 // The server already recorded this send; ISO «now» matches that.
-                if (step.statusCode === null || step.statusCode === 0) step.lastSuccessAt = window.nowSendTs();
+                if (d.ok) step.lastSuccessAt = window.nowSendTs();
                 else step.lastErrorAt = window.nowSendTs();
             } catch (e) {
                 // No usable response — we can't tell if the server recorded a
                 // send (or even received it), so leave the badges to the next
                 // panel render (the history is the source of truth).
-                step.error = 'Ошибка отправки (мок)';
+                step.ok = false;
+                step.error = tls ? 'Ошибка отправки' : 'Ошибка отправки (мок)';
             } finally {
                 step.sending = false;
             }
@@ -512,24 +527,24 @@ window.chainPanel = function (config) {
                 this.progress = { current: 0, total: 0 };
             }
             // Roll up the run: skipped first, then steps that actually reached
-            // send() — failed = execution error or non-zero statusCode, ok = rest.
-            // Steps that never ran (no response, no error, not skipped) don't count.
+            // send() — failed = the server's `ok` was false (transport/HTTP error
+            // or non-zero statusCode), ok = rest. Steps that never ran (no
+            // response, no error, not skipped) don't count.
             let ok = 0, failed = 0, skipped = 0;
             this.steps.forEach((s) => {
                 if (s.skipped) { skipped += 1; return; }
                 if (s.response === null && !s.error) return;
-                if (s.error || (s.statusCode !== null && s.statusCode !== 0)) failed += 1;
-                else ok += 1;
+                if (s.ok) ok += 1; else failed += 1;
             });
             this.chainSummary = (ok || failed || skipped) ? { ok, failed, skipped } : null;
             // Advance the chain-level «последний запуск» badge only for steps that
             // actually reached the server (have a response) — a step aborted before
             // fetch (e.g. «Не разрешены ссылки») or skipped writes no message_sends
             // row and leaves its own badge untouched, so the chain badge must not
-            // move either. Among sent steps, a non-zero statusCode = failure.
+            // move either. Among sent steps, any !ok = failure.
             const sent = this.steps.filter((s) => s.response !== null);
             if (sent.length > 0) {
-                const failedSent = sent.some((s) => s.statusCode !== null && s.statusCode !== 0);
+                const failedSent = sent.some((s) => !s.ok);
                 if (failedSent) this.chainLastErrorAt = window.nowSendTs();
                 else this.chainLastSuccessAt = window.nowSendTs();
             }

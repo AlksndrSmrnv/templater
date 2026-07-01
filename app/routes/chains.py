@@ -5,9 +5,10 @@ The chain itself is persisted in the DB (``request_chains`` /
 ``request_chain_steps``). The browser component (``partials/chain_panel.html``)
 renders steps seeded by the server, lets the user bind fields from earlier
 steps' responses into later requests (``{{ $N.path }}`` tokens, highlighted
-purple) and «sends» each step. Sending is a STUB — no network request is made
-(the real tool will arrive over an API later); ``POST /send-htmx/execute`` just
-echoes the step's editable example response back.
+purple) and sends each step via ``POST /send-htmx/execute``. That endpoint is a
+thin wrapper over the send seam (``app/services/rest_sender.py``): a real HTTPS
+request when the step's template has a configured preset connection (client
+certs), otherwise a mock that echoes the step's editable example response.
 
 Chain CRUD endpoints return the refreshed filled-templates tree (chains live in
 that tree); step endpoints return the refreshed chain panel.
@@ -15,9 +16,7 @@ that tree); step endpoints return the refreshed chain panel.
 
 from __future__ import annotations
 
-import asyncio
 import json
-import random
 import uuid
 from typing import Any
 
@@ -37,6 +36,7 @@ from app.db.models import (
 from app.repositories.entity import ClientRepository
 from app.repositories.filled_template import FilledTemplateRepository
 from app.repositories.message_send import LastSends, MessageSendRepository
+from app.repositories.template import TemplateRepository
 from app.routes.client_switch_utils import role_ids_from_form
 from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.entities_htmx import entity_label
@@ -55,9 +55,9 @@ from app.services.filled_templates import (
     FilledTemplateService,
 )
 from app.services.request_chain import RequestChainService
+from app.services.rest_sender import send_request, tls_from_payload
 from app.services.template_render import render_chain_step_html
 from app.utils.errors import DomainError
-from app.utils.status_code import extract_status_code
 
 router = APIRouter()
 
@@ -87,6 +87,7 @@ def _serialize_step(
     step: RequestChainStep,
     message_template_id: uuid.UUID | None = None,
     last: LastSends | None = None,
+    preset_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     body = step.body or ""
     fmt = step.format or "json"
@@ -109,6 +110,10 @@ def _serialize_step(
         # «Заменить клиента» picker can target its fill endpoints. Empty when the
         # filled template / source template was deleted (switch then disabled).
         "message_template_id": str(message_template_id) if message_template_id else "",
+        # Preset applied to this step's source template, if any. The browser keys
+        # its (session-only) client-cert connection by this id; when present and a
+        # connection is stored, the step sends for real instead of mocking.
+        "preset_id": str(preset_id) if preset_id else "",
         # Roles bound on this step — drives the per-step «Заменить» buttons inside
         # the Alpine step card.
         "roles": _step_roles(step),
@@ -151,20 +156,21 @@ def _serialize_chain(
     chain: RequestChain,
     tpl_by_filled: dict[uuid.UUID, uuid.UUID | None] | None = None,
     last_by_step: dict[uuid.UUID, LastSends] | None = None,
+    preset_by_tpl: dict[uuid.UUID, uuid.UUID | None] | None = None,
 ) -> dict[str, Any]:
     tpl_by_filled = tpl_by_filled or {}
     last_by_step = last_by_step or {}
+    preset_by_tpl = preset_by_tpl or {}
+
+    def _serialize(s: RequestChainStep) -> dict[str, Any]:
+        tpl_id = tpl_by_filled.get(s.filled_template_id) if s.filled_template_id else None
+        preset_id = preset_by_tpl.get(tpl_id) if tpl_id else None
+        return _serialize_step(s, tpl_id, last_by_step.get(s.id), preset_id)
+
     return {
         "id": str(chain.id),
         "name": chain.name,
-        "steps": [
-            _serialize_step(
-                s,
-                tpl_by_filled.get(s.filled_template_id) if s.filled_template_id else None,
-                last_by_step.get(s.id),
-            )
-            for s in chain.steps
-        ],
+        "steps": [_serialize(s) for s in chain.steps],
     }
 
 
@@ -263,12 +269,19 @@ async def _panel_context(
     if filled_ids:
         for row in await FilledTemplateRepository(session).get_many(filled_ids):
             tpl_by_filled[row.id] = row.message_template_id
+    # Which preset (if any) each source template carries — drives real vs. mock
+    # sending: the browser holds the preset's client-cert connection keyed by id.
+    tpl_ids = [t for t in tpl_by_filled.values() if t]
+    preset_by_tpl: dict[uuid.UUID, uuid.UUID | None] = {}
+    if tpl_ids:
+        for tpl in await TemplateRepository(session).get_many(tpl_ids):
+            preset_by_tpl[tpl.id] = tpl.preset_id
     # Latest success/failure per step, for the «последняя отправка» badges.
     sends = MessageSendRepository(session)
     last_by_step = await sends.last_for_chain_steps([s.id for s in chain.steps])
     # Chain-level latest run (across all steps), for the badge by «Запустить всё».
     chain_last = await sends.last_for_chain(chain.id)
-    data = _serialize_chain(chain, tpl_by_filled, last_by_step)
+    data = _serialize_chain(chain, tpl_by_filled, last_by_step, preset_by_tpl)
     manage = await _manage_context(session, chain, tpl_by_filled)
     # Filled templates the «Добавить шаг» picker can choose from (id/name/method).
     filled = await FilledTemplateService(session).list_all(visible_group_ids=visible_group_ids)
@@ -720,15 +733,7 @@ async def htmx_replace_role(
     )
 
 
-# ---------- stub «send» seam (NO real network request) ----------
-
-
-async def _simulate_latency(latency_ms: int) -> None:
-    """Mock network latency for the stub send. Module-local so tests can patch
-    it without touching the global ``asyncio.sleep``; the real send tool will
-    replace this with an actual call."""
-
-    await asyncio.sleep(latency_ms / 1000)
+# ---------- «send» seam (mock or real, see app/services/rest_sender.py) ----------
 
 
 def _opt_uuid(value: Any) -> uuid.UUID | None:
@@ -811,15 +816,15 @@ async def htmx_execute(
     request: Request,
     session: AsyncSession = SessionDep,
 ) -> JSONResponse:
-    """Stub «send» seam — DOES NOT make any network request, but records the send.
+    """«Send» seam — records every send; sends for real when a connection is set.
 
-    The real sending tool is not implemented yet and will be exposed over an API
-    later. For now this echoes the step's editable example response back as the
-    response body so the UI can demonstrate the flow. Every send is persisted to
-    the history (``message_sends``) — what was sent, where, and the (mock)
-    response — driving the history drawer and the per-button «last send» badges.
-    When the real tool lands, swap the mock block below for the actual call; the
-    recording around it stays the same.
+    The actual work lives behind :func:`app.services.rest_sender.send_request`:
+    with no ``tls`` block in the payload it echoes the step's editable example
+    response (mock), and with one — a template whose preset has a browser-held
+    client-cert connection — it makes a real HTTPS request. Either way the send is
+    persisted to the history (``message_sends``), driving the history drawer and
+    the per-button «last send» badges. The client cert (if any) is used only for
+    this call and never stored in the history or logged.
     """
 
     try:
@@ -838,36 +843,36 @@ async def htmx_execute(
     mock_response = payload.get("mock_response", "")
     if not isinstance(mock_response, str):
         mock_response = ""
-    latency_ms = random.randint(35, 220)
-    await _simulate_latency(latency_ms)
 
-    http_status = 200
-    response_headers = {"Content-Type": "application/json; charset=utf-8", "X-Mock-Send": "true"}
-    status_code = extract_status_code(mock_response)
-    # A non-zero statusCode in the response body is a logical failure (shown red
-    # in the UI); absent/zero counts as success. Transport never fails for the
-    # mock — the real send will set ok=False on network/HTTP errors instead.
-    ok = status_code is None or status_code == 0
-    # The mock has no transport error to describe, so error_message stays empty
-    # even when ok=False (the reason is the non-zero statusCode in the body).
-    # TODO: the real sender should pass the network/HTTP error text here.
+    result = await send_request(
+        method=str(payload.get("method") or ""),
+        url=str(payload.get("url") or ""),
+        headers=payload.get("headers"),
+        body=str(payload.get("body") or ""),
+        mock_response=mock_response,
+        tls=tls_from_payload(payload),
+    )
+
     await _record_send(
         session,
         payload,
-        ok=ok,
-        http_status=http_status,
-        status_code=status_code,
-        response_headers=response_headers,
-        response_body=mock_response,
-        latency_ms=latency_ms,
+        ok=result.ok,
+        http_status=result.http_status,
+        status_code=result.status_code,
+        response_headers=result.response_headers,
+        response_body=result.response_body,
+        latency_ms=result.latency_ms,
+        error_message=result.error_message,
     )
 
     return JSONResponse(
         {
-            "status": http_status,
-            "status_text": "OK",
-            "latency_ms": latency_ms,
-            "headers": response_headers,
-            "body": mock_response,
+            "ok": result.ok,
+            "status": result.http_status,
+            "status_text": result.status_text,
+            "latency_ms": result.latency_ms,
+            "headers": result.response_headers,
+            "body": result.response_body,
+            "error": result.error_message,
         }
     )

@@ -43,8 +43,9 @@
     },
 
     // Request envelope snapshotted on the filled template, for the one-off
-    // mock send below. Sending is a STUB — no network request is made; the
-    // example response is generated client-side and echoed by the seam.
+    // send below. With a configured preset connection (client certs held only in
+    // this browser session) the send is real; otherwise the seam echoes the
+    // client-generated example response (mock).
     envelope: {
         method: {{ (ft.http_method_snapshot or '') | tojson | forceescape }},
         url: {{ (ft.url_snapshot or '') | tojson | forceescape }},
@@ -55,6 +56,9 @@
     // seeded from settings. A one-off send is a single message, so operUID is
     // fresh (no shared value) — see window.dynamicFields.buildContext.
     dynamicPatterns: {{ (dynamic_patterns | default({})) | tojson | forceescape }},
+    // Preset applied to this template (if any). The browser keys its session-only
+    // client-cert connection by this id; present + stored → the send goes for real.
+    presetId: {{ (preset_id | default('')) | tojson | forceescape }},
     sending: false,
     response: null,
     // Parsed from the last send's response body. Known limitation: these three
@@ -98,21 +102,26 @@
         // rules with the chain panel via window.dynamicFields.
         const dynCtx = window.dynamicFields.buildContext(this.dynamicPatterns, null);
         const sentHeaders = window.dynamicFields.resolveHeaders(this.envelope.headers, dynCtx);
+        // A configured preset connection turns the send real; without one the
+        // server mocks and echoes the example response.
+        const tls = (window.tlsCerts && this.presetId) ? window.tlsCerts.get(this.presetId) : null;
+        const payload = {
+            method: this.envelope.method,
+            url: this.envelope.url,
+            headers: sentHeaders,
+            body: '',
+            format: this.envelope.format,
+            mock_response: this.exampleResponse(),
+            // Context so the send is recorded against this filled template.
+            source_kind: 'filled',
+            filled_template_id: '{{ ft.id }}',
+            name: {{ (ft.name or '') | tojson | forceescape }},
+        };
+        if (tls) payload.tls = tls;
         fetch('/templater/send-htmx/execute', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                method: this.envelope.method,
-                url: this.envelope.url,
-                headers: sentHeaders,
-                body: '',
-                format: this.envelope.format,
-                mock_response: this.exampleResponse(),
-                // Context so the send is recorded against this filled template.
-                source_kind: 'filled',
-                filled_template_id: '{{ ft.id }}',
-                name: {{ (ft.name or '') | tojson | forceescape }},
-            }),
+            body: JSON.stringify(payload),
         })
             .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
             .then(d => {
@@ -124,15 +133,16 @@
                 this.statusCode = window.extractStatusCode(parsed);
                 this.operuid = window.extractField(parsed, 'operuid');
                 this.suit = window.extractField(parsed, 'suit');
-                // Mirror the server's ok rule: absent/zero statusCode = success.
-                // The server already recorded this send; ISO «now» matches it.
-                if (this.statusCode === null || this.statusCode === 0) this.lastSuccessAt = window.nowSendTs();
+                // Trust the server's authoritative `ok` (a real send can fail at
+                // transport with no body); surface its error text when present.
+                if (d.error) window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: d.error, type: 'error' } }));
+                if (d.ok) this.lastSuccessAt = window.nowSendTs();
                 else this.lastErrorAt = window.nowSendTs();
             })
             .catch(() => {
                 // No usable response — leave the badges to the next panel render
                 // (the history is the source of truth) and just toast.
-                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Ошибка отправки (мок)', type: 'error' } }));
+                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: tls ? 'Ошибка отправки' : 'Ошибка отправки (мок)', type: 'error' } }));
             })
             .finally(() => { this.sending = false; });
     },
