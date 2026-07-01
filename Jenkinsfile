@@ -48,6 +48,21 @@ pipeline {
             }
         }
 
+        stage('JS Tests') {
+            steps {
+                // Pure client-side dynamic-field logic (tests/js) on Node's
+                // built-in runner (no deps). Skips with a warning when the agent
+                // has no Node, so the pipeline stays green on such agents.
+                sh '''
+                    if command -v node >/dev/null 2>&1; then
+                        node --test tests/js/*.test.js
+                    else
+                        echo "WARNING: node not found — skipping JS tests"
+                    fi
+                '''
+            }
+        }
+
         stage('Build image') {
             steps {
                 sh 'docker build -f docker/Dockerfile -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest .'

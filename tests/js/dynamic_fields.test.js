@@ -39,6 +39,13 @@ test('generate: invalid/missing count leaves the token verbatim', () => {
     assert.strictEqual(generateDynamicValue('{hex}'), '{hex}');
 });
 
+test('generate: count over the cap is rejected (no runaway loop)', () => {
+    // Guards against {rand:999999999} freezing the tab; over-cap -> verbatim.
+    assert.strictEqual(generateDynamicValue('{rand:65}'), '{rand:65}');
+    assert.strictEqual(generateDynamicValue('{hex:1000}'), '{hex:1000}');
+    assert.match(generateDynamicValue('{rand:64}'), /^\d{64}$/); // boundary ok
+});
+
 test('generate: {date:FORMAT} formats the given instant (local zone)', () => {
     const now = new Date(2024, 0, 5, 9, 3, 7, 42); // 2024-01-05 09:03:07.042 local
     assert.strictEqual(
@@ -112,4 +119,61 @@ test('resolveHeaders: drops disabled, keeps slim {key,value}, substitutes', () =
         { key: 'RqUID', value: 'R1' },
         { key: 'Content-Type', value: 'application/json' },
     ]);
+});
+
+// ---- resolveBody: the dual-regex core (references + dynamic tokens) ----
+
+test('resolveBody: substitutes a dynamic token inside a JSON string', () => {
+    const ctx = { rqUID: 'abc-123' };
+    const out = dynamicFields.resolveBody('{"id": "{{rqUID}}"}', { isJson: true, ctx: ctx });
+    assert.strictEqual(out.resolved, '{"id": "abc-123"}');
+    assert.deepStrictEqual(out.unresolved, []);
+    assert.strictEqual(out.refs, 0);
+    assert.ok(JSON.parse(out.resolved).id === 'abc-123'); // still valid JSON
+});
+
+test('resolveBody: a value with quotes stays valid JSON (encodeRef in-string)', () => {
+    const ctx = { operUID: 'a"b\\c' };
+    const out = dynamicFields.resolveBody('{"op": "{{operUID}}"}', { isJson: true, ctx: ctx });
+    assert.strictEqual(JSON.parse(out.resolved).op, 'a"b\\c');
+});
+
+test('resolveBody: dynamic token in a JSON value position is quoted', () => {
+    // Token not inside a string -> encoded as a JSON string literal.
+    const ctx = { rqTm: '2024-01-05T09:03:07' };
+    const out = dynamicFields.resolveBody('{"t": {{rqTm}}}', { isJson: true, ctx: ctx });
+    assert.strictEqual(out.resolved, '{"t": "2024-01-05T09:03:07"}');
+    assert.strictEqual(JSON.parse(out.resolved).t, '2024-01-05T09:03:07');
+});
+
+test('resolveBody: resolves $N.path references via resolveRef', () => {
+    const out = dynamicFields.resolveBody('{"from": "{{ $1.transferId }}"}', {
+        isJson: true,
+        resolveRef: (step, path) => (step === 1 && path === 'transferId') ? 'TRF-7' : undefined,
+    });
+    assert.strictEqual(out.resolved, '{"from": "TRF-7"}');
+    assert.strictEqual(out.refs, 1);
+    assert.deepStrictEqual(out.unresolved, []);
+});
+
+test('resolveBody: unresolved reference is reported and left verbatim', () => {
+    const out = dynamicFields.resolveBody('{"x": "{{ $1.missing }}"}', {
+        isJson: true,
+        resolveRef: () => undefined,
+    });
+    assert.strictEqual(out.resolved, '{"x": "{{ $1.missing }}"}');
+    assert.deepStrictEqual(out.unresolved, ['{{ $1.missing }}']);
+    assert.match(out.html, /reference unresolved/);
+});
+
+test('resolveBody: unknown bareword tokens are left untouched', () => {
+    const out = dynamicFields.resolveBody('{"x": "{{notDynamic}}"}', { isJson: true, ctx: {} });
+    assert.strictEqual(out.resolved, '{"x": "{{notDynamic}}"}');
+    assert.strictEqual(out.refs, 0);
+});
+
+test('resolveBody: non-JSON body substitutes raw (no quoting)', () => {
+    const ctx = { rqUID: 'R1' };
+    const out = dynamicFields.resolveBody('id={{rqUID}}', { isJson: false, ctx: ctx });
+    assert.strictEqual(out.resolved, 'id=R1');
 });

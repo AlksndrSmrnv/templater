@@ -328,11 +328,6 @@ window.chainPanel = function (config) {
         },
 
         // ---------- resolution (for the stub send) ----------
-        escapeHtml(s) {
-            return String(s == null ? '' : s)
-                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-        },
         getPath(obj, path) {
             const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean);
             let cur = obj;
@@ -355,36 +350,6 @@ window.chainPanel = function (config) {
             try { obj = JSON.parse(this.sourceBody(src)); } catch (e) { return undefined; }
             return this.getPath(obj, path);
         },
-        // Advance a "currently inside a JSON string literal" flag across a chunk
-        // of template text, honouring backslash escapes.
-        scanJsonStringState(inString, chunk) {
-            let i = 0;
-            while (i < chunk.length) {
-                const ch = chunk[i];
-                if (inString) {
-                    if (ch === '\\') { i += 2; continue; }
-                    if (ch === '"') inString = false;
-                } else if (ch === '"') {
-                    inString = true;
-                }
-                i++;
-            }
-            return inString;
-        },
-        // Encode a resolved value so the substituted result stays valid:
-        //  - JSON value position  -> JSON.stringify (string -> "...", number -> 123)
-        //  - inside a JSON string -> escaped chars WITHOUT wrapping quotes
-        //  - non-JSON body        -> raw string
-        encodeRef(val, isJson, inString) {
-            if (!isJson) {
-                return (typeof val === 'string') ? val : JSON.stringify(val);
-            }
-            if (inString) {
-                const s = (typeof val === 'string') ? val : JSON.stringify(val);
-                return JSON.stringify(s).slice(1, -1);
-            }
-            return JSON.stringify(val);
-        },
         // Generate the dynamic envelope values for one message. `sharedOperuid`,
         // when non-null, forces operUID to a value minted once for the whole run
         // (a real chain shares it); everything else is fresh per message. The
@@ -397,59 +362,16 @@ window.chainPanel = function (config) {
         resolveHeaders(headers, dynCtx) {
             return window.dynamicFields.resolveHeaders(headers, dynCtx);
         },
+        // Body resolution (references + dynamic tokens, coloured HTML + sendable
+        // text) lives in window.dynamicFields; we only supply the step's format,
+        // dynamic context, and a closure that reads earlier steps' responses.
         resolveBody(idx, dynCtx) {
             const step = this.steps[idx];
-            const src = step.body || '';
-            const isJson = (step.format || 'json') === 'json';
-            // Match either a reference ($N.path) or a bareword token (dynamic).
-            const re = /\{\{\s*(?:\$(\d+)\.([^}\s]+)|([A-Za-z][A-Za-z0-9]*))\s*\}\}/g;
-            const unresolved = [];
-            let refs = 0;
-            let html = '';
-            let resolved = '';
-            let last = 0;
-            let inString = false;
-            let m;
-            while ((m = re.exec(src)) !== null) {
-                const before = src.slice(last, m.index);
-                html += this.escapeHtml(before);
-                resolved += before;
-                if (isJson) inString = this.scanJsonStringState(inString, before);
-                last = re.lastIndex;
-                if (m[1] !== undefined) {
-                    // ---- reference to an earlier step's response (purple) ----
-                    refs++;
-                    const val = this.resolveValue(parseInt(m[1], 10), m[2]);
-                    if (val === undefined) {
-                        unresolved.push(m[0]);
-                        html += '<span class="placeholder reference unresolved" title="Не удалось разрешить ссылку">'
-                            + this.escapeHtml(m[0]) + '</span>';
-                        resolved += m[0];
-                    } else {
-                        const strVal = this.encodeRef(val, isJson, inString);
-                        html += '<span class="placeholder reference" title="Из ответа шага ' + m[1] + '">'
-                            + this.escapeHtml(strVal) + '</span>';
-                        resolved += strVal;
-                    }
-                    continue;
-                }
-                // ---- bareword token: dynamic envelope field (blue) or literal ----
-                const dynVal = window.dynamicFields.lookup(dynCtx, m[3]);
-                if (dynVal === undefined) {
-                    // Not a dynamic token (or no context) — leave the text as-is.
-                    html += this.escapeHtml(m[0]);
-                    resolved += m[0];
-                } else {
-                    const strVal = this.encodeRef(String(dynVal), isJson, inString);
-                    html += '<span class="placeholder dynamic" title="Динамическое поле ' + this.escapeHtml(m[3]) + '">'
-                        + this.escapeHtml(strVal) + '</span>';
-                    resolved += strVal;
-                }
-            }
-            const tail = src.slice(last);
-            html += this.escapeHtml(tail);
-            resolved += tail;
-            return { resolved: resolved, html: html, unresolved: unresolved, refs: refs };
+            return window.dynamicFields.resolveBody(step.body || '', {
+                isJson: (step.format || 'json') === 'json',
+                ctx: dynCtx,
+                resolveRef: (stepNum, path) => this.resolveValue(stepNum, path),
+            });
         },
 
         // ---------- "send" (mock) ----------

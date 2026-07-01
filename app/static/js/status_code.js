@@ -146,13 +146,18 @@
         };
         return fmt.replace(/YYYY|YY|MM|DD|HH|mm|ss|SSS|ZZ|Z/g, function (t) { return map[t]; });
     }
-    // A positive integer argument, or null when absent/malformed. Used so
-    // {rand}/{hex} without a valid count leave the token verbatim (a visible
-    // mistake) rather than silently expanding to an empty string.
+    // Upper bound for {rand:N}/{hex:N} counts. Guards against a pathological
+    // pattern (e.g. {rand:999999999}) freezing the tab in the generation loop —
+    // an edit-mode user can only self-DoS, but the cap is cheap insurance.
+    const MAX_COUNT = 64;
+    // A positive integer argument within [1, MAX_COUNT], or null when
+    // absent/malformed/out-of-range. Used so {rand}/{hex} without a valid count
+    // leave the token verbatim (a visible mistake) rather than silently
+    // expanding to an empty string (or hanging).
     function positiveArg(arg) {
         if (arg === undefined || !/^\d+$/.test(arg)) return null;
         const n = parseInt(arg, 10);
-        return n > 0 ? n : null;
+        return n >= 1 && n <= MAX_COUNT ? n : null;
     }
     // Expand one pattern. `now` is passed in so several fields generated for the
     // same message share a single timestamp. Unknown tokens, and count/format
@@ -196,6 +201,42 @@
         }
         return undefined;
     }
+    // ---- pure body-substitution helpers (shared with the chain body view) ----
+    function escapeHtml(s) {
+        return String(s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    // Advance a "currently inside a JSON string literal" flag across a chunk of
+    // template text, honouring backslash escapes.
+    function scanJsonStringState(inString, chunk) {
+        let i = 0;
+        while (i < chunk.length) {
+            const ch = chunk[i];
+            if (inString) {
+                if (ch === '\\') { i += 2; continue; }
+                if (ch === '"') inString = false;
+            } else if (ch === '"') {
+                inString = true;
+            }
+            i++;
+        }
+        return inString;
+    }
+    // Encode a resolved value so the substituted result stays valid:
+    //  - JSON value position  -> JSON.stringify (string -> "...", number -> 123)
+    //  - inside a JSON string -> escaped chars WITHOUT wrapping quotes
+    //  - non-JSON body        -> raw string
+    function encodeRef(val, isJson, inString) {
+        if (!isJson) {
+            return (typeof val === 'string') ? val : JSON.stringify(val);
+        }
+        if (inString) {
+            const s = (typeof val === 'string') ? val : JSON.stringify(val);
+            return JSON.stringify(s).slice(1, -1);
+        }
+        return JSON.stringify(val);
+    }
     window.dynamicFields = {
         DEFAULTS: DYNAMIC_FIELD_DEFAULTS,
         generate: window.generateDynamicValue,
@@ -230,6 +271,73 @@
             return (headers || [])
                 .filter((h) => h && !h.disabled)
                 .map((h) => ({ key: h.key, value: this.substitute(h.value, ctx) }));
+        },
+        // Resolve a request body's tokens, producing both the sendable text and
+        // coloured HTML for the chain view. Two token kinds share one scan:
+        //   {{ $N.path }}  -> a reference to an earlier step's response (purple);
+        //                     resolved via opts.resolveRef(stepNum, path) which
+        //                     returns the value or undefined (left red/unresolved).
+        //   {{ token }}    -> a dynamic envelope field (blue) looked up in opts.ctx,
+        //                     or an untouched literal when unknown.
+        // JSON bodies (opts.isJson) get proper encoding via encodeRef with
+        // string-state tracking so a value landing inside a string vs a value
+        // position is escaped correctly.
+        resolveBody(src, opts) {
+            opts = opts || {};
+            const isJson = !!opts.isJson;
+            const ctx = opts.ctx;
+            const resolveRef = typeof opts.resolveRef === 'function'
+                ? opts.resolveRef : function () { return undefined; };
+            const text = String(src == null ? '' : src);
+            // Match either a reference ($N.path) or a bareword token (dynamic).
+            const re = /\{\{\s*(?:\$(\d+)\.([^}\s]+)|([A-Za-z][A-Za-z0-9]*))\s*\}\}/g;
+            const unresolved = [];
+            let refs = 0;
+            let html = '';
+            let resolved = '';
+            let last = 0;
+            let inString = false;
+            let m;
+            while ((m = re.exec(text)) !== null) {
+                const before = text.slice(last, m.index);
+                html += escapeHtml(before);
+                resolved += before;
+                if (isJson) inString = scanJsonStringState(inString, before);
+                last = re.lastIndex;
+                if (m[1] !== undefined) {
+                    // ---- reference to an earlier step's response (purple) ----
+                    refs++;
+                    const val = resolveRef(parseInt(m[1], 10), m[2]);
+                    if (val === undefined) {
+                        unresolved.push(m[0]);
+                        html += '<span class="placeholder reference unresolved" title="Не удалось разрешить ссылку">'
+                            + escapeHtml(m[0]) + '</span>';
+                        resolved += m[0];
+                    } else {
+                        const strVal = encodeRef(val, isJson, inString);
+                        html += '<span class="placeholder reference" title="Из ответа шага ' + m[1] + '">'
+                            + escapeHtml(strVal) + '</span>';
+                        resolved += strVal;
+                    }
+                    continue;
+                }
+                // ---- bareword token: dynamic envelope field (blue) or literal ----
+                const dynVal = dynamicLookup(ctx, m[3]);
+                if (dynVal === undefined) {
+                    // Not a dynamic token (or no context) — leave the text as-is.
+                    html += escapeHtml(m[0]);
+                    resolved += m[0];
+                } else {
+                    const strVal = encodeRef(String(dynVal), isJson, inString);
+                    html += '<span class="placeholder dynamic" title="Динамическое поле ' + escapeHtml(m[3]) + '">'
+                        + escapeHtml(strVal) + '</span>';
+                    resolved += strVal;
+                }
+            }
+            const tail = text.slice(last);
+            html += escapeHtml(tail);
+            resolved += tail;
+            return { resolved: resolved, html: html, unresolved: unresolved, refs: refs };
         },
     };
 
