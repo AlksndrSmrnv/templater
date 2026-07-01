@@ -70,6 +70,42 @@
     </form>
 </div>
 
+{% set dyn_fields = dynamic_pattern_fields | default([]) %}
+{% set dyn_patterns = dynamic_patterns | default({}) %}
+<div class="settings-section">
+    <h2><iconify-icon icon="lucide:wand-sparkles"></iconify-icon> Динамические параметры</h2>
+    <p class="muted">
+        Значения <code>rqUID</code>, <code>operUID</code>, <code>rqTm</code> и
+        <code>channelDateTime</code> генерируются заново при каждой отправке и подставляются
+        в тело сообщения и заголовки. <code>operUID</code> общий для всей цепочки с
+        перекладыванием параметров (генерируется один раз), а для отдельных сообщений —
+        новый на каждое; остальные поля генерируются заново для каждого сообщения.
+    </p>
+    <p class="muted">
+        Токены паттерна: <code>{{ '{uuid}' }}</code>, <code>{{ '{uuid_upper}' }}</code>,
+        <code>{{ '{rand:N}' }}</code> (N&nbsp;цифр), <code>{{ '{hex:N}' }}</code>,
+        <code>{{ '{seq}' }}</code>, <code>{{ '{timestamp}' }}</code>,
+        <code>{{ '{timestamp_ms}' }}</code>,
+        <code>{{ '{date:ФОРМАТ}' }}</code> — где ФОРМАТ из
+        <code>YYYY YY MM DD HH mm ss SSS Z ZZ</code> (например
+        <code>{{ '{date:YYYY-MM-DDTHH:mm:ss.SSSZZ}' }}</code>). Остальной текст подставляется как есть.
+    </p>
+    <form class="dynamic-fields-form"
+          hx-put="/templater/settings-htmx/dynamic-fields"
+          hx-swap="none">
+        {% for f in dyn_fields %}
+        <label class="dynamic-field-row">
+            <span class="dynamic-field-label">{{ f.label }}</span>
+            <input type="text" name="pattern_{{ f.name }}"
+                   value="{{ dyn_patterns.get(f.name, '') }}"
+                   spellcheck="false" autocomplete="off"
+                   {% if not edit_mode %}disabled{% endif %}>
+        </label>
+        {% endfor %}
+        {% if edit_mode %}<button class="btn primary" type="submit">Сохранить</button>{% endif %}
+    </form>
+</div>
+
 <div class="settings-section">
     <h2><iconify-icon icon="lucide:folder-kanban"></iconify-icon> Проекты</h2>
     <p class="muted">Каждый шаблон обязательно относится ровно к одному проекту. Цвет проекта используется как явная метка на шаблонах и заполненных шаблонах. Удалить можно только проект без привязанных шаблонов.</p>

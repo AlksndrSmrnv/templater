@@ -1661,3 +1661,62 @@ def test_settings_page_lists_header_presets_on_initial_load() -> None:
     )
     assert "A2A перевод" in html
     assert "Нет пресетов" not in html
+
+
+def test_settings_page_renders_dynamic_field_patterns() -> None:
+    # The «Динамические параметры» section renders one input per configured
+    # field, seeded with the current pattern; the section is guarded with
+    # | default so the render tests above (no keys) keep passing.
+    html = render_template(
+        "settings.html",
+        {
+            "active": "settings",
+            "llm_active": False,
+            "llm_model": "m",
+            "entity_types": [],
+            "attributes": [],
+            "usage_counts": {},
+            "selected_entity_type": "",
+            "default_policy": "skip",
+            "projects": [],
+            "header_presets": [],
+            "prompts": [],
+            "edit_mode": True,
+            "unlock_available": False,
+            "dynamic_pattern_fields": [
+                {"name": "rqUID", "label": "ID запроса (rqUID)"},
+                {"name": "operUID", "label": "ID операции (operUID)"},
+            ],
+            "dynamic_patterns": {"rqUID": "REQ-{uuid}", "operUID": "{rand:6}"},
+        },
+    )
+    assert "Динамические параметры" in html
+    assert 'name="pattern_rqUID"' in html
+    assert "REQ-{uuid}" in html
+    assert 'name="pattern_operUID"' in html
+    assert 'hx-put="/templater/settings-htmx/dynamic-fields"' in html
+
+
+def test_settings_page_dynamic_section_survives_missing_context() -> None:
+    # Missing dynamic_* keys must not break the page (| default guards).
+    html = render_template(
+        "settings.html",
+        {
+            "active": "settings",
+            "llm_active": False,
+            "llm_model": "m",
+            "entity_types": [],
+            "attributes": [],
+            "usage_counts": {},
+            "selected_entity_type": "",
+            "default_policy": "skip",
+            "projects": [],
+            "header_presets": [],
+            "prompts": [],
+            "edit_mode": False,
+            "unlock_available": False,
+        },
+    )
+    assert "Динамические параметры" in html
+    # No fields provided → no pattern inputs rendered, but no crash.
+    assert 'name="pattern_rqUID"' not in html

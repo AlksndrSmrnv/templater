@@ -36,6 +36,9 @@ window.chainPanel = function (config) {
     return {
         chainId: config.chainId,
         executeUrl: config.executeUrl,
+        // Per-field generation patterns for the dynamic envelope tokens, seeded
+        // from settings. Values are (re)generated and substituted at send time.
+        dynamicPatterns: config.dynamicPatterns || {},
         steps: [],
         pickerOpen: false,
         pickerSearch: '',
@@ -325,11 +328,6 @@ window.chainPanel = function (config) {
         },
 
         // ---------- resolution (for the stub send) ----------
-        escapeHtml(s) {
-            return String(s == null ? '' : s)
-                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-        },
         getPath(obj, path) {
             const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean);
             let cur = obj;
@@ -352,76 +350,35 @@ window.chainPanel = function (config) {
             try { obj = JSON.parse(this.sourceBody(src)); } catch (e) { return undefined; }
             return this.getPath(obj, path);
         },
-        // Advance a "currently inside a JSON string literal" flag across a chunk
-        // of template text, honouring backslash escapes.
-        scanJsonStringState(inString, chunk) {
-            let i = 0;
-            while (i < chunk.length) {
-                const ch = chunk[i];
-                if (inString) {
-                    if (ch === '\\') { i += 2; continue; }
-                    if (ch === '"') inString = false;
-                } else if (ch === '"') {
-                    inString = true;
-                }
-                i++;
-            }
-            return inString;
+        // Generate the dynamic envelope values for one message. `sharedOperuid`,
+        // when non-null, forces operUID to a value minted once for the whole run
+        // (a real chain shares it); everything else is fresh per message. The
+        // generation/substitution rules live in window.dynamicFields so this
+        // panel and the filled-template send stay in lockstep.
+        buildDynamicContext(sharedOperuid) {
+            return window.dynamicFields.buildContext(this.dynamicPatterns, sharedOperuid);
         },
-        // Encode a resolved value so the substituted result stays valid:
-        //  - JSON value position  -> JSON.stringify (string -> "...", number -> 123)
-        //  - inside a JSON string -> escaped chars WITHOUT wrapping quotes
-        //  - non-JSON body        -> raw string
-        encodeRef(val, isJson, inString) {
-            if (!isJson) {
-                return (typeof val === 'string') ? val : JSON.stringify(val);
-            }
-            if (inString) {
-                const s = (typeof val === 'string') ? val : JSON.stringify(val);
-                return JSON.stringify(s).slice(1, -1);
-            }
-            return JSON.stringify(val);
+        // Enabled headers with dynamic tokens substituted, ready to send.
+        resolveHeaders(headers, dynCtx) {
+            return window.dynamicFields.resolveHeaders(headers, dynCtx);
         },
-        resolveBody(idx) {
+        // Body resolution (references + dynamic tokens, coloured HTML + sendable
+        // text) lives in window.dynamicFields; we only supply the step's format,
+        // dynamic context, and a closure that reads earlier steps' responses.
+        resolveBody(idx, dynCtx) {
             const step = this.steps[idx];
-            const src = step.body || '';
-            const isJson = (step.format || 'json') === 'json';
-            const re = /\{\{\s*\$(\d+)\.([^}\s]+)\s*\}\}/g;
-            const unresolved = [];
-            let refs = 0;
-            let html = '';
-            let resolved = '';
-            let last = 0;
-            let inString = false;
-            let m;
-            while ((m = re.exec(src)) !== null) {
-                refs++;
-                const before = src.slice(last, m.index);
-                html += this.escapeHtml(before);
-                resolved += before;
-                if (isJson) inString = this.scanJsonStringState(inString, before);
-                const val = this.resolveValue(parseInt(m[1], 10), m[2]);
-                if (val === undefined) {
-                    unresolved.push(m[0]);
-                    html += '<span class="placeholder reference unresolved" title="Не удалось разрешить ссылку">'
-                        + this.escapeHtml(m[0]) + '</span>';
-                    resolved += m[0];
-                } else {
-                    const strVal = this.encodeRef(val, isJson, inString);
-                    html += '<span class="placeholder reference" title="Из ответа шага ' + m[1] + '">'
-                        + this.escapeHtml(strVal) + '</span>';
-                    resolved += strVal;
-                }
-                last = re.lastIndex;
-            }
-            const tail = src.slice(last);
-            html += this.escapeHtml(tail);
-            resolved += tail;
-            return { resolved: resolved, html: html, unresolved: unresolved, refs: refs };
+            return window.dynamicFields.resolveBody(step.body || '', {
+                isJson: (step.format || 'json') === 'json',
+                ctx: dynCtx,
+                resolveRef: (stepNum, path) => this.resolveValue(stepNum, path),
+            });
         },
 
         // ---------- "send" (mock) ----------
-        async send(idx) {
+        // `sharedOperuid` (optional) pins operUID to a value minted once for a
+        // whole real-chain run; a single send / independent run leaves it null so
+        // each message gets its own. The other dynamic fields are always fresh.
+        async send(idx, sharedOperuid) {
             const step = this.steps[idx];
             step.error = '';
             step.skipped = false;
@@ -435,7 +392,9 @@ window.chainPanel = function (config) {
             // s.response), and it must not linger next to a fresh error in the
             // step card (chain_panel.html shows response and error together).
             step.response = null;
-            const res = this.resolveBody(idx);
+            const dynCtx = this.buildDynamicContext(sharedOperuid);
+            const res = this.resolveBody(idx, dynCtx);
+            const sentHeaders = this.resolveHeaders(step.headers, dynCtx);
             step.resolvedRequestHtml = res.html;
             step.resolvedRefs = res.refs > 0;
             step.resolvedUnresolved = res.unresolved.length > 0;
@@ -452,7 +411,7 @@ window.chainPanel = function (config) {
                     body: JSON.stringify({
                         method: step.method,
                         url: step.url,
-                        headers: step.headers,
+                        headers: sentHeaders,
                         body: res.resolved,
                         format: step.format,
                         mock_response: step.mockResponse,
@@ -510,6 +469,15 @@ window.chainPanel = function (config) {
             // for free. A non-zero statusCode is NOT in here: the response exists
             // and references still resolve, so dependents keep running.
             const broken = new Set();
+            // A «real chain» is one where some step references another via
+            // {{ $N.path }} (parameter passing) — there operUID identifies the
+            // one business operation, so it's minted once and shared by all steps.
+            // A batch of independent requests gets a fresh operUID per message.
+            const isRealChain = this.steps.some((_, i) => this.stepDeps(i).length > 0);
+            const p = this.dynamicPatterns || {};
+            const sharedOperuid = isRealChain
+                ? window.generateDynamicValue(p.operUID || window.dynamicFields.DEFAULTS.operUID, new Date())
+                : null;
             try {
                 for (let i = 0; i < this.steps.length; i++) {
                     const step = this.steps[i];
@@ -534,7 +502,7 @@ window.chainPanel = function (config) {
                         this.progress.current = i + 1;
                         continue;
                     }
-                    await this.send(i);
+                    await this.send(i, sharedOperuid);
                     this.progress.current = i + 1;
                     // Only an execution error (no usable response) breaks dependents.
                     if (step.error) broken.add(i + 1);
