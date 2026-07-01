@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
 from app.db.models import FilledTemplate, MessageSend, RequestChain
-from app.repositories.entity import group_visibility_condition
+from app.repositories.entity import _LIKE_ESCAPE, _like_escape, group_visibility_condition
 
 # Hard cap on history rows returned to the drawer table — same intent as the
 # other list limits: bound the worst case without paging UI.
@@ -68,7 +68,7 @@ class MessageSendRepository:
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
-    def _search_stmt(
+    def build_search_stmt(
         self,
         *,
         query: str = "",
@@ -77,12 +77,18 @@ class MessageSendRepository:
     ) -> Select[tuple[MessageSend]]:
         """Build the global-history search statement (see :meth:`search`).
 
-        Split out so the SQL can be asserted by compiling against the Postgres
+        Public so the SQL can be asserted by compiling against the Postgres
         dialect — the test suite has no live database (ILIKE / ``cast(jsonb AS
         text)`` are not otherwise exercised).
         """
 
-        stmt = select(MessageSend).order_by(MessageSend.created_at.desc()).limit(limit)
+        # ``id`` is a stable tiebreaker so rows sharing a ``created_at`` keep a
+        # deterministic order across requests (parity with the entity list).
+        stmt = (
+            select(MessageSend)
+            .order_by(MessageSend.created_at.desc(), MessageSend.id.desc())
+            .limit(limit)
+        )
 
         # ``message_sends`` has no ``group_id`` of its own — visibility is
         # inherited from the source object. Restrict to sends whose filled
@@ -102,20 +108,23 @@ class MessageSendRepository:
 
         term = query.strip()
         if term:
-            like = f"%{term}%"
+            # Escape LIKE metacharacters so ``%``/``_`` in the query (e.g. an
+            # ``oper_uid`` key) match literally rather than as wildcards — parity
+            # with the entity-list search (see app/repositories/entity.py).
+            like = f"%{_like_escape(term)}%"
             # Any value the user typed, anywhere in the record — including inside
             # the request/response bodies and headers, where business ids like
             # ``operuid`` actually live (they are not their own columns).
             stmt = stmt.where(
                 or_(
-                    MessageSend.name_snapshot.ilike(like),
-                    MessageSend.url.ilike(like),
-                    MessageSend.http_method.ilike(like),
-                    MessageSend.request_body.ilike(like),
-                    MessageSend.response_body.ilike(like),
-                    MessageSend.error_message.ilike(like),
-                    cast(MessageSend.request_headers, Text).ilike(like),
-                    cast(MessageSend.response_headers, Text).ilike(like),
+                    MessageSend.name_snapshot.ilike(like, escape=_LIKE_ESCAPE),
+                    MessageSend.url.ilike(like, escape=_LIKE_ESCAPE),
+                    MessageSend.http_method.ilike(like, escape=_LIKE_ESCAPE),
+                    MessageSend.request_body.ilike(like, escape=_LIKE_ESCAPE),
+                    MessageSend.response_body.ilike(like, escape=_LIKE_ESCAPE),
+                    MessageSend.error_message.ilike(like, escape=_LIKE_ESCAPE),
+                    cast(MessageSend.request_headers, Text).ilike(like, escape=_LIKE_ESCAPE),
+                    cast(MessageSend.response_headers, Text).ilike(like, escape=_LIKE_ESCAPE),
                 )
             )
         return stmt
@@ -135,7 +144,7 @@ class MessageSendRepository:
         ``None`` to disable the visibility filter.
         """
 
-        stmt = self._search_stmt(
+        stmt = self.build_search_stmt(
             query=query, visible_group_ids=visible_group_ids, limit=limit
         )
         return list((await self.session.execute(stmt)).scalars().all())

@@ -7,6 +7,9 @@
         {% if q | default('') %}Ничего не найдено.{% else %}Отправок пока не было.{% endif %}
     </div>
     {% else %}
+    {% if truncated | default(false) %}
+    <div class="muted">Показаны новейшие {{ list_limit | default(sends | length) }} записей — уточните запрос, чтобы увидеть остальные.</div>
+    {% endif %}
     <table class="send-history-table">
         <thead>
             <tr>

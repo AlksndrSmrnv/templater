@@ -1443,6 +1443,21 @@ def test_operations_history_table_empty_states_depend_on_query() -> None:
     assert "Отправок пока не было" in empty
 
 
+def test_operations_history_table_flags_truncated_result_cap() -> None:
+    # When the search hits the row cap the table warns that only the newest N are
+    # shown; without truncation there is no such notice.
+    truncated = render_template(
+        "partials/operations_history_table.html",
+        {"q": "a", "sends": [_history_send()], "list_limit": 200, "truncated": True},
+    )
+    assert "Показаны новейшие 200" in truncated
+    not_truncated = render_template(
+        "partials/operations_history_table.html",
+        {"q": "a", "sends": [_history_send()], "list_limit": 200, "truncated": False},
+    )
+    assert "Показаны новейшие" not in not_truncated
+
+
 # ---------------------------------------------------------------------------
 # Project badges: explicit colored chip on tree items, panel and filled views.
 # ---------------------------------------------------------------------------

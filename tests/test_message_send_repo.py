@@ -90,18 +90,42 @@ async def test_last_for_chain_no_history_is_empty() -> None:
 
 def _compiled_search(**kwargs: Any) -> str:
     repo = MessageSendRepository(_FakeSession([]))  # type: ignore[arg-type]
-    stmt = repo._search_stmt(**kwargs)
-    return str(stmt.compile(dialect=postgresql.dialect())).lower()
+    stmt = repo.build_search_stmt(**kwargs)
+    # literal_binds inlines the pattern so the test asserts the actual %term%
+    # string, catching a regression where the wildcards are dropped.
+    # ``named`` paramstyle avoids the pyformat ``%`` → ``%%`` doubling so the
+    # inlined LIKE pattern reads back verbatim.
+    return str(
+        stmt.compile(
+            dialect=postgresql.dialect(paramstyle="named"),
+            compile_kwargs={"literal_binds": True},
+        )
+    ).lower()
 
 
 def test_search_stmt_matches_bodies_case_insensitively() -> None:
     sql = _compiled_search(query="operuid")
     # The term must reach the request/response bodies (where operuid lives) and
-    # the JSON headers cast to text — case-insensitively.
-    assert "ilike" in sql
-    assert "message_sends.request_body ilike" in sql
-    assert "message_sends.response_body ilike" in sql
-    assert "cast(message_sends.request_headers as text) ilike" in sql
+    # the JSON headers cast to text — case-insensitively, with the wildcards.
+    assert "message_sends.request_body ilike '%operuid%'" in sql
+    assert "message_sends.response_body ilike '%operuid%'" in sql
+    assert "cast(message_sends.request_headers as text) ilike '%operuid%'" in sql
+
+
+def test_search_stmt_escapes_like_metacharacters() -> None:
+    # A ``_`` in the query (e.g. an ``oper_uid`` key) must match literally, not
+    # as a LIKE «any char» wildcard — the pattern escapes it and sets ESCAPE.
+    sql = _compiled_search(query="oper_uid")
+    # Backslashes are doubled by SQL string-literal escaping (one backslash on
+    # the wire): the ``_`` is preceded by an escape and ESCAPE '\' is set.
+    assert r"ilike '%oper\\_uid%'" in sql
+    assert r"escape '\\'" in sql
+
+
+def test_search_stmt_orders_by_created_at_then_id() -> None:
+    sql = _compiled_search(query="x")
+    # Stable tiebreaker: id.desc() after created_at.desc().
+    assert "order by message_sends.created_at desc, message_sends.id desc" in sql
 
 
 def test_search_stmt_blank_query_has_no_ilike() -> None:
