@@ -149,6 +149,9 @@
             .catch(() => {
                 window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Отправка выполнена, но история не записана', type: 'warning' } }));
             })
+            // Not redundant with the reset above: that one only runs on the
+            // happy path — this is what unsticks the button if the seam itself
+            // rejects and control jumps straight to .catch().
             .finally(() => { this.sending = false; });
     },
 }">
