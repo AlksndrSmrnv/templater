@@ -50,6 +50,10 @@
         url: {{ (ft.url_snapshot or '') | tojson | forceescape }},
         headers: {{ (ft.headers_snapshot or []) | tojson | forceescape }},
         format: {{ (ft.format or 'json') | tojson | forceescape }},
+        // The exact stored filled body — same source as /raw (NOT the re-serialized
+        // rendered_html), so whitespace, XML declarations and comments survive into
+        // the send-history «Запрос (тело)».
+        body: {{ (ft.filled_content or '') | tojson | forceescape }},
     },
     // Generation patterns for the dynamic envelope tokens (rqUID/operUID/...),
     // seeded from settings. A one-off send is a single message, so operUID is
@@ -105,7 +109,7 @@
                 method: this.envelope.method,
                 url: this.envelope.url,
                 headers: sentHeaders,
-                body: '',
+                body: this.envelope.body,
                 format: this.envelope.format,
                 mock_response: this.exampleResponse(),
                 // Context so the send is recorded against this filled template.
@@ -140,14 +144,20 @@
 
     {% if not standalone %}
     <div class="panel-header">
-        <div class="panel-title">
-            <span class="tree-method method-{{ (ft.http_method_snapshot or '')|lower }}">{{ ft.http_method_snapshot or '·' }}</span>
-            <h2 title="{{ ft.name }}">{{ ft.name }}</h2>
-            {% if ft.project_name_snapshot %}
-            <span class="project-badge" title="Проект: {{ ft.project_name_snapshot }}"><span class="project-dot" style="background: {{ ft.project_color_snapshot or '#9E9E9E' }}"></span>{{ ft.project_name_snapshot }}</span>
-            {% endif %}
-            {% if ft.group_name_snapshot %}
-            <span class="group-badge" title="Группа доступа: {{ ft.group_name_snapshot }}"><span class="group-dot" style="background: {{ ft.group_color_snapshot or '#9E9E9E' }}"></span>{{ ft.group_name_snapshot }}</span>
+        <div class="panel-title panel-title-stack">
+            <div class="panel-title-main">
+                <span class="tree-method method-{{ (ft.http_method_snapshot or '')|lower }}">{{ ft.http_method_snapshot or '·' }}</span>
+                <h2 title="{{ ft.name }}">{{ ft.name }}</h2>
+            </div>
+            {% if ft.project_name_snapshot or ft.group_name_snapshot %}
+            <div class="panel-title-badges">
+                {% if ft.project_name_snapshot %}
+                <span class="project-badge" title="Проект: {{ ft.project_name_snapshot }}"><span class="project-dot" style="background: {{ ft.project_color_snapshot or '#9E9E9E' }}"></span>{{ ft.project_name_snapshot }}</span>
+                {% endif %}
+                {% if ft.group_name_snapshot %}
+                <span class="group-badge" title="Группа доступа: {{ ft.group_name_snapshot }}"><span class="group-dot" style="background: {{ ft.group_color_snapshot or '#9E9E9E' }}"></span>{{ ft.group_name_snapshot }}</span>
+                {% endif %}
+            </div>
             {% endif %}
         </div>
         <div class="panel-actions">

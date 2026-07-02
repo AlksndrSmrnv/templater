@@ -138,6 +138,42 @@ async def test_create_normalizes_and_strips() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_uppercases_http_method() -> None:
+    service, _repo, pa, _pb = make_service()
+    preset = await service.create(
+        HeaderPresetCreate(name="A2A", project_id=pa, http_method="  post  ")
+    )
+    assert preset.http_method == "POST"
+
+
+@pytest.mark.asyncio
+async def test_update_changes_http_method() -> None:
+    service, _repo, pa, _pb = make_service()
+    preset = await service.create(
+        HeaderPresetCreate(name="Std", project_id=pa, http_method="GET")
+    )
+    updated = await service.update(preset.id, HeaderPresetUpdate(http_method="put"))
+    assert updated.http_method == "PUT"
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_invalid_http_method() -> None:
+    # The server mirrors the form's «Тип запроса» select — an out-of-list method
+    # (e.g. from a crafted POST) is refused rather than stored unstyled.
+    service, _repo, pa, _pb = make_service()
+    with pytest.raises(ValidationFailed):
+        await service.create(HeaderPresetCreate(name="X", project_id=pa, http_method="FOO"))
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_invalid_http_method() -> None:
+    service, _repo, pa, _pb = make_service()
+    preset = await service.create(HeaderPresetCreate(name="Std", project_id=pa, http_method="GET"))
+    with pytest.raises(ValidationFailed):
+        await service.update(preset.id, HeaderPresetUpdate(http_method="FOO"))
+
+
+@pytest.mark.asyncio
 async def test_create_rejects_unknown_project() -> None:
     service, _repo, _pa, _pb = make_service()
     with pytest.raises(ValidationFailed):
@@ -222,6 +258,24 @@ def test_apply_to_template_copies_url_and_headers_independently() -> None:
     # Deep copy: mutating the template must not touch the preset.
     template.headers[0]["value"] = "changed"
     assert preset.headers[0]["value"] == "{{rquid}}"
+
+
+def test_apply_to_template_replaces_http_method() -> None:
+    pid = uuid.uuid4()
+    preset = HeaderPreset(name="Std", url="https://host", headers=[], project_id=pid, http_method="PATCH")
+    template = MessageTemplate(project_id=pid, http_method="GET")
+    HeaderPresetService.apply_to_template(template, preset)
+    assert template.http_method == "PATCH"
+
+
+def test_apply_to_template_unset_preset_method_clears_template_method() -> None:
+    # Replace semantics (like url/headers): a preset with no method clears the
+    # template's method. Documented in apply_to_template's docstring.
+    pid = uuid.uuid4()
+    preset = HeaderPreset(name="Std", url="https://host", headers=[], project_id=pid, http_method="")
+    template = MessageTemplate(project_id=pid, http_method="POST")
+    HeaderPresetService.apply_to_template(template, preset)
+    assert template.http_method == ""
 
 
 def test_apply_to_template_rejects_preset_from_other_project() -> None:

@@ -1008,6 +1008,11 @@ li.tree-chain.sortable-chosen { background: var(--surface-2); }
 .panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .panel-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .panel-title h2 { margin: 0; font-size: var(--fs-lg); overflow-wrap: anywhere; }
+/* Filled-template header: method + name on top, project/group badges on the row
+   below the method plate (rather than trailing the name). */
+.panel-title-stack { flex-direction: column; align-items: flex-start; gap: 6px; }
+.panel-title-stack .panel-title-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.panel-title-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .panel-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; flex-shrink: 0; }
 /* «Удалить» sits apart on the far right of the header actions (both the filled
    template and chain panels), away from the functional buttons. */

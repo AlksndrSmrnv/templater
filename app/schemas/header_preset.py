@@ -20,6 +20,7 @@ class HeaderPresetCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     project_id: uuid.UUID
     url: str = Field(default="", max_length=4096)
+    http_method: str = Field(default="", max_length=16)
     headers: list[PresetHeaderIn] = Field(default_factory=list)
 
 
@@ -27,4 +28,5 @@ class HeaderPresetUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     project_id: uuid.UUID | None = None
     url: str | None = Field(default=None, max_length=4096)
+    http_method: str | None = Field(default=None, max_length=16)
     headers: list[PresetHeaderIn] | None = None
