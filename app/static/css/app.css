@@ -868,11 +868,16 @@ body.workspace-resizing { cursor: col-resize; user-select: none; }
 .tree-folder-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 
 .tree-item {
-    display: flex; align-items: center; gap: 8px;
+    display: flex; align-items: flex-start; gap: 8px;
     padding: 5px 8px; border-radius: var(--radius-sm); cursor: pointer;
 }
 .tree-item:hover { background: var(--surface-2); }
 .tree-item.active { background: var(--surface-2); color: var(--text); font-weight: 500; box-shadow: inset 3px 0 0 var(--primary); }
+/* Two-row tree row: method + name (+ flags) on top, project/group badges on the
+   line below, left-aligned under the method plate. */
+.tree-item-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tree-item-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tree-item-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .tree-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; flex: 1; min-width: 0; }
 .tree-flag { color: var(--warning); flex-shrink: 0; }
 
@@ -987,6 +992,9 @@ body.workspace-resizing { cursor: col-resize; user-select: none; }
     cursor: grab; color: var(--muted); font-size: var(--fs-sm); flex-shrink: 0;
     opacity: 0; transition: opacity 0.1s ease;
 }
+/* Two-row template rows align to the top, so nudge the grip onto the first line
+   (chain rows stay single-row/centered). */
+.tree-item > .tree-drag-handle { margin-top: 3px; }
 .tree-item:hover .tree-drag-handle,
 .tree-chain:hover .tree-drag-handle { opacity: 0.7; }
 .tree-drag-handle:active { cursor: grabbing; }

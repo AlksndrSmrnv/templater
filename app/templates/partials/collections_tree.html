@@ -57,12 +57,20 @@
         hx-target="#template-panel"
         hx-swap="innerHTML">
         <span class="tree-drag-handle" title="Перетащите запрос" @click.stop><iconify-icon icon="lucide:grip-vertical"></iconify-icon></span>
-        <span class="tree-method method-{{ (t.http_method or '')|lower }}">{{ t.http_method or '·' }}</span>
-        <span class="tree-name">{{ t.name }}</span>
         {% set proj = t.project if t.project is defined else none %}
-        {% if proj %}<span class="project-badge" title="Проект: {{ proj.name }}"><span class="project-dot" style="background: {{ proj.color }}"></span>{{ proj.name }}</span>{% endif %}
-        {% if (t.llm_meta or {}).get('import_status') == 'unparsed' %}<span class="tree-flag" title="Тело не разбирается как JSON/XML"><iconify-icon icon="lucide:triangle-alert"></iconify-icon></span>{% endif %}
-        {% if (t.llm_meta or {}).get('import_status') == 'pending_review' %}<span class="tree-flag" title="Разметка ожидает подтверждения — откройте и нажмите «Сохранить изменения»"><iconify-icon icon="lucide:circle-dot"></iconify-icon></span>{% endif %}
+        <div class="tree-item-body">
+            <div class="tree-item-main">
+                <span class="tree-method method-{{ (t.http_method or '')|lower }}">{{ t.http_method or '·' }}</span>
+                <span class="tree-name">{{ t.name }}</span>
+                {% if (t.llm_meta or {}).get('import_status') == 'unparsed' %}<span class="tree-flag" title="Тело не разбирается как JSON/XML"><iconify-icon icon="lucide:triangle-alert"></iconify-icon></span>{% endif %}
+                {% if (t.llm_meta or {}).get('import_status') == 'pending_review' %}<span class="tree-flag" title="Разметка ожидает подтверждения — откройте и нажмите «Сохранить изменения»"><iconify-icon icon="lucide:circle-dot"></iconify-icon></span>{% endif %}
+            </div>
+            {% if proj %}
+            <div class="tree-item-badges">
+                <span class="project-badge" title="Проект: {{ proj.name }}"><span class="project-dot" style="background: {{ proj.color }}"></span>{{ proj.name }}</span>
+            </div>
+            {% endif %}
+        </div>
     </li>
     {% endfor %}
 {% endmacro %}

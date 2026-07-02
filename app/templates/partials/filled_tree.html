@@ -65,11 +65,19 @@
         hx-target="#filled-panel"
         hx-swap="innerHTML">
         <span class="tree-drag-handle" title="Перетащите шаблон" @click.stop><iconify-icon icon="lucide:grip-vertical"></iconify-icon></span>
-        <span class="tree-method method-{{ (row.http_method_snapshot or '')|lower }}">{{ row.http_method_snapshot or '·' }}</span>
-        <span class="tree-name" title="{{ row.name }}">{{ row.name }}</span>
-        {% if row.project_name_snapshot %}<span class="project-badge" title="Проект: {{ row.project_name_snapshot }}"><span class="project-dot" style="background: {{ row.project_color_snapshot or '#9E9E9E' }}"></span>{{ row.project_name_snapshot }}</span>{% endif %}
-        {% if row.group_name_snapshot %}<span class="group-badge" title="Группа доступа: {{ row.group_name_snapshot }}"><span class="group-dot" style="background: {{ row.group_color_snapshot or '#9E9E9E' }}"></span>{{ row.group_name_snapshot }}</span>{% endif %}
-        {% if row.unresolved %}<span class="tree-flag" title="Есть незаполненные плейсхолдеры"><iconify-icon icon="lucide:triangle-alert"></iconify-icon></span>{% endif %}
+        <div class="tree-item-body">
+            <div class="tree-item-main">
+                <span class="tree-method method-{{ (row.http_method_snapshot or '')|lower }}">{{ row.http_method_snapshot or '·' }}</span>
+                <span class="tree-name" title="{{ row.name }}">{{ row.name }}</span>
+                {% if row.unresolved %}<span class="tree-flag" title="Есть незаполненные плейсхолдеры"><iconify-icon icon="lucide:triangle-alert"></iconify-icon></span>{% endif %}
+            </div>
+            {% if row.project_name_snapshot or row.group_name_snapshot %}
+            <div class="tree-item-badges">
+                {% if row.project_name_snapshot %}<span class="project-badge" title="Проект: {{ row.project_name_snapshot }}"><span class="project-dot" style="background: {{ row.project_color_snapshot or '#9E9E9E' }}"></span>{{ row.project_name_snapshot }}</span>{% endif %}
+                {% if row.group_name_snapshot %}<span class="group-badge" title="Группа доступа: {{ row.group_name_snapshot }}"><span class="group-dot" style="background: {{ row.group_color_snapshot or '#9E9E9E' }}"></span>{{ row.group_name_snapshot }}</span>{% endif %}
+            </div>
+            {% endif %}
+        </div>
     </li>
     {% else %}
     <li class="tree-chain"
