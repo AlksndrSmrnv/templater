@@ -13,7 +13,6 @@ import pytest
 
 from app.db.models import MessageSend
 from app.routes import chains
-from app.services import rest_sender
 
 
 class _FakeRequest:
@@ -64,9 +63,7 @@ def _no_latency(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _noop(latency_ms: int) -> None:
         return None
 
-    # The mock latency now lives in the send seam (rest_sender), which the route
-    # delegates to; patch it there so these tests stay instant.
-    monkeypatch.setattr(rest_sender, "_simulate_latency", _noop)
+    monkeypatch.setattr(chains, "_simulate_latency", _noop)
 
 
 @pytest.mark.asyncio

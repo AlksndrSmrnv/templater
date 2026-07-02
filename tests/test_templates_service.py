@@ -11,7 +11,6 @@ import pytest
 from app.db.models import MessageTemplate
 from app.services.templates import (
     TemplateService,
-    apply_dynamic_headers,
     normalize_placeholders,
     placeholders_have_account_owner,
 )
@@ -211,81 +210,6 @@ async def test_update_placeholders_clears_stale_llm_debug() -> None:
     await svc.update_placeholders(cast(Any, None), [])
 
     assert template.llm_debug is None
-
-
-def _preset_template(**overrides: Any) -> SimpleNamespace:
-    """A template already bound to a preset (preset_id set) for detach tests."""
-
-    base = dict(
-        name="t", project_id=uuid.uuid4(), description="", content=None,
-        original_content="", placeholders=[], llm_meta={}, llm_debug=None,
-        headers=[], http_method="POST", url="https://old", format="json",
-        preset_id=uuid.uuid4(),
-    )
-    base.update(overrides)
-    return SimpleNamespace(**base)
-
-
-async def _run_update(template: SimpleNamespace, data: TemplateUpdate) -> None:
-    class FakeSession:
-        async def flush(self) -> None:
-            return None
-
-    svc = TemplateService(cast(Any, FakeSession()))
-
-    async def fake_get(tid: Any) -> Any:
-        return template
-
-    async def fake_require(pid: Any) -> None:
-        return None
-
-    svc.get = fake_get  # type: ignore[method-assign, assignment]
-    svc._require_project = fake_require  # type: ignore[method-assign, assignment]
-    await svc.update(uuid.uuid4(), data)
-
-
-@pytest.mark.asyncio
-async def test_update_detaches_preset_on_url_change() -> None:
-    # Editing the endpoint away from the applied preset unlinks the connection
-    # (drops back to mock) — this is also the only way to unlink a preset.
-    template = _preset_template()
-    await _run_update(template, TemplateUpdate(url="https://new"))
-    assert template.preset_id is None
-
-
-@pytest.mark.asyncio
-async def test_update_detaches_preset_on_headers_change() -> None:
-    template = _preset_template(headers=[])
-    await _run_update(template, TemplateUpdate(headers=[{"key": "X-A", "value": "1"}]))
-    assert template.preset_id is None
-
-
-@pytest.mark.asyncio
-async def test_update_detaches_preset_on_project_change() -> None:
-    # Presets are project-scoped, so a project change orphans the binding.
-    template = _preset_template()
-    await _run_update(template, TemplateUpdate(project_id=uuid.uuid4()))
-    assert template.preset_id is None
-
-
-@pytest.mark.asyncio
-async def test_update_keeps_preset_on_noop_save() -> None:
-    # Re-submitting the same URL must not needlessly unlink the preset.
-    template = _preset_template(url="https://keep")
-    kept = template.preset_id
-    await _run_update(template, TemplateUpdate(url="https://keep"))
-    assert template.preset_id == kept
-
-
-@pytest.mark.asyncio
-async def test_update_keeps_preset_on_noop_headers_save() -> None:
-    # Headers resubmitted unchanged (compared against their normalized form,
-    # which apply_dynamic_headers produces idempotently) must not unlink either.
-    raw = [{"key": "X-A", "value": "1"}]
-    template = _preset_template(headers=apply_dynamic_headers(raw))
-    kept = template.preset_id
-    await _run_update(template, TemplateUpdate(headers=raw))
-    assert template.preset_id == kept
 
 
 @pytest.mark.asyncio

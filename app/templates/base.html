@@ -84,10 +84,6 @@
 {# Resizer дерева + мгновенные тултипы имён. Грузится на всех страницах, но
    активируется только при наличии .workspace (иначе no-op). #}
 <script src="/templater/static/js/workspace_ui.js" defer></script>
-{# Session-only store for preset TLS client-cert «connections» (window.tlsCerts).
-   Loaded on all pages, before Alpine: the settings preset editor writes to it and
-   the send panels read from it. Secrets live only in sessionStorage. #}
-<script src="/templater/static/js/tls_certs.js" defer></script>
 {# Alpine loads LAST so every page-level component-definition script (e.g.
    client_switch_modal.js) has defined its window.* factory before Alpine runs.
    Alpine's CDN build starts initializing the DOM as soon as its own script
