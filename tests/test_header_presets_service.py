@@ -157,6 +157,15 @@ async def test_update_changes_http_method() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_rejects_invalid_http_method() -> None:
+    # The server mirrors the form's «Тип запроса» select — an out-of-list method
+    # (e.g. from a crafted POST) is refused rather than stored unstyled.
+    service, _repo, pa, _pb = make_service()
+    with pytest.raises(ValidationFailed):
+        await service.create(HeaderPresetCreate(name="X", project_id=pa, http_method="FOO"))
+
+
+@pytest.mark.asyncio
 async def test_create_rejects_unknown_project() -> None:
     service, _repo, _pa, _pb = make_service()
     with pytest.raises(ValidationFailed):
@@ -249,6 +258,16 @@ def test_apply_to_template_replaces_http_method() -> None:
     template = MessageTemplate(project_id=pid, http_method="GET")
     HeaderPresetService.apply_to_template(template, preset)
     assert template.http_method == "PATCH"
+
+
+def test_apply_to_template_unset_preset_method_clears_template_method() -> None:
+    # Replace semantics (like url/headers): a preset with no method clears the
+    # template's method. Documented in apply_to_template's docstring.
+    pid = uuid.uuid4()
+    preset = HeaderPreset(name="Std", url="https://host", headers=[], project_id=pid, http_method="")
+    template = MessageTemplate(project_id=pid, http_method="POST")
+    HeaderPresetService.apply_to_template(template, preset)
+    assert template.http_method == ""
 
 
 def test_apply_to_template_rejects_preset_from_other_project() -> None:

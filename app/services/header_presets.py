@@ -27,6 +27,21 @@ from app.utils.errors import NotFoundError, ValidationFailed
 # is value-based here.
 _DYNAMIC_VALUE_RE = re.compile(r"\{\{\s*[^}]+\s*\}\}")
 
+# The request types offered by the preset form's «Тип запроса» select. Mirrored
+# on the server so a crafted POST can't smuggle in an unstyled method (there is
+# no ``method-foo`` CSS class) that would then ride into a template via
+# ``apply_to_template``. Empty = «not set», always allowed.
+ALLOWED_HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
+
+
+def normalize_http_method(value: str | None) -> str:
+    """Uppercase + validate a preset's HTTP method against the allowed set."""
+
+    method = (value or "").strip().upper()
+    if method and method not in ALLOWED_HTTP_METHODS:
+        raise ValidationFailed("Недопустимый тип запроса")
+    return method
+
 
 def header_mode(value: str) -> str:
     return "dynamic" if _DYNAMIC_VALUE_RE.search(value or "") else "literal"
@@ -103,7 +118,7 @@ class HeaderPresetService:
                 name=name,
                 project_id=data.project_id,
                 url=data.url.strip(),
-                http_method=(data.http_method or "").strip().upper(),
+                http_method=normalize_http_method(data.http_method),
                 headers=normalize_preset_headers(data.headers),
             )
         )
@@ -127,7 +142,7 @@ class HeaderPresetService:
         if data.url is not None:
             preset.url = data.url.strip()
         if data.http_method is not None:
-            preset.http_method = data.http_method.strip().upper()
+            preset.http_method = normalize_http_method(data.http_method)
         if data.headers is not None:
             preset.headers = normalize_preset_headers(data.headers)
         await self.session.flush()

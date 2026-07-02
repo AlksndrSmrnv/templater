@@ -28,7 +28,7 @@
             <select name="http_method">
                 <option value="" {% if not http_method_value %}selected{% endif %}>— метод —</option>
                 {% for m in http_methods %}
-                <option value="{{ m }}" {% if (http_method_value | upper) == m %}selected{% endif %}>{{ m }}</option>
+                <option value="{{ m }}" {% if http_method_value == m %}selected{% endif %}>{{ m }}</option>
                 {% endfor %}
             </select>
         </label>
