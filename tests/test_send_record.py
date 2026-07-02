@@ -135,13 +135,15 @@ async def test_record_coerces_junk_result_fields() -> None:
     # Client-reported numbers are coerced defensively: booleans must not sneak
     # in as HTTP statuses, non-dict headers / non-str body become empty.
     session = _FakeSession()
+    # NaN/Infinity: a browser can't produce them (JSON.stringify → null), but
+    # json.loads accepts them — they must degrade to NULL, not raise.
     payload = _payload(result={
         "ok": 1,
         "http_status": True,
         "status_code": "5",
         "headers": ["not", "a", "dict"],
         "body": {"not": "a string"},
-        "latency_ms": "fast",
+        "latency_ms": float("nan"),
         "error": None,
     })
     await chains.htmx_record(_FakeRequest(payload), session)  # type: ignore[arg-type]
@@ -152,6 +154,18 @@ async def test_record_coerces_junk_result_fields() -> None:
     assert rec.response_headers == {}
     assert rec.response_body == ""
     assert rec.error_message == ""
+    assert rec.latency_ms is None
+
+
+@pytest.mark.asyncio
+async def test_record_coerces_infinite_latency_to_null() -> None:
+    session = _FakeSession()
+    payload = _payload()
+    result = payload["result"]
+    assert isinstance(result, dict)
+    result["latency_ms"] = float("inf")
+    await chains.htmx_record(_FakeRequest(payload), session)  # type: ignore[arg-type]
+    assert session.sends[0].latency_ms is None
 
 
 @pytest.mark.asyncio

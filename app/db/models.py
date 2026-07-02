@@ -714,8 +714,9 @@ class MessageSend(Base):
     # Result of the send.
     ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # statusCode parsed from the response body (see app/utils/status_code.py), so
-    # the history matches the indicator the user saw next to the send button.
+    # statusCode the browser parsed from the response body (see
+    # app/static/js/status_code.js, window.extractStatusCode), so the history
+    # matches the indicator the user saw next to the send button.
     status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     response_headers: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     response_body: Mapped[str] = mapped_column(Text, nullable=False, default="")

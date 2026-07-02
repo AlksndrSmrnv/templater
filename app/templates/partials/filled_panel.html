@@ -125,6 +125,9 @@
                 if (d.error) window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: d.error, type: 'error' } }));
                 if (d.ok) this.lastSuccessAt = window.nowSendTs();
                 else this.lastErrorAt = window.nowSendTs();
+                // The send is done — release the button now (same as the chain
+                // panel); the history recording below happens in the background.
+                this.sending = false;
                 // Report the outcome for the history drawer / badges. The send
                 // itself already happened — a failed record only warns.
                 return fetch('/templater/send-htmx/record', {

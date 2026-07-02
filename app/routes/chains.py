@@ -18,6 +18,7 @@ that tree); step endpoints return the refreshed chain panel.
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from typing import Any
 
@@ -827,9 +828,13 @@ async def _record_send(
 
 def _opt_int(value: Any) -> int | None:
     """Coerce a client-reported number (http status / latency); ``None`` on junk.
-    Booleans are rejected — ``True`` must not sneak in as HTTP status 1."""
+    Booleans are rejected — ``True`` must not sneak in as HTTP status 1 — and so
+    are NaN/Infinity (a browser can't produce them, but ``json.loads`` accepts
+    them and ``int()`` would raise instead of degrading to NULL)."""
 
     if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
         return None
     return int(value)
 
@@ -842,12 +847,12 @@ async def htmx_record(
     """Persist one browser-performed send to the history (``message_sends``).
 
     The browser sends (or mocks) the request itself — see
-    ``app/static/js/rest_sender.js`` — so neither the outgoing message nor any
-    certificate material passes through this server. The payload carries the
-    request envelope (method/url/headers/body + source context) plus a ``result``
-    block with the browser-observed outcome; both are snapshotted verbatim into
-    the history, driving the history drawer and the «last send» badges. The
-    outcome is client-asserted by design (internal tool).
+    ``app/static/js/rest_sender.js`` — this server never relays it to the target
+    and never sees any certificate material. The payload carries the request
+    envelope (method/url/headers/body + source context, snapshotted verbatim for
+    the history) plus a ``result`` block with the browser-observed outcome —
+    driving the history drawer and the «last send» badges. The outcome is
+    client-asserted by design (internal tool).
     """
 
     try:
