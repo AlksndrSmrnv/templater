@@ -216,8 +216,8 @@ class TemplateService:
     async def update(self, template_id: uuid.UUID, data: TemplateUpdate) -> MessageTemplate:
         template = await self.get(template_id)
         content_replaced = False
-        # A bound preset connection (client certs, keyed by preset_id, driving
-        # real vs mock send) is only valid while the template still matches the
+        # The preset link (driving real vs mock send via the preset's
+        # use_real_send flag) is only valid while the template still matches the
         # preset it was applied from. A manual project / URL / headers change
         # invalidates that match, so we detach — dropping back to mock until a
         # preset is re-applied. This is also the only way to *unlink* a preset.

@@ -592,6 +592,7 @@ async def htmx_header_preset_create(
             project_id=form_str(form, "project_id"),
             url=form_str(form, "url"),
             headers=_preset_headers_from_form(form),
+            use_real_send=form_str(form, "use_real_send") == "1",
         )
         await commit_and_refresh(session, await svc.create(data))
     except (ValidationError, ValueError):
@@ -618,6 +619,7 @@ async def htmx_header_preset_update(
             project_id=form_str(form, "project_id"),
             url=form_str(form, "url"),
             headers=_preset_headers_from_form(form),
+            use_real_send=form_str(form, "use_real_send") == "1",
         )
         await commit_and_refresh(session, await svc.update(preset_id, data))
     except (ValidationError, ValueError):

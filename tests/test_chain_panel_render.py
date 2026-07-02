@@ -39,7 +39,7 @@ def _chain_panel_context(steps: list[dict[str, Any]], *, standalone: bool = Fals
             {"id": str(uuid.uuid4()), "name": "Перевод A2A", "method": "POST",
              "project_name": "Платежи", "project_color": "#3366ff"},
         ],
-        "execute_url": "/templater/send-htmx/execute",
+        "record_url": "/templater/send-htmx/record",
     }
 
 

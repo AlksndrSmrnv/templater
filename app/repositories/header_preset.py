@@ -27,6 +27,12 @@ class HeaderPresetRepository:
     async def get(self, preset_id: uuid.UUID) -> HeaderPreset | None:
         return await self.session.get(HeaderPreset, preset_id)
 
+    async def get_many(self, preset_ids: list[uuid.UUID]) -> list[HeaderPreset]:
+        if not preset_ids:
+            return []
+        stmt = select(HeaderPreset).where(HeaderPreset.id.in_(preset_ids))
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def get_by_name_in_project(
         self, project_id: uuid.UUID, name: str
     ) -> HeaderPreset | None:
