@@ -591,6 +591,7 @@ async def htmx_header_preset_create(
             name=form_str(form, "name"),
             project_id=form_str(form, "project_id"),
             url=form_str(form, "url"),
+            http_method=form_str(form, "http_method"),
             headers=_preset_headers_from_form(form),
         )
         await commit_and_refresh(session, await svc.create(data))
@@ -617,6 +618,7 @@ async def htmx_header_preset_update(
             name=form_str(form, "name"),
             project_id=form_str(form, "project_id"),
             url=form_str(form, "url"),
+            http_method=form_str(form, "http_method"),
             headers=_preset_headers_from_form(form),
         )
         await commit_and_refresh(session, await svc.update(preset_id, data))

@@ -1,4 +1,5 @@
-{% macro preset_editor(method, action, projects, name='', project_id='', url='', header_rows=None, submit_label='Сохранить') %}
+{% macro preset_editor(method, action, projects, name='', project_id='', url='', http_method_value='', header_rows=None, submit_label='Сохранить') %}
+{% set http_methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] %}
 <form class="preset-form"
       hx-{{ method }}="{{ action }}"
       hx-swap="none"
@@ -19,6 +20,15 @@
                 <option value="" disabled {% if not project_id %}selected{% endif %}>— проект —</option>
                 {% for p in projects %}
                 <option value="{{ p.id }}" {% if project_id and (p.id | string) == (project_id | string) %}selected{% endif %}>{{ p.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label class="preset-field">
+            <span class="preset-field-label">Тип запроса</span>
+            <select name="http_method">
+                <option value="" {% if not http_method_value %}selected{% endif %}>— метод —</option>
+                {% for m in http_methods %}
+                <option value="{{ m }}" {% if (http_method_value | upper) == m %}selected{% endif %}>{{ m }}</option>
                 {% endfor %}
             </select>
         </label>
@@ -52,6 +62,7 @@
         <div class="preset-card">
             <div class="preset-card-name">{{ preset.name }}</div>
             <div class="preset-card-meta">
+                {% if preset.http_method %}<span class="tree-method method-{{ preset.http_method|lower }}">{{ preset.http_method }}</span>{% endif %}
                 {% set proj = preset.project if preset.project is defined else none %}
                 {% if proj %}<span class="project-badge"><span class="project-dot" style="background: {{ proj.color }}"></span>{{ proj.name }}</span>{% endif %}
                 {% if preset.url %}<code class="preset-card-url">{{ preset.url }}</code>{% else %}<span class="muted">URL не задан</span>{% endif %}
@@ -67,7 +78,7 @@
     <div class="preset-edit-block">
         {% set hdr_rows = [] %}
         {% for h in preset.headers %}{% set _ = hdr_rows.append({'key': h.get('key', ''), 'value': h.get('value', '')}) %}{% endfor %}
-        {{ preset_editor('put', '/templater/settings-htmx/header-presets/' ~ preset.id, projects | default([]), name=preset.name, project_id=preset.project_id, url=preset.url, header_rows=hdr_rows) }}
+        {{ preset_editor('put', '/templater/settings-htmx/header-presets/' ~ preset.id, projects | default([]), name=preset.name, project_id=preset.project_id, url=preset.url, http_method_value=preset.http_method, header_rows=hdr_rows) }}
         <button class="btn danger"
                 type="button"
                 hx-delete="/templater/settings-htmx/header-presets/{{ preset.id }}"

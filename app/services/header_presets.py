@@ -103,6 +103,7 @@ class HeaderPresetService:
                 name=name,
                 project_id=data.project_id,
                 url=data.url.strip(),
+                http_method=(data.http_method or "").strip().upper(),
                 headers=normalize_preset_headers(data.headers),
             )
         )
@@ -125,6 +126,8 @@ class HeaderPresetService:
             preset.project_id = data.project_id
         if data.url is not None:
             preset.url = data.url.strip()
+        if data.http_method is not None:
+            preset.http_method = data.http_method.strip().upper()
         if data.headers is not None:
             preset.headers = normalize_preset_headers(data.headers)
         await self.session.flush()
@@ -143,11 +146,12 @@ class HeaderPresetService:
         but this is the single choke point both flows (panel apply + create from
         upload) go through, so a crafted request with a mismatched preset is
         rejected here too. Deep-copies the header dicts so later edits to the
-        preset don't mutate the template's stored JSONB. The HTTP method is left
-        untouched.
+        preset don't mutate the template's stored JSONB. The HTTP method is
+        replaced too (an unset preset method clears the template's method).
         """
 
         if preset.project_id != template.project_id:
             raise ValidationFailed("Пресет относится к другому проекту")
         template.url = preset.url or ""
+        template.http_method = preset.http_method or ""
         template.headers = copy.deepcopy(preset.headers or [])

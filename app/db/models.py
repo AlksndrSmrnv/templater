@@ -224,6 +224,9 @@ class HeaderPreset(Base):
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # HTTP method (POST/GET/…), same shape as MessageTemplate.http_method; copied
+    # onto a template when the preset is applied. Empty string = not set.
+    http_method: Mapped[str] = mapped_column(String(16), nullable=False, default="")
     # HTTP headers: list of {"key","value","mode","original","disabled"}.
     headers: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     # Lightweight config keyed to a project — CASCADE so deleting a project (only
