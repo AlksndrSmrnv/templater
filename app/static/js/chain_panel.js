@@ -12,12 +12,9 @@
  * responses survive). Reordering and removal autosave via fetch; structural
  * *adds* are HTMX-driven (the whole panel re-renders from the server).
  *
- * Sending happens in THIS browser (window.restSender, rest_sender.js): a real
- * direct fetch when the step's template has a preset with «реальная отправка»
- * (client cert берётся из хранилища ОС), otherwise a mock that echoes the
- * step's (hidden) example response so later steps can pull fields from it.
- * The outcome is then reported to the backend (recordUrl) for the history.
- * The resolution/highlight/encoding helpers are ported from the (reverted)
+ * Sending is a STUB — no real network request is made: the server seam echoes
+ * the step's (hidden) example response back so later steps can pull fields from
+ * it. The resolution/highlight/encoding helpers are ported from the (reverted)
  * PR #92 send page.
  *
  * Defined on window so HTMX-swapped panels can reference it without a per-swap
@@ -38,7 +35,7 @@ window.chainPanel = function (config) {
     });
     return {
         chainId: config.chainId,
-        recordUrl: config.recordUrl,
+        executeUrl: config.executeUrl,
         // Per-field generation patterns for the dynamic envelope tokens, seeded
         // from settings. Values are (re)generated and substituted at send time.
         dynamicPatterns: config.dynamicPatterns || {},
@@ -77,17 +74,12 @@ window.chainPanel = function (config) {
                 body: s.body || '',
                 bodyHtml: s.body_html || '',
                 mockResponse: s.mock_response || '',
-                // Whether the step's source template carries a preset with
-                // «реальная отправка» — send() then fetches the URL for real
-                // straight from this browser instead of mocking.
-                realSend: !!s.use_real_send,
                 collapsed: true,
                 sending: false,
                 error: '',
                 skipped: false,    // sendAll skipped it (a step it references failed)
                 skipReason: '',    // «Пропущен: шаг N не выполнен»
                 response: null,
-                ok: null,          // the send seam's outcome of the last send
                 statusCode: null,  // parsed from the response body (any case, nested)
                 operuid: null,     // business id, recursively pulled from the body
                 suit: null,        // optional; shown only when present
@@ -382,7 +374,7 @@ window.chainPanel = function (config) {
             });
         },
 
-        // ---------- "send" (browser-side: mock or real fetch) ----------
+        // ---------- "send" (mock) ----------
         // `sharedOperuid` (optional) pins operUID to a value minted once for a
         // whole real-chain run; a single send / independent run leaves it null so
         // each message gets its own. The other dynamic fields are always fresh.
@@ -393,7 +385,6 @@ window.chainPanel = function (config) {
             step.skipReason = '';
             step.sending = true;
             step.statusCode = null;
-            step.ok = null;
             step.operuid = null;
             step.suit = null;
             // Clear any prior run's response up front: it's a stale signal for
@@ -413,53 +404,8 @@ window.chainPanel = function (config) {
                 step.sending = false;
                 return;
             }
-            // The browser sends (or mocks) the request itself — the message never
-            // passes through our backend; only the outcome is reported below.
-            let d;
             try {
-                d = await window.restSender.send({
-                    method: step.method,
-                    url: step.url,
-                    headers: sentHeaders,
-                    body: res.resolved,
-                    format: step.format,
-                    mockResponse: step.mockResponse,
-                    real: step.realSend,
-                });
-                // Even a transport failure produces a response entry (status
-                // null): it IS an attempted send — sendAll's chain-badge
-                // accounting reads s.response, and the failure gets a history
-                // row like any other.
-                step.response = {
-                    status: d.status,
-                    statusText: d.status_text,
-                    latencyMs: d.latency_ms,
-                    body: this.prettyJson(d.body),
-                };
-                // Parse the body once, then pull statusCode + business
-                // identifiers (operuid/suit) recursively from anywhere within.
-                let parsed = null;
-                try { parsed = JSON.parse(d.body); } catch (e) { /* leave fields null */ }
-                step.statusCode = window.extractStatusCode(parsed);
-                step.operuid = window.extractField(parsed, 'operuid');
-                step.suit = window.extractField(parsed, 'suit');
-                // A real send can fail at transport (no body) — the seam's error
-                // text carries the (CORS/network/cert) hints, shown in the card.
-                if (d.error) step.error = d.error;
-                step.ok = !!d.ok;
-                if (d.ok) step.lastSuccessAt = window.nowSendTs();
-                else step.lastErrorAt = window.nowSendTs();
-            } catch (e) {
-                step.ok = false;
-                step.error = 'Ошибка отправки';
-                return;
-            } finally {
-                step.sending = false;
-            }
-            // Report the outcome for the history drawer / badges. The send
-            // itself already happened — a failed record only warns.
-            try {
-                const r = await fetch(this.recordUrl, {
+                const r = await fetch(this.executeUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -468,17 +414,40 @@ window.chainPanel = function (config) {
                         headers: sentHeaders,
                         body: res.resolved,
                         format: step.format,
+                        mock_response: step.mockResponse,
                         // Context so the send is recorded against this chain step.
                         source_kind: 'chain_step',
                         chain_id: this.chainId,
                         chain_step_id: step.id,
                         name: step.name,
-                        result: { ok: d.ok, http_status: d.status, status_code: step.statusCode, headers: d.headers, body: d.body, latency_ms: d.latency_ms, error: d.error },
                     }),
                 });
                 if (!r.ok) throw new Error('HTTP ' + r.status);
+                const d = await r.json();
+                step.response = {
+                    status: d.status,
+                    statusText: d.status_text,
+                    latencyMs: d.latency_ms,
+                    body: this.prettyJson(d.body),
+                };
+                // Parse the body once, then pull statusCode + business identifiers
+                // (operuid/suit) recursively from anywhere within it.
+                let parsed = null;
+                try { parsed = JSON.parse(d.body); } catch (e) { /* leave fields null */ }
+                step.statusCode = window.extractStatusCode(parsed);
+                step.operuid = window.extractField(parsed, 'operuid');
+                step.suit = window.extractField(parsed, 'suit');
+                // Mirror the server's ok rule: absent/zero statusCode = success.
+                // The server already recorded this send; ISO «now» matches that.
+                if (step.statusCode === null || step.statusCode === 0) step.lastSuccessAt = window.nowSendTs();
+                else step.lastErrorAt = window.nowSendTs();
             } catch (e) {
-                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Отправка выполнена, но история не записана', type: 'warning' } }));
+                // No usable response — we can't tell if the server recorded a
+                // send (or even received it), so leave the badges to the next
+                // panel render (the history is the source of truth).
+                step.error = 'Ошибка отправки (мок)';
+            } finally {
+                step.sending = false;
             }
         },
         async sendAll() {
@@ -543,24 +512,24 @@ window.chainPanel = function (config) {
                 this.progress = { current: 0, total: 0 };
             }
             // Roll up the run: skipped first, then steps that actually reached
-            // send() — failed = the server's `ok` was false (transport/HTTP error
-            // or non-zero statusCode), ok = rest. Steps that never ran (no
-            // response, no error, not skipped) don't count.
+            // send() — failed = execution error or non-zero statusCode, ok = rest.
+            // Steps that never ran (no response, no error, not skipped) don't count.
             let ok = 0, failed = 0, skipped = 0;
             this.steps.forEach((s) => {
                 if (s.skipped) { skipped += 1; return; }
                 if (s.response === null && !s.error) return;
-                if (s.ok) ok += 1; else failed += 1;
+                if (s.error || (s.statusCode !== null && s.statusCode !== 0)) failed += 1;
+                else ok += 1;
             });
             this.chainSummary = (ok || failed || skipped) ? { ok, failed, skipped } : null;
             // Advance the chain-level «последний запуск» badge only for steps that
             // actually reached the server (have a response) — a step aborted before
             // fetch (e.g. «Не разрешены ссылки») or skipped writes no message_sends
             // row and leaves its own badge untouched, so the chain badge must not
-            // move either. Among sent steps, any !ok = failure.
+            // move either. Among sent steps, a non-zero statusCode = failure.
             const sent = this.steps.filter((s) => s.response !== null);
             if (sent.length > 0) {
-                const failedSent = sent.some((s) => !s.ok);
+                const failedSent = sent.some((s) => s.statusCode !== null && s.statusCode !== 0);
                 if (failedSent) this.chainLastErrorAt = window.nowSendTs();
                 else this.chainLastSuccessAt = window.nowSendTs();
             }

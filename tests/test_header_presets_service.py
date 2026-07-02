@@ -180,23 +180,6 @@ async def test_update_renames_changes_project_and_replaces_headers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_use_real_send_round_trips_create_and_update() -> None:
-    # Off by default (mock send); the editor checkbox flips it and a later
-    # update without the field (None) must leave it untouched.
-    service, _repo, pa, _pb = make_service()
-    preset = await service.create(HeaderPresetCreate(name="Std", project_id=pa))
-    assert preset.use_real_send is False
-    real = await service.create(
-        HeaderPresetCreate(name="Real", project_id=pa, use_real_send=True)
-    )
-    assert real.use_real_send is True
-    updated = await service.update(real.id, HeaderPresetUpdate(use_real_send=False))
-    assert updated.use_real_send is False
-    untouched = await service.update(real.id, HeaderPresetUpdate(name="Real2"))
-    assert untouched.use_real_send is False
-
-
-@pytest.mark.asyncio
 async def test_update_rejects_collision_in_target_project() -> None:
     service, _repo, pa, _pb = make_service()
     await service.create(HeaderPresetCreate(name="One", project_id=pa))

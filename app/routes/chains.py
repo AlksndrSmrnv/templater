@@ -5,11 +5,9 @@ The chain itself is persisted in the DB (``request_chains`` /
 ``request_chain_steps``). The browser component (``partials/chain_panel.html``)
 renders steps seeded by the server, lets the user bind fields from earlier
 steps' responses into later requests (``{{ $N.path }}`` tokens, highlighted
-purple) and sends each step itself (``app/static/js/rest_sender.js``): a real
-fetch straight from the browser when the step's template has a preset with
-``use_real_send``, otherwise a mock that echoes the step's editable example
-response. Either way the browser then reports the outcome to
-``POST /send-htmx/record``, which only persists the history row.
+purple) and «sends» each step. Sending is a STUB — no network request is made
+(the real tool will arrive over an API later); ``POST /send-htmx/execute`` just
+echoes the step's editable example response back.
 
 Chain CRUD endpoints return the refreshed filled-templates tree (chains live in
 that tree); step endpoints return the refreshed chain panel.
@@ -17,8 +15,9 @@ that tree); step endpoints return the refreshed chain panel.
 
 from __future__ import annotations
 
+import asyncio
 import json
-import math
+import random
 import uuid
 from typing import Any
 
@@ -37,9 +36,7 @@ from app.db.models import (
 )
 from app.repositories.entity import ClientRepository
 from app.repositories.filled_template import FilledTemplateRepository
-from app.repositories.header_preset import HeaderPresetRepository
 from app.repositories.message_send import LastSends, MessageSendRepository
-from app.repositories.template import TemplateRepository
 from app.routes.client_switch_utils import role_ids_from_form
 from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.entities_htmx import entity_label
@@ -60,6 +57,7 @@ from app.services.filled_templates import (
 from app.services.request_chain import RequestChainService
 from app.services.template_render import render_chain_step_html
 from app.utils.errors import DomainError
+from app.utils.status_code import extract_status_code
 
 router = APIRouter()
 
@@ -89,7 +87,6 @@ def _serialize_step(
     step: RequestChainStep,
     message_template_id: uuid.UUID | None = None,
     last: LastSends | None = None,
-    use_real_send: bool = False,
 ) -> dict[str, Any]:
     body = step.body or ""
     fmt = step.format or "json"
@@ -112,10 +109,6 @@ def _serialize_step(
         # «Заменить клиента» picker can target its fill endpoints. Empty when the
         # filled template / source template was deleted (switch then disabled).
         "message_template_id": str(message_template_id) if message_template_id else "",
-        # Whether this step's source template carries a preset with «реальная
-        # отправка»: the browser then sends the step for real (direct fetch,
-        # client cert from the OS keystore) instead of mocking.
-        "use_real_send": bool(use_real_send),
         # Roles bound on this step — drives the per-step «Заменить» buttons inside
         # the Alpine step card.
         "roles": _step_roles(step),
@@ -158,21 +151,20 @@ def _serialize_chain(
     chain: RequestChain,
     tpl_by_filled: dict[uuid.UUID, uuid.UUID | None] | None = None,
     last_by_step: dict[uuid.UUID, LastSends] | None = None,
-    real_send_by_tpl: dict[uuid.UUID, bool] | None = None,
 ) -> dict[str, Any]:
     tpl_by_filled = tpl_by_filled or {}
     last_by_step = last_by_step or {}
-    real_send_by_tpl = real_send_by_tpl or {}
-
-    def _serialize(s: RequestChainStep) -> dict[str, Any]:
-        tpl_id = tpl_by_filled.get(s.filled_template_id) if s.filled_template_id else None
-        real = real_send_by_tpl.get(tpl_id, False) if tpl_id else False
-        return _serialize_step(s, tpl_id, last_by_step.get(s.id), real)
-
     return {
         "id": str(chain.id),
         "name": chain.name,
-        "steps": [_serialize(s) for s in chain.steps],
+        "steps": [
+            _serialize_step(
+                s,
+                tpl_by_filled.get(s.filled_template_id) if s.filled_template_id else None,
+                last_by_step.get(s.id),
+            )
+            for s in chain.steps
+        ],
     }
 
 
@@ -271,31 +263,12 @@ async def _panel_context(
     if filled_ids:
         for row in await FilledTemplateRepository(session).get_many(filled_ids):
             tpl_by_filled[row.id] = row.message_template_id
-    # Whether each source template's preset (if any) carries «реальная отправка» —
-    # drives real vs. mock sending in the browser.
-    tpl_ids = [t for t in tpl_by_filled.values() if t]
-    real_send_by_tpl: dict[uuid.UUID, bool] = {}
-    if tpl_ids:
-        preset_by_tpl: dict[uuid.UUID, uuid.UUID | None] = {}
-        for tpl in await TemplateRepository(session).get_many(tpl_ids):
-            preset_by_tpl[tpl.id] = tpl.preset_id
-        preset_ids = list({p for p in preset_by_tpl.values() if p})
-        real_presets = {
-            p.id
-            for p in await HeaderPresetRepository(session).get_many(preset_ids)
-            if p.use_real_send
-        }
-        real_send_by_tpl = {
-            tpl_id: preset_id in real_presets
-            for tpl_id, preset_id in preset_by_tpl.items()
-            if preset_id
-        }
     # Latest success/failure per step, for the «последняя отправка» badges.
     sends = MessageSendRepository(session)
     last_by_step = await sends.last_for_chain_steps([s.id for s in chain.steps])
     # Chain-level latest run (across all steps), for the badge by «Запустить всё».
     chain_last = await sends.last_for_chain(chain.id)
-    data = _serialize_chain(chain, tpl_by_filled, last_by_step, real_send_by_tpl)
+    data = _serialize_chain(chain, tpl_by_filled, last_by_step)
     manage = await _manage_context(session, chain, tpl_by_filled)
     # Filled templates the «Добавить шаг» picker can choose from (id/name/method).
     filled = await FilledTemplateService(session).list_all(visible_group_ids=visible_group_ids)
@@ -313,7 +286,7 @@ async def _panel_context(
         "chain": chain,
         "chain_data": data,
         "available": available,
-        "record_url": "/templater/send-htmx/record",
+        "execute_url": "/templater/send-htmx/execute",
         # Per-field generation patterns for the dynamic envelope tokens
         # (rqUID/operUID/rqTm/channelDateTime). The client generates & substitutes
         # the values at send time; operUID is shared across a real chain's steps.
@@ -747,8 +720,15 @@ async def htmx_replace_role(
     )
 
 
-# ---------- «send» history recording (the browser itself sends, see ----------
-# ---------- app/static/js/rest_sender.js; only the outcome arrives here) ------
+# ---------- stub «send» seam (NO real network request) ----------
+
+
+async def _simulate_latency(latency_ms: int) -> None:
+    """Mock network latency for the stub send. Module-local so tests can patch
+    it without touching the global ``asyncio.sleep``; the real send tool will
+    replace this with an actual call."""
+
+    await asyncio.sleep(latency_ms / 1000)
 
 
 def _opt_uuid(value: Any) -> uuid.UUID | None:
@@ -826,33 +806,20 @@ async def _record_send(
     await commit_or_409(session, message="Не удалось сохранить историю отправки")
 
 
-def _opt_int(value: Any) -> int | None:
-    """Coerce a client-reported number (http status / latency); ``None`` on junk.
-    Booleans are rejected — ``True`` must not sneak in as HTTP status 1 — and so
-    are NaN/Infinity (a browser can't produce them, but ``json.loads`` accepts
-    them and ``int()`` would raise instead of degrading to NULL)."""
-
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    return int(value)
-
-
-@router.post("/send-htmx/record")
-async def htmx_record(
+@router.post("/send-htmx/execute")
+async def htmx_execute(
     request: Request,
     session: AsyncSession = SessionDep,
 ) -> JSONResponse:
-    """Persist one browser-performed send to the history (``message_sends``).
+    """Stub «send» seam — DOES NOT make any network request, but records the send.
 
-    The browser sends (or mocks) the request itself — see
-    ``app/static/js/rest_sender.js`` — this server never relays it to the target
-    and never sees any certificate material. The payload carries the request
-    envelope (method/url/headers/body + source context, snapshotted verbatim for
-    the history) plus a ``result`` block with the browser-observed outcome —
-    driving the history drawer and the «last send» badges. The outcome is
-    client-asserted by design (internal tool).
+    The real sending tool is not implemented yet and will be exposed over an API
+    later. For now this echoes the step's editable example response back as the
+    response body so the UI can demonstrate the flow. Every send is persisted to
+    the history (``message_sends``) — what was sent, where, and the (mock)
+    response — driving the history drawer and the per-button «last send» badges.
+    When the real tool lands, swap the mock block below for the actual call; the
+    recording around it stays the same.
     """
 
     try:
@@ -867,25 +834,40 @@ async def htmx_record(
             status_code=422,
             content={"error": "invalid_json", "message": "Тело запроса должно быть JSON-объектом"},
         )
-    result = payload.get("result")
-    if not isinstance(result, dict):
-        return JSONResponse(
-            status_code=422,
-            content={"error": "invalid_result", "message": "Нет блока result с результатом отправки"},
-        )
 
-    headers = result.get("headers")
-    body = result.get("body")
-    error = result.get("error")
+    mock_response = payload.get("mock_response", "")
+    if not isinstance(mock_response, str):
+        mock_response = ""
+    latency_ms = random.randint(35, 220)
+    await _simulate_latency(latency_ms)
+
+    http_status = 200
+    response_headers = {"Content-Type": "application/json; charset=utf-8", "X-Mock-Send": "true"}
+    status_code = extract_status_code(mock_response)
+    # A non-zero statusCode in the response body is a logical failure (shown red
+    # in the UI); absent/zero counts as success. Transport never fails for the
+    # mock — the real send will set ok=False on network/HTTP errors instead.
+    ok = status_code is None or status_code == 0
+    # The mock has no transport error to describe, so error_message stays empty
+    # even when ok=False (the reason is the non-zero statusCode in the body).
+    # TODO: the real sender should pass the network/HTTP error text here.
     await _record_send(
         session,
         payload,
-        ok=bool(result.get("ok")),
-        http_status=_opt_int(result.get("http_status")),
-        status_code=_opt_int(result.get("status_code")),
-        response_headers=headers if isinstance(headers, dict) else {},
-        response_body=body if isinstance(body, str) else "",
-        latency_ms=_opt_int(result.get("latency_ms")),
-        error_message=str(error or ""),
+        ok=ok,
+        http_status=http_status,
+        status_code=status_code,
+        response_headers=response_headers,
+        response_body=mock_response,
+        latency_ms=latency_ms,
     )
-    return JSONResponse({"recorded": True})
+
+    return JSONResponse(
+        {
+            "status": http_status,
+            "status_text": "OK",
+            "latency_ms": latency_ms,
+            "headers": response_headers,
+            "body": mock_response,
+        }
+    )

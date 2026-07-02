@@ -21,7 +21,6 @@ class HeaderPresetCreate(BaseModel):
     project_id: uuid.UUID
     url: str = Field(default="", max_length=4096)
     headers: list[PresetHeaderIn] = Field(default_factory=list)
-    use_real_send: bool = False
 
 
 class HeaderPresetUpdate(BaseModel):
@@ -29,4 +28,3 @@ class HeaderPresetUpdate(BaseModel):
     project_id: uuid.UUID | None = None
     url: str | None = Field(default=None, max_length=4096)
     headers: list[PresetHeaderIn] | None = None
-    use_real_send: bool | None = None

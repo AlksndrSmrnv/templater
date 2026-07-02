@@ -31,10 +31,8 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.entity import ClientRepository
-from app.repositories.header_preset import HeaderPresetRepository
 from app.repositories.message_send import MessageSendRepository
 from app.repositories.request_chain import RequestChainRepository
-from app.repositories.template import TemplateRepository
 from app.routes.client_switch_utils import SWITCH_ROLES, role_ids_from_form
 from app.routes.deps import SessionDep, TemplatesDep, UnlockedGroupsDep
 from app.routes.htmx_utils import (
@@ -130,17 +128,8 @@ async def _detail_context(
     # Latest successful / failed send of this template, for the badges next to
     # «Отправить» (None until the first send of that outcome).
     last_send = (await MessageSendRepository(session).last_for_filled([filled_id])).get(filled_id)
-    # Whether this template's source carries a preset with «реальная отправка» —
-    # the browser then sends the one-off request for real instead of mocking.
-    real_send = False
-    if item.message_template_id is not None:
-        tpl = await TemplateRepository(session).get(item.message_template_id)
-        if tpl is not None and tpl.preset_id is not None:
-            preset = await HeaderPresetRepository(session).get(tpl.preset_id)
-            real_send = bool(preset and preset.use_real_send)
     return {
         "ft": item,
-        "real_send": real_send,
         "rendered_html": rendered_html,
         "role_rows": iter_role_labels(item),
         "role_client_ids": role_client_ids,

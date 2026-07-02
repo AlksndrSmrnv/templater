@@ -216,19 +216,10 @@ class TemplateService:
     async def update(self, template_id: uuid.UUID, data: TemplateUpdate) -> MessageTemplate:
         template = await self.get(template_id)
         content_replaced = False
-        # The preset link (driving real vs mock send via the preset's
-        # use_real_send flag) is only valid while the template still matches the
-        # preset it was applied from. A manual project / URL / headers change
-        # invalidates that match, so we detach — dropping back to mock until a
-        # preset is re-applied. This is also the only way to *unlink* a preset.
-        detach_preset = False
         if data.name is not None:
             template.name = data.name
         if data.project_id is not None:
             await self._require_project(data.project_id)
-            # Presets are project-scoped, so a project change orphans the link.
-            if data.project_id != template.project_id:
-                detach_preset = True
             template.project_id = data.project_id
         if data.description is not None:
             template.description = data.description
@@ -253,20 +244,11 @@ class TemplateService:
         if data.llm_meta is not None:
             template.llm_meta = data.llm_meta
         if data.headers is not None:
-            new_headers = apply_dynamic_headers(data.headers)
-            # Compare against the stored value so a no-op save (headers
-            # resubmitted unchanged) does not needlessly unlink the preset.
-            if new_headers != template.headers:
-                detach_preset = True
-            template.headers = new_headers
+            template.headers = apply_dynamic_headers(data.headers)
         if data.http_method is not None:
             template.http_method = data.http_method
         if data.url is not None:
-            if data.url != template.url:
-                detach_preset = True
             template.url = data.url
-        if detach_preset:
-            template.preset_id = None
         # Placeholders coming alongside a content replacement are ignored — they
         # belonged to the old body. Anything else (e.g. an editor save without
         # touching content) is honored after structural validation.

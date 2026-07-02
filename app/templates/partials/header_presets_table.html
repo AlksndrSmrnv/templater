@@ -1,4 +1,4 @@
-{% macro preset_editor(method, action, projects, name='', project_id='', url='', header_rows=None, submit_label='Сохранить', use_real_send=False) %}
+{% macro preset_editor(method, action, projects, name='', project_id='', url='', header_rows=None, submit_label='Сохранить') %}
 <form class="preset-form"
       hx-{{ method }}="{{ action }}"
       hx-swap="none"
@@ -41,39 +41,8 @@
         </div>
     </div>
     <input type="hidden" name="headers" :value="headersJson()">
-    {# Unchecked checkboxes are absent from the form body — the handler treats
-       a missing field as «выключено», so no hidden fallback is needed. #}
-    <label class="preset-field preset-real-send">
-        <input type="checkbox" name="use_real_send" value="1" {% if use_real_send %}checked{% endif %}>
-        <span>Реальная отправка из браузера</span>
-    </label>
     <button class="btn primary" type="submit">{{ submit_label }}</button>
 </form>
-{% endmacro %}
-
-{# Памятка по реальной отправке. Запрос уходит прямо из браузера (fetch), само
-   приложение сообщение и сертификаты не видит. Клиентский сертификат для mTLS
-   браузер берёт из системного хранилища ОС — сюда его загружать не нужно. #}
-{% macro preset_send_help() %}
-<details class="preset-send-help">
-    <summary><iconify-icon icon="lucide:info"></iconify-icon> Как работает реальная отправка (сертификаты, CORS)</summary>
-    <div class="preset-send-help-body">
-        <p>Запрос уходит <b>прямо из вашего браузера</b> на URL пресета — приложение сообщение не пересылает и сертификаты не получает (на сервер уходит только результат для истории отправок).</p>
-        <p><b>Клиентский сертификат (mTLS).</b> Браузер подставляет его из системного хранилища ОС. Установите сертификат один раз:</p>
-        <ol>
-            <li>Конвертируйте в PKCS#12:
-                <ul>
-                    <li>из JKS: <code>keytool -importkeystore -srckeystore store.jks -destkeystore store.p12 -deststoretype PKCS12</code></li>
-                    <li>из PEM: <code>openssl pkcs12 -export -in cert.pem -inkey key.pem -out store.p12</code></li>
-                </ul>
-            </li>
-            <li>Импортируйте <code>.p12</code>: macOS — двойной клик (Связка ключей), Windows — <code>certmgr.msc</code> → «Личное».</li>
-            <li>При первом запросе к сервису браузер покажет диалог выбора сертификата.</li>
-        </ol>
-        <p><b>Самоподписанный сертификат сервера.</b> Доверьте его CA в ОС или один раз откройте URL сервиса в браузере и примите предупреждение.</p>
-        <p><b>CORS.</b> Сервис должен разрешать кросс-доменные запросы с адреса этого приложения, иначе браузер заблокирует отправку.</p>
-    </div>
-</details>
 {% endmacro %}
 
 {% set rows = header_presets | default([]) %}
@@ -87,7 +56,6 @@
                 {% if proj %}<span class="project-badge"><span class="project-dot" style="background: {{ proj.color }}"></span>{{ proj.name }}</span>{% endif %}
                 {% if preset.url %}<code class="preset-card-url">{{ preset.url }}</code>{% else %}<span class="muted">URL не задан</span>{% endif %}
                 <span class="muted">Заголовков: {{ preset.headers | length }}</span>
-                {% if preset.use_real_send %}<span class="tag preset-real-badge" title="Шаблоны с этим пресетом отправляются по-настоящему из браузера">реальная отправка</span>{% endif %}
             </div>
         </div>
         {% endfor %}
@@ -99,8 +67,7 @@
     <div class="preset-edit-block">
         {% set hdr_rows = [] %}
         {% for h in preset.headers %}{% set _ = hdr_rows.append({'key': h.get('key', ''), 'value': h.get('value', '')}) %}{% endfor %}
-        {{ preset_editor('put', '/templater/settings-htmx/header-presets/' ~ preset.id, projects | default([]), name=preset.name, project_id=preset.project_id, url=preset.url, header_rows=hdr_rows, use_real_send=preset.use_real_send) }}
-        {{ preset_send_help() }}
+        {{ preset_editor('put', '/templater/settings-htmx/header-presets/' ~ preset.id, projects | default([]), name=preset.name, project_id=preset.project_id, url=preset.url, header_rows=hdr_rows) }}
         <button class="btn danger"
                 type="button"
                 hx-delete="/templater/settings-htmx/header-presets/{{ preset.id }}"
