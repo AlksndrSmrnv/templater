@@ -166,6 +166,14 @@ async def test_create_rejects_invalid_http_method() -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_rejects_invalid_http_method() -> None:
+    service, _repo, pa, _pb = make_service()
+    preset = await service.create(HeaderPresetCreate(name="Std", project_id=pa, http_method="GET"))
+    with pytest.raises(ValidationFailed):
+        await service.update(preset.id, HeaderPresetUpdate(http_method="FOO"))
+
+
+@pytest.mark.asyncio
 async def test_create_rejects_unknown_project() -> None:
     service, _repo, _pa, _pb = make_service()
     with pytest.raises(ValidationFailed):
