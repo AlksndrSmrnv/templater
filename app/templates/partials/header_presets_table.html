@@ -1,4 +1,4 @@
-{% macro preset_editor(method, action, projects, name='', project_id='', url='', header_rows=None, submit_label='Сохранить') %}
+{% macro preset_editor(method, action, projects, name='', project_id='', url='', header_rows=None, submit_label='Сохранить', use_real_send=False) %}
 <form class="preset-form"
       hx-{{ method }}="{{ action }}"
       hx-swap="none"
@@ -41,88 +41,39 @@
         </div>
     </div>
     <input type="hidden" name="headers" :value="headersJson()">
+    {# Unchecked checkboxes are absent from the form body — the handler treats
+       a missing field as «выключено», so no hidden fallback is needed. #}
+    <label class="preset-field preset-real-send">
+        <input type="checkbox" name="use_real_send" value="1" {% if use_real_send %}checked{% endif %}>
+        <span>Реальная отправка из браузера</span>
+    </label>
     <button class="btn primary" type="submit">{{ submit_label }}</button>
 </form>
 {% endmacro %}
 
-{# Подключение (клиентские сертификаты) пресета. Секреты НЕ уходят на сервер с
-   формой пресета — они кладутся в window.tlsCerts (sessionStorage) по id пресета
-   и используются лишь в момент отправки. Показывается только у сохранённого
-   пресета (нужен id). #}
-{% macro preset_connection(preset_id) %}
-<div class="preset-conn" x-data="{
-        presetId: '{{ preset_id }}',
-        kind: 'pem',
-        password: '',
-        verify: false,
-        certFile: null, keyFile: null, jksFile: null,
-        configured: false,
-        init() { this.configured = !!(window.tlsCerts && window.tlsCerts.has(this.presetId)); },
-        async saveConn() {
-            if (!window.tlsCerts) return;
-            let material;
-            if (this.kind === 'pem') {
-                const cert = this.certFile ? await this.certFile.text() : '';
-                const key = this.keyFile ? await this.keyFile.text() : '';
-                material = { kind: 'pem', cert: cert, key: key, password: this.password, verify: this.verify };
-            } else {
-                const buf = this.jksFile ? await this.jksFile.arrayBuffer() : null;
-                const jks = buf ? window.tlsCerts.arrayBufferToBase64(buf) : '';
-                material = { kind: 'jks', jks: jks, password: this.password, verify: this.verify };
-            }
-            const ok = window.tlsCerts.save(this.presetId, material);
-            this.configured = ok;
-            this.notify(ok ? 'Подключение сохранено в этой сессии' : 'Нужен сертификат и ключ (или JKS-файл)', ok ? 'success' : 'error');
-            if (ok) { this.certFile = null; this.keyFile = null; this.jksFile = null; this.password = ''; }
-        },
-        clearConn() {
-            if (window.tlsCerts) window.tlsCerts.remove(this.presetId);
-            this.configured = false;
-            this.notify('Подключение удалено', 'success');
-        },
-        notify(message, type) {
-            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: message, type: type } }));
-        }
-     }">
-    <div class="preset-conn-head">
-        <span class="preset-field-label">Подключение (сертификаты)</span>
-        <span class="preset-conn-status" x-show="configured">● настроено в этой сессии</span>
-        <span class="preset-conn-status muted" x-show="!configured">не задано — отправка через мок</span>
+{# Памятка по реальной отправке. Запрос уходит прямо из браузера (fetch), само
+   приложение сообщение и сертификаты не видит. Клиентский сертификат для mTLS
+   браузер берёт из системного хранилища ОС — сюда его загружать не нужно. #}
+{% macro preset_send_help() %}
+<details class="preset-send-help">
+    <summary><iconify-icon icon="lucide:info"></iconify-icon> Как работает реальная отправка (сертификаты, CORS)</summary>
+    <div class="preset-send-help-body">
+        <p>Запрос уходит <b>прямо из вашего браузера</b> на URL пресета — приложение сообщение не пересылает и сертификаты не получает (на сервер уходит только результат для истории отправок).</p>
+        <p><b>Клиентский сертификат (mTLS).</b> Браузер подставляет его из системного хранилища ОС. Установите сертификат один раз:</p>
+        <ol>
+            <li>Конвертируйте в PKCS#12:
+                <ul>
+                    <li>из JKS: <code>keytool -importkeystore -srckeystore store.jks -destkeystore store.p12 -deststoretype PKCS12</code></li>
+                    <li>из PEM: <code>openssl pkcs12 -export -in cert.pem -inkey key.pem -out store.p12</code></li>
+                </ul>
+            </li>
+            <li>Импортируйте <code>.p12</code>: macOS — двойной клик (Связка ключей), Windows — <code>certmgr.msc</code> → «Личное».</li>
+            <li>При первом запросе к сервису браузер покажет диалог выбора сертификата.</li>
+        </ol>
+        <p><b>Самоподписанный сертификат сервера.</b> Доверьте его CA в ОС или один раз откройте URL сервиса в браузере и примите предупреждение.</p>
+        <p><b>CORS.</b> Сервис должен разрешать кросс-доменные запросы с адреса этого приложения, иначе браузер заблокирует отправку.</p>
     </div>
-    <div class="preset-conn-kinds">
-        <label><input type="radio" value="pem" x-model="kind"> Серт + ключ (PEM)</label>
-        <label><input type="radio" value="jks" x-model="kind"> JKS-хранилище</label>
-    </div>
-    <div class="preset-form-grid" x-show="kind === 'pem'">
-        <label class="preset-field">
-            <span class="preset-field-label">Сертификат (.pem/.crt)</span>
-            <input type="file" accept=".pem,.crt,.cer" @change="certFile = $event.target.files[0]">
-        </label>
-        <label class="preset-field">
-            <span class="preset-field-label">Приватный ключ (.pem/.key)</span>
-            <input type="file" accept=".pem,.key" @change="keyFile = $event.target.files[0]">
-        </label>
-    </div>
-    <div class="preset-field" x-show="kind === 'jks'" x-cloak>
-        <span class="preset-field-label">JKS-хранилище (.jks)</span>
-        <input type="file" accept=".jks,.keystore" @change="jksFile = $event.target.files[0]">
-    </div>
-    <div class="preset-form-grid">
-        <label class="preset-field">
-            <span class="preset-field-label">Пароль</span>
-            <input type="password" x-model="password" autocomplete="off" placeholder="пароль ключа/хранилища">
-        </label>
-        <label class="preset-field preset-conn-verify">
-            <input type="checkbox" x-model="verify">
-            <span>Проверять сертификат сервера</span>
-        </label>
-    </div>
-    <div class="preset-conn-actions">
-        <button class="btn small primary" type="button" @click="saveConn()">Сохранить подключение</button>
-        <button class="btn small" type="button" x-show="configured" @click="clearConn()">Очистить</button>
-    </div>
-    <p class="muted preset-conn-note">Сертификаты хранятся только в этой вкладке браузера (sessionStorage), не сохраняются на сервере и используются лишь в момент отправки запроса.</p>
-</div>
+</details>
 {% endmacro %}
 
 {% set rows = header_presets | default([]) %}
@@ -136,6 +87,7 @@
                 {% if proj %}<span class="project-badge"><span class="project-dot" style="background: {{ proj.color }}"></span>{{ proj.name }}</span>{% endif %}
                 {% if preset.url %}<code class="preset-card-url">{{ preset.url }}</code>{% else %}<span class="muted">URL не задан</span>{% endif %}
                 <span class="muted">Заголовков: {{ preset.headers | length }}</span>
+                {% if preset.use_real_send %}<span class="tag preset-real-badge" title="Шаблоны с этим пресетом отправляются по-настоящему из браузера">реальная отправка</span>{% endif %}
             </div>
         </div>
         {% endfor %}
@@ -147,8 +99,8 @@
     <div class="preset-edit-block">
         {% set hdr_rows = [] %}
         {% for h in preset.headers %}{% set _ = hdr_rows.append({'key': h.get('key', ''), 'value': h.get('value', '')}) %}{% endfor %}
-        {{ preset_editor('put', '/templater/settings-htmx/header-presets/' ~ preset.id, projects | default([]), name=preset.name, project_id=preset.project_id, url=preset.url, header_rows=hdr_rows) }}
-        {{ preset_connection(preset.id) }}
+        {{ preset_editor('put', '/templater/settings-htmx/header-presets/' ~ preset.id, projects | default([]), name=preset.name, project_id=preset.project_id, url=preset.url, header_rows=hdr_rows, use_real_send=preset.use_real_send) }}
+        {{ preset_send_help() }}
         <button class="btn danger"
                 type="button"
                 hx-delete="/templater/settings-htmx/header-presets/{{ preset.id }}"

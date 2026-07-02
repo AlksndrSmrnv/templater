@@ -1,12 +1,14 @@
 {# Chain builder/runner panel, rendered inline in the «Заполненные шаблоны»
    workspace (#filled-panel) with its own header and actions. The component
    (window.chainPanel) is loaded once at page level, so it survives HTMX swaps.
-   Sending is a STUB — no real request. #}
+   Steps are sent by the browser itself (window.restSender): real fetch when the
+   step's preset has «реальная отправка», otherwise a mock; the outcome is then
+   reported to recordUrl for the history. #}
 {% set standalone = standalone | default(false) %}
 <div id="chain-panel" class="chain-panel"
      x-data="chainPanel({
         chainId: {{ chain_data.id | tojson | forceescape }},
-        executeUrl: {{ execute_url | tojson | forceescape }},
+        recordUrl: {{ record_url | tojson | forceescape }},
         steps: {{ chain_data.steps | tojson | forceescape }},
         chainLastSuccessAt: {{ (chain_last_success_at | default('')) | tojson | forceescape }},
         chainLastErrorAt: {{ (chain_last_error_at | default('')) | tojson | forceescape }},
@@ -323,12 +325,15 @@
 
                     <div class="filled-io-col">
                         <section class="send-block send-response" x-show="step.response" x-cloak>
-                            <h3>Итоговый ответ (мок)</h3>
+                            <h3 x-text="step.realSend ? 'Итоговый ответ' : 'Итоговый ответ (мок)'"></h3>
                             <div class="send-status-line">
-                                <span class="send-status-pill" x-text="(step.response?.status || '') + ' ' + (step.response?.statusText || '')"></span>
-                                <span class="muted" x-text="(step.response?.latencyMs ?? '') + ' мс · мок'"></span>
+                                <span class="send-status-pill" x-show="step.response?.status" x-text="(step.response?.status || '') + ' ' + (step.response?.statusText || '')"></span>
+                                <span class="muted" x-text="(step.response?.latencyMs ?? '') + ' мс' + (step.realSend ? '' : ' · мок')"></span>
                             </div>
-                            <pre class="template-code" x-text="step.response?.body"></pre>
+                            {# A failed real send has no body — show the error text
+                               here too, next to where the response would be. #}
+                            <div class="send-error" x-show="step.error" x-text="step.error"></div>
+                            <pre class="template-code" x-show="step.response?.body" x-text="step.response?.body"></pre>
                         </section>
                         <div class="filled-io-empty muted" x-show="!step.response" x-cloak>
                             Нажмите «Отправить», чтобы увидеть ответ.
