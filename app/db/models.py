@@ -226,9 +226,6 @@ class HeaderPreset(Base):
     url: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # HTTP headers: list of {"key","value","mode","original","disabled"}.
     headers: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
-    # Templates whose preset carries this flag are sent for real by the browser
-    # (direct fetch; client cert comes from the OS keystore); off → mock send.
-    use_real_send: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Lightweight config keyed to a project — CASCADE so deleting a project (only
     # possible once no templates reference it) cleans up its presets too.
     project_id: Mapped[uuid.UUID] = mapped_column(
@@ -370,10 +367,11 @@ class MessageTemplate(Base):
 
     # Optional link to the header preset last applied to this template. Applying
     # a preset still *copies* its url + headers onto the template (no live sync),
-    # but the id is kept so the send flow can read the preset's ``use_real_send``
-    # flag: a template whose preset carries it is sent for real by the browser,
-    # otherwise the send is mocked. SET NULL so deleting a preset never blocks
-    # and just drops the template back to the mock path.
+    # but the id is kept so the send flow knows which preset's «connection»
+    # (client certs, held only in the browser's sessionStorage) to use: a
+    # template with a configured preset sends for real, otherwise the send is
+    # mocked. SET NULL so deleting a preset never blocks and just drops the
+    # template back to the mock path.
     preset_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("header_presets.id", ondelete="SET NULL"),
@@ -668,12 +666,11 @@ SEND_SOURCE_CHAIN_STEP = "chain_step"
 class MessageSend(Base):
     """One recorded «send» of a message — what was sent, where, and the response.
 
-    The browser itself sends the request (real fetch or mock — see
-    ``app/static/js/rest_sender.js``) and reports the outcome to ``POST
-    /send-htmx/record``. Every send — whether triggered from a filled template's
-    «Отправить» button or a chain step — is persisted here so the UI can show a
-    full send history table and the «last success / last error» timestamps next
-    to each send button.
+    Sending is still a stub seam (``POST /send-htmx/execute`` echoes an editable
+    mock response, no real network call), but every send — whether triggered from
+    a filled template's «Отправить» button or a chain step — is persisted here so
+    the UI can show a full send history table and the «last success / last error»
+    timestamps next to each send button.
 
     The request/response are snapshotted (``url``, ``request_body``,
     ``response_body``, …) so a row stays meaningful even after its source filled
@@ -714,9 +711,8 @@ class MessageSend(Base):
     # Result of the send.
     ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # statusCode the browser parsed from the response body (see
-    # app/static/js/status_code.js, window.extractStatusCode), so the history
-    # matches the indicator the user saw next to the send button.
+    # statusCode parsed from the response body (see app/utils/status_code.py), so
+    # the history matches the indicator the user saw next to the send button.
     status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     response_headers: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     response_body: Mapped[str] = mapped_column(Text, nullable=False, default="")

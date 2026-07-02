@@ -104,7 +104,6 @@ class HeaderPresetService:
                 project_id=data.project_id,
                 url=data.url.strip(),
                 headers=normalize_preset_headers(data.headers),
-                use_real_send=data.use_real_send,
             )
         )
 
@@ -128,8 +127,6 @@ class HeaderPresetService:
             preset.url = data.url.strip()
         if data.headers is not None:
             preset.headers = normalize_preset_headers(data.headers)
-        if data.use_real_send is not None:
-            preset.use_real_send = data.use_real_send
         await self.session.flush()
         return preset
 

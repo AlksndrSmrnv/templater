@@ -43,9 +43,9 @@
     },
 
     // Request envelope snapshotted on the filled template, for the one-off
-    // send below. When the template's preset has «реальная отправка», the
-    // browser fetches the URL directly (window.restSender); otherwise the seam
-    // echoes the client-generated example response (mock).
+    // send below. With a configured preset connection (client certs held only in
+    // this browser session) the send is real; otherwise the seam echoes the
+    // client-generated example response (mock).
     envelope: {
         method: {{ (ft.http_method_snapshot or '') | tojson | forceescape }},
         url: {{ (ft.url_snapshot or '') | tojson | forceescape }},
@@ -56,9 +56,9 @@
     // seeded from settings. A one-off send is a single message, so operUID is
     // fresh (no shared value) — see window.dynamicFields.buildContext.
     dynamicPatterns: {{ (dynamic_patterns | default({})) | tojson | forceescape }},
-    // Whether the template's preset carries «реальная отправка» — real fetch
-    // from this browser (client cert из хранилища ОС) vs. mock.
-    realSend: {{ (real_send | default(false)) | tojson }},
+    // Preset applied to this template (if any). The browser keys its session-only
+    // client-cert connection by this id; present + stored → the send goes for real.
+    presetId: {{ (preset_id | default('')) | tojson | forceescape }},
     sending: false,
     response: null,
     // Parsed from the last send's response body. Known limitation: these three
@@ -102,19 +102,30 @@
         // rules with the chain panel via window.dynamicFields.
         const dynCtx = window.dynamicFields.buildContext(this.dynamicPatterns, null);
         const sentHeaders = window.dynamicFields.resolveHeaders(this.envelope.headers, dynCtx);
-        // The browser sends (or mocks) the request itself — the message never
-        // passes through our backend; only the outcome is reported for history.
-        window.restSender.send({
+        // A configured preset connection turns the send real; without one the
+        // server mocks and echoes the example response.
+        const tls = (window.tlsCerts && this.presetId) ? window.tlsCerts.get(this.presetId) : null;
+        const payload = {
             method: this.envelope.method,
             url: this.envelope.url,
             headers: sentHeaders,
             body: '',
             format: this.envelope.format,
-            mockResponse: this.exampleResponse(),
-            real: this.realSend,
+            mock_response: this.exampleResponse(),
+            // Context so the send is recorded against this filled template.
+            source_kind: 'filled',
+            filled_template_id: '{{ ft.id }}',
+            name: {{ (ft.name or '') | tojson | forceescape }},
+        };
+        if (tls) payload.tls = tls;
+        fetch('/templater/send-htmx/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
         })
+            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
             .then(d => {
-                this.response = { status: d.status, statusText: d.status_text, latencyMs: d.latency_ms, body: d.body, error: d.error, real: this.realSend };
+                this.response = { status: d.status, statusText: d.status_text, latencyMs: d.latency_ms, body: d.body };
                 // Parse the body once, then pull statusCode + business identifiers
                 // (operuid/suit) recursively from anywhere within it.
                 let parsed = null;
@@ -122,36 +133,17 @@
                 this.statusCode = window.extractStatusCode(parsed);
                 this.operuid = window.extractField(parsed, 'operuid');
                 this.suit = window.extractField(parsed, 'suit');
+                // Trust the server's authoritative `ok` (a real send can fail at
+                // transport with no body); surface its error text when present.
                 if (d.error) window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: d.error, type: 'error' } }));
                 if (d.ok) this.lastSuccessAt = window.nowSendTs();
                 else this.lastErrorAt = window.nowSendTs();
-                // The send is done — release the button now (same as the chain
-                // panel); the history recording below happens in the background.
-                this.sending = false;
-                // Report the outcome for the history drawer / badges. The send
-                // itself already happened — a failed record only warns.
-                return fetch('/templater/send-htmx/record', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        method: this.envelope.method,
-                        url: this.envelope.url,
-                        headers: sentHeaders,
-                        body: '',
-                        format: this.envelope.format,
-                        source_kind: 'filled',
-                        filled_template_id: '{{ ft.id }}',
-                        name: {{ (ft.name or '') | tojson | forceescape }},
-                        result: { ok: d.ok, http_status: d.status, status_code: this.statusCode, headers: d.headers, body: d.body, latency_ms: d.latency_ms, error: d.error },
-                    }),
-                }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); });
             })
             .catch(() => {
-                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Отправка выполнена, но история не записана', type: 'warning' } }));
+                // No usable response — leave the badges to the next panel render
+                // (the history is the source of truth) and just toast.
+                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: tls ? 'Ошибка отправки' : 'Ошибка отправки (мок)', type: 'error' } }));
             })
-            // Not redundant with the reset above: that one only runs on the
-            // happy path — this is what unsticks the button if the seam itself
-            // rejects and control jumps straight to .catch().
             .finally(() => { this.sending = false; });
     },
 }">
@@ -294,15 +286,12 @@
         <div class="filled-io-col">
             <h3>Ответ</h3>
             <div class="send-block send-response" x-show="response" x-cloak>
-                <p class="muted send-sub" x-show="!response?.real">Реальная отправка не выполняется — показан пример JSON-ответа.</p>
+                <p class="muted send-sub">Реальная отправка не выполняется — показан пример JSON-ответа.</p>
                 <div class="send-status-line">
-                    <span class="send-status-pill" x-show="response?.status" x-text="(response?.status || '') + ' ' + (response?.statusText || '')"></span>
-                    <span class="muted" x-text="(response?.latencyMs ?? '') + ' мс' + (response?.real ? '' : ' · мок')"></span>
+                    <span class="send-status-pill" x-text="(response?.status || '') + ' ' + (response?.statusText || '')"></span>
+                    <span class="muted" x-text="(response?.latencyMs ?? '') + ' мс · мок'"></span>
                 </div>
-                {# A failed real send has no body — the error text IS the response
-                   here, so the cause is visible without hunting for a toast. #}
-                <div class="send-error" x-show="response?.error" x-text="response?.error"></div>
-                <pre class="template-code" x-show="response?.body" x-text="response?.body"></pre>
+                <pre class="template-code" x-text="response?.body"></pre>
             </div>
             <div class="filled-io-empty muted" x-show="!response" x-cloak>
                 Нажмите «Отправить», чтобы увидеть ответ.
