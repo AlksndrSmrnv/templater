@@ -214,18 +214,57 @@ def test_build_transfer_template_pick_lists_ids_and_asks_for_json() -> None:
     sys_p, user_p = PromptBuilder().build_transfer_template_pick(
         request="перевод с карты в долларах на счёт в рублях",
         templates=[
-            {"id": "T1", "summary": "Перевод со счёта на счёт"},
-            {"id": "T2", "summary": "Перевод в другой банк"},
+            {
+                "id": "T1",
+                "name": "A2A transfer",
+                "description": "Ручное описание",
+                "summary": "Перевод со счёта на счёт",
+            },
+            {
+                "id": "T2",
+                "name": "External transfer",
+                "description": "Перевод клиенту стороннего банка",
+                "summary": "Перевод в другой банк",
+            },
         ],
     )
     assert '{"template"' in sys_p
     assert "перевод с карты" in user_p
-    assert "T1 — Перевод со счёта на счёт" in user_p
+    assert "T1 | A2A transfer | Ручное описание | Перевод со счёта на счёт" in user_p
     assert "T2" in user_p
+    assert "Явно указанные" in user_p
+
+
+def test_build_transfer_template_pick_keeps_full_template_text() -> None:
+    long_description = "начало " + "д" * 240 + " важный тип TCC в конце"
+    long_summary = "резюме " + "с" * 240 + " перевод с карты на карту"
+
+    _, user_p = PromptBuilder().build_transfer_template_pick(
+        request="TCC другому клиенту",
+        templates=[
+            {
+                "id": "T1",
+                "name": "Полное описание",
+                "description": long_description,
+                "summary": long_summary,
+            }
+        ],
+    )
+
+    assert long_description in user_p
+    assert long_summary in user_p
+    assert "…" not in user_p
 
 
 def test_build_transfer_participants_includes_owner_only_when_needed() -> None:
-    clients = [{"id": "C1", "traits": "резидент", "description": "Иванов"}]
+    clients = [
+        {
+            "id": "C1",
+            "full_name": "Иванов Иван Иванович",
+            "traits": "резидент",
+            "description": "основной клиент",
+        }
+    ]
     accounts = [{"id": "A1", "client": "C1", "currency": "USD", "description": "счёт"}]
     cards = [{"id": "K1", "account": "A1", "description": "карта"}]
 
@@ -235,9 +274,10 @@ def test_build_transfer_participants_includes_owner_only_when_needed() -> None:
     )
     assert "accountOwner" not in sys_no
     # All three catalogs are present with short ids.
-    assert "C1 | резидент | Иванов" in user_no
+    assert "C1 | Иванов Иван Иванович | резидент | основной клиент" in user_no
     assert "A1 | C1 | USD | счёт" in user_no
     assert "K1 | A1 | карта" in user_no
+    assert "фамилия или ФИО" in user_no
 
     sys_yes, _ = PromptBuilder().build_transfer_participants(
         request="перевод", clients=clients, accounts=accounts, cards=cards,

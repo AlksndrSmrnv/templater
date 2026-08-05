@@ -6,7 +6,11 @@ from typing import Any, cast
 
 import pytest
 
-from app.services.transfer_assistant import TransferAssistant
+from app.services.transfer_assistant import (
+    TransferAssistant,
+    _client_full_name,
+    _extract_transfer_constraints,
+)
 from app.utils.errors import ValidationFailed
 
 
@@ -27,6 +31,247 @@ def _card(account_id: Any) -> Any:
 def _assistant() -> TransferAssistant:
     # Pure helper methods don't touch the session; a bare instance is enough.
     return TransferAssistant.__new__(TransferAssistant)
+
+
+def _template(summary: str, *, name: str = "Шаблон", description: str = "Описание") -> Any:
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        name=name,
+        format="json",
+        content="{}",
+        original_content="{}",
+        description=description,
+        llm_meta={
+            "import_status": "processed",
+            "summary": summary,
+            "has_account_owner": False,
+        },
+        placeholders=[{"location": "/a", "mode": "literal", "value": "x"}],
+    )
+
+
+class _TemplateList:
+    def __init__(self, items: list[Any]) -> None:
+        self.items = items
+
+    async def list_all(self) -> list[Any]:
+        return self.items
+
+
+class _EntityList:
+    def __init__(self, items: list[Any] | None = None) -> None:
+        self.items = items or []
+
+    async def list_all(self, *, visible_group_ids: Any = None) -> list[Any]:
+        return self.items
+
+
+class _CapturingLLM:
+    def __init__(self, choice: str) -> None:
+        self.choice = choice
+        self.template_catalogs: list[list[dict[str, str]]] = []
+        self.participant_clients: list[list[dict[str, str]]] = []
+        self.participants_called = False
+
+    async def pick_transfer_template(
+        self, *, request: str, templates: list[dict[str, str]]
+    ) -> tuple[str, dict[str, str]]:
+        self.template_catalogs.append(templates)
+        return self.choice, {}
+
+    async def pick_transfer_participants(
+        self, *, clients: list[dict[str, str]], **_: Any
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        self.participants_called = True
+        self.participant_clients.append(clients)
+        return {}, {}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("TDD", "A2A"),
+        ("A2A", "A2A"),
+        ("перевод со счёта на счёт", "A2A"),
+        ("TDC", "A2C"),
+        ("A2C", "A2C"),
+        ("перевод со счета на карту", "A2C"),
+        ("перевод со счёта в долларах на карту", "A2C"),
+        ("TCD", "C2A"),
+        ("C2A", "C2A"),
+        ("перевод с карты на счёт", "C2A"),
+        ("перевод с карты в долларах на счёт в рублях", "C2A"),
+        ("TCC", "C2C"),
+        ("C2C", "C2C"),
+        ("перевод с карты на карту", "C2C"),
+    ],
+)
+def test_extract_transfer_constraints_recognizes_instrument_type(
+    text: str, expected: str
+) -> None:
+    assert _extract_transfer_constraints(text).instruments == frozenset({expected})
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("перевод самому себе", "self"),
+        ("плательщик и получатель совпадают", "self"),
+        ("перевод между своими счетами", "self"),
+        ("another_int", "internal"),
+        ("другому клиенту этого же банка", "internal"),
+        ("перевод внутри банка", "internal"),
+        ("another_ext", "external"),
+        ("клиенту в другой банк", "external"),
+        ("перевод в сторонний банк", "external"),
+    ],
+)
+def test_extract_transfer_constraints_recognizes_recipient_type(
+    text: str, expected: str
+) -> None:
+    assert _extract_transfer_constraints(text).recipients == frozenset({expected})
+
+
+def test_extract_transfer_constraints_preserves_conflicts() -> None:
+    constraints = _extract_transfer_constraints("TDD и TCC, самому себе в другой банк")
+
+    assert constraints.instruments == frozenset({"A2A", "C2C"})
+    assert constraints.recipients == frozenset({"self", "external"})
+
+
+@pytest.mark.parametrize(
+    ("attrs", "expected"),
+    [
+        ({"fullName": "Иванов Иван"}, "Иванов Иван"),
+        ({"name": "ООО Ромашка"}, "ООО Ромашка"),
+        ({"shortName": "Ромашка"}, "Ромашка"),
+        ({}, ""),
+    ],
+)
+def test_client_full_name_uses_supported_fallbacks(
+    attrs: dict[str, str], expected: str
+) -> None:
+    assert _client_full_name(attrs) == expected
+
+
+@pytest.mark.asyncio
+async def test_compose_offers_only_templates_matching_explicit_constraints() -> None:
+    a2a_self = _template("TDD/A2A — со счёта на счёт, самому себе")
+    c2c_external = _template("TCC/C2C — с карты на карту, another_ext")
+    assistant = _assistant()
+    assistant.templates = _TemplateList([a2a_self, c2c_external])  # type: ignore[assignment]
+    assistant.clients = _EntityList()  # type: ignore[assignment]
+    assistant.accounts = _EntityList()  # type: ignore[assignment]
+    assistant.cards = _EntityList()  # type: ignore[assignment]
+    llm = _CapturingLLM("T2")
+
+    with pytest.raises(ValidationFailed, match="участников"):
+        await assistant.compose("TCC клиенту в другой банк", llm)
+
+    assert [row["id"] for row in llm.template_catalogs[0]] == ["T2"]
+    assert llm.participants_called is True
+
+
+@pytest.mark.asyncio
+async def test_compose_rejects_llm_id_excluded_by_explicit_constraints() -> None:
+    a2a_self = _template("TDD/A2A — со счёта на счёт, самому себе")
+    c2c_external = _template("TCC/C2C — с карты на карту, another_ext")
+    assistant = _assistant()
+    assistant.templates = _TemplateList([a2a_self, c2c_external])  # type: ignore[assignment]
+    assistant.clients = _EntityList()  # type: ignore[assignment]
+    assistant.accounts = _EntityList()  # type: ignore[assignment]
+    assistant.cards = _EntityList()  # type: ignore[assignment]
+    llm = _CapturingLLM("T1")
+
+    with pytest.raises(ValidationFailed, match="подходящий шаблон"):
+        await assistant.compose("TCC клиенту в другой банк", llm)
+
+    assert llm.participants_called is False
+
+
+@pytest.mark.asyncio
+async def test_compose_rejects_explicit_type_without_exact_template() -> None:
+    assistant = _assistant()
+    assistant.templates = _TemplateList(
+        [_template("TDD/A2A — со счёта на счёт, самому себе")]
+    )  # type: ignore[assignment]
+    llm = _CapturingLLM("T1")
+
+    with pytest.raises(ValidationFailed, match="точно соответствующий"):
+        await assistant.compose("TCC клиенту в другой банк", llm)
+
+    assert llm.template_catalogs == []
+
+
+@pytest.mark.asyncio
+async def test_compose_rejects_conflicting_explicit_types() -> None:
+    assistant = _assistant()
+    assistant.templates = _TemplateList(
+        [_template("TDD/A2A — со счёта на счёт, самому себе")]
+    )  # type: ignore[assignment]
+    llm = _CapturingLLM("T1")
+
+    with pytest.raises(ValidationFailed, match="противоречащие типы"):
+        await assistant.compose("TDD и TCC", llm)
+
+    assert llm.template_catalogs == []
+
+
+@pytest.mark.asyncio
+async def test_compose_passes_client_full_name_to_participant_catalog() -> None:
+    assistant = _assistant()
+    assistant.templates = _TemplateList([_template("Обычный перевод")])  # type: ignore[assignment]
+    assistant.clients = _EntityList([_client(fullName="Иванов Иван Иванович")])  # type: ignore[assignment]
+    assistant.accounts = _EntityList()  # type: ignore[assignment]
+    assistant.cards = _EntityList()  # type: ignore[assignment]
+    llm = _CapturingLLM("T1")
+
+    with pytest.raises(ValidationFailed, match="участников"):
+        await assistant.compose("перевод от клиента Иванов", llm)
+
+    assert llm.participant_clients[0][0]["full_name"] == "Иванов Иван Иванович"
+
+
+@pytest.mark.asyncio
+async def test_compose_rejects_ambiguous_requested_surname() -> None:
+    assistant = _assistant()
+    assistant.templates = _TemplateList([_template("Обычный перевод")])  # type: ignore[assignment]
+    assistant.clients = _EntityList(
+        [
+            _client(fullName="Иванов Иван Иванович"),
+            _client(fullName="Иванов Пётр Петрович"),
+        ]
+    )  # type: ignore[assignment]
+    assistant.accounts = _EntityList()  # type: ignore[assignment]
+    assistant.cards = _EntityList()  # type: ignore[assignment]
+    llm = _CapturingLLM("T1")
+
+    with pytest.raises(ValidationFailed, match="несколько клиентов с фамилией Иванов"):
+        await assistant.compose("перевод от клиента Иванов", llm)
+
+    assert llm.participants_called is False
+
+
+@pytest.mark.asyncio
+async def test_compose_does_not_treat_hidden_same_surname_as_ambiguous() -> None:
+    """EntityService already applies the visible-group filter; ambiguity must be
+    computed only from the rows it returned, never from hidden clients."""
+
+    assistant = _assistant()
+    assistant.templates = _TemplateList([_template("Обычный перевод")])  # type: ignore[assignment]
+    assistant.clients = _EntityList([_client(fullName="Иванов Иван Иванович")])  # type: ignore[assignment]
+    assistant.accounts = _EntityList()  # type: ignore[assignment]
+    assistant.cards = _EntityList()  # type: ignore[assignment]
+    llm = _CapturingLLM("T1")
+
+    with pytest.raises(ValidationFailed, match="участников"):
+        await assistant.compose(
+            "перевод от клиента Иванов",
+            llm,
+            visible_group_ids={uuid.uuid4()},
+        )
+
+    assert llm.participants_called is True
 
 
 def test_resolve_picks_keeps_consistent_account_and_card() -> None:
@@ -124,6 +369,7 @@ async def test_compose_filters_participants_by_visible_groups() -> None:
     captured: dict[str, Any] = {}
     tpl = SimpleNamespace(
         id=uuid.uuid4(),
+        name="Visible groups",
         format="json",
         content="{}",
         description="d",
