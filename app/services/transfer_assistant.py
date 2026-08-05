@@ -36,6 +36,8 @@ _CAPACITY = {
     "incapable": "недееспособный",
 }
 
+_WORD_RE = re.compile(r"[^\W\d_]+(?:-[^\W\d_]+)*", re.UNICODE)
+
 
 @dataclass(frozen=True)
 class TransferConstraints:
@@ -53,42 +55,62 @@ class TransferConstraints:
         return len(self.instruments) > 1 or len(self.recipients) > 1
 
 
+_ACCOUNT_PHRASE = r"(?:[\w-]+\s+){0,2}счет\w*"
+_CARD_PHRASE = r"(?:[\w-]+\s+){0,2}карт\w*"
+_CURRENCY_QUALIFIER = r"(?:\s+в\s+[\w-]+)?"
+
 _INSTRUMENT_PATTERNS: dict[str, tuple[str, ...]] = {
     "A2A": (
         r"(?<!\w)(?:tdd|a2a)(?!\w)",
-        r"(?:с|со)\s+счет\w*(?:\s+\S+){0,6}?\s+на\s+счет\w*",
-        r"между\s+(?:своими\s+)?счет\w*",
+        rf"(?<!\w)(?:с|со)\s+{_ACCOUNT_PHRASE}{_CURRENCY_QUALIFIER}"
+        rf"\s+на\s+{_ACCOUNT_PHRASE}",
+        r"(?<!\w)между\s+(?:своими\s+)?счет\w*",
     ),
     "A2C": (
         r"(?<!\w)(?:tdc|a2c)(?!\w)",
-        r"(?:с|со)\s+счет\w*(?:\s+\S+){0,6}?\s+на\s+карт\w*",
+        rf"(?<!\w)(?:с|со)\s+{_ACCOUNT_PHRASE}{_CURRENCY_QUALIFIER}"
+        rf"\s+на\s+{_CARD_PHRASE}",
     ),
     "C2A": (
         r"(?<!\w)(?:tcd|c2a)(?!\w)",
-        r"с\s+карт\w*(?:\s+\S+){0,6}?\s+на\s+счет\w*",
+        rf"(?<!\w)с\s+{_CARD_PHRASE}{_CURRENCY_QUALIFIER}"
+        rf"\s+на\s+{_ACCOUNT_PHRASE}",
     ),
     "C2C": (
         r"(?<!\w)(?:tcc|c2c)(?!\w)",
-        r"с\s+карт\w*(?:\s+\S+){0,6}?\s+на\s+карт\w*",
+        rf"(?<!\w)с\s+{_CARD_PHRASE}{_CURRENCY_QUALIFIER}"
+        rf"\s+на\s+{_CARD_PHRASE}",
     ),
 }
 _RECIPIENT_PATTERNS: dict[str, tuple[str, ...]] = {
     "self": (
-        r"сам(?:ому|ой)\s+себе",
-        r"между\s+(?:своими\s+)?счет\w*",
+        r"(?<!\w)сам(?:ому|ой)?\s+себе",
+        r"(?<!\w)между\s+своими\s+счет\w*",
         r"плательщик\s+и\s+получатель\s+совпада\w*",
     ),
     "internal": (
         r"(?<!\w)another_int(?!\w)",
-        r"друг\w*\s+клиент\w*(?:\s+\S+){0,3}?\s+(?:этого|того)\s+же\s+банк\w*",
-        r"(?:внутри|в\s+пределах)\s+банк\w*",
+        r"(?<!\w)друг\w*\s+клиент\w*\s+(?:этого|того)\s+же\s+банк\w*",
+        r"(?<!\w)(?:внутри|в\s+пределах)\s+банк\w*",
     ),
     "external": (
         r"(?<!\w)another_ext(?!\w)",
-        r"(?:в|клиент\w*\s+в)\s+(?:друг\w*|сторонн\w*)\s+банк\w*",
-        r"клиент\w*\s+(?:друг\w*|сторонн\w*)\s+банк\w*",
+        r"(?<!\w)(?:в|клиент\w*\s+в)\s+(?:друг\w*|сторонн\w*)\s+банк\w*",
+        r"(?<!\w)клиент\w*\s+(?:друг\w*|сторонн\w*)\s+банк\w*",
     ),
 }
+_NEGATION_WORDS = frozenset({"без", "исключая", "кроме", "не"})
+
+
+def _has_positive_match(pattern: str, text: str) -> bool:
+    for match in re.finditer(pattern, text):
+        preceding_words = {
+            word.casefold()
+            for word in _WORD_RE.findall(text[: match.start()])[-3:]
+        }
+        if preceding_words.isdisjoint(_NEGATION_WORDS):
+            return True
+    return False
 
 
 def _extract_transfer_constraints(text: str) -> TransferConstraints:
@@ -104,12 +126,12 @@ def _extract_transfer_constraints(text: str) -> TransferConstraints:
     instruments = frozenset(
         value
         for value, patterns in _INSTRUMENT_PATTERNS.items()
-        if any(re.search(pattern, normalized) for pattern in patterns)
+        if any(_has_positive_match(pattern, normalized) for pattern in patterns)
     )
     recipients = frozenset(
         value
         for value, patterns in _RECIPIENT_PATTERNS.items()
-        if any(re.search(pattern, normalized) for pattern in patterns)
+        if any(_has_positive_match(pattern, normalized) for pattern in patterns)
     )
     return TransferConstraints(instruments=instruments, recipients=recipients)
 
@@ -117,9 +139,19 @@ def _extract_transfer_constraints(text: str) -> TransferConstraints:
 def _template_matches(
     requested: TransferConstraints, candidate: TransferConstraints
 ) -> bool:
+    """Exclude only a candidate whose known constraints contradict the request.
+
+    Empty candidate dimensions remain eligible for LLM ranking; a description
+    that mentions multiple supported scenarios remains eligible when it includes
+    the requested one.
+    """
+
+    def compatible(expected: frozenset[str], actual: frozenset[str]) -> bool:
+        return not expected or not actual or expected.issubset(actual)
+
     return (
-        (not requested.instruments or candidate.instruments == requested.instruments)
-        and (not requested.recipients or candidate.recipients == requested.recipients)
+        compatible(requested.instruments, candidate.instruments)
+        and compatible(requested.recipients, candidate.recipients)
     )
 
 ROLE_TITLES = {
@@ -158,31 +190,65 @@ def _client_full_name(attrs: dict[str, Any]) -> str:
     return ""
 
 
-_WORD_RE = re.compile(r"[^\W\d_]+(?:-[^\W\d_]+)*", re.UNICODE)
+_LEGAL_ENTITY_PREFIXES = frozenset({"ао", "зао", "ип", "нко", "ооо", "пао"})
+
+
+def _normalized_words(value: str) -> list[str]:
+    return [word.casefold().replace("ё", "е") for word in _WORD_RE.findall(value)]
+
+
+def _surname_forms(surname: str) -> frozenset[str]:
+    """Common Russian case forms sufficient for surname mentions in requests."""
+
+    forms = {surname}
+    if surname.endswith(("ов", "ев", "ин", "ын")):
+        forms.update(f"{surname}{ending}" for ending in ("а", "е", "у", "ым"))
+    elif surname.endswith(("ский", "цкий")):
+        stem = surname[:-2]
+        forms.update(f"{stem}{ending}" for ending in ("ого", "ому", "им", "ом"))
+    elif surname.endswith(("ова", "ева", "ина", "ына")):
+        stem = surname[:-1]
+        forms.update((f"{stem}ой", f"{stem}у"))
+    elif surname.endswith(("ская", "цкая")):
+        stem = surname[:-2]
+        forms.update((f"{stem}ой", f"{stem}ую"))
+    return frozenset(forms)
 
 
 def _ambiguous_requested_surname(prompt: str, clients: list[Client]) -> str | None:
     """Return a mentioned surname shared by multiple visible clients, if any."""
 
-    request_words = {
-        word.casefold().replace("ё", "е") for word in _WORD_RE.findall(prompt or "")
-    }
-    clients_by_surname: dict[str, list[Client]] = {}
+    request_words = set(_normalized_words(prompt or ""))
+    clients_by_surname: dict[str, list[tuple[Client, list[str]]]] = {}
     display_surnames: dict[str, str] = {}
     for client in clients:
-        name_words = _WORD_RE.findall(_client_full_name(client.attributes or {}))
+        full_name = _client_full_name(client.attributes or {})
+        display_words = _WORD_RE.findall(full_name)
+        name_words = _normalized_words(full_name)
         if not name_words:
             continue
-        display = name_words[0]
-        normalized = display.casefold().replace("ё", "е")
-        clients_by_surname.setdefault(normalized, []).append(client)
+        normalized = name_words[0]
+        if normalized in _LEGAL_ENTITY_PREFIXES:
+            continue
+        display = display_words[0]
+        clients_by_surname.setdefault(normalized, []).append((client, name_words))
         display_surnames.setdefault(normalized, display)
 
-    ambiguous = sorted(
-        surname
-        for surname, matching_clients in clients_by_surname.items()
-        if surname in request_words and len(matching_clients) > 1
-    )
+    ambiguous: list[str] = []
+    for surname, matching_clients in clients_by_surname.items():
+        if len(matching_clients) < 2 or request_words.isdisjoint(_surname_forms(surname)):
+            continue
+        full_name_matches = [
+            client
+            for client, name_words in matching_clients
+            if len(name_words) > 1
+            and request_words.intersection(_surname_forms(name_words[0]))
+            and all(word in request_words for word in name_words[1:])
+        ]
+        if len(full_name_matches) != 1:
+            ambiguous.append(surname)
+
+    ambiguous.sort()
     return display_surnames[ambiguous[0]] if ambiguous else None
 
 
@@ -198,6 +264,11 @@ def _with_tags(description: str | None, tags: list[str] | None) -> str:
 def _currency(account: Account) -> str:
     value = (account.attributes or {}).get("currency_id")
     return str(value) if value else ""
+
+
+def _template_summary(template: MessageTemplate) -> str:
+    value = (template.llm_meta or {}).get("summary")
+    return str(value) if value is not None else ""
 
 
 class TransferAssistant:
@@ -265,7 +336,7 @@ class TransferAssistant:
                             (
                                 tpl.name or "",
                                 tpl.description or "",
-                                str((tpl.llm_meta or {}).get("summary", "")),
+                                _template_summary(tpl),
                             )
                         )
                     ),
@@ -273,16 +344,26 @@ class TransferAssistant:
             }
             if not eligible_template_ids:
                 raise ValidationFailed(
-                    "Не найден шаблон, точно соответствующий явно указанному типу "
+                    "Не найден шаблон, не противоречащий явно указанному типу "
                     "перевода и адресату."
                 )
+
+        # Surname ambiguity depends only on visible clients. Validate it before
+        # spending an LLM call on template ranking.
+        clients = await self.clients.list_all(visible_group_ids=visible_group_ids)
+        ambiguous_surname = _ambiguous_requested_surname(prompt, clients)
+        if ambiguous_surname:
+            raise ValidationFailed(
+                f"Найдено несколько клиентов с фамилией {ambiguous_surname}. "
+                "Уточните полное ФИО клиента."
+            )
 
         catalog = [
             {
                 "id": short_id,
                 "name": tpl.name or "",
                 "description": tpl.description or "",
-                "summary": str((tpl.llm_meta or {}).get("summary", "")),
+                "summary": _template_summary(tpl),
             }
             for short_id, tpl in eligible_template_ids.items()
         ]
@@ -300,16 +381,8 @@ class TransferAssistant:
         # Only data the caller may see is offered to the model — otherwise a
         # hidden group's test data would be sent to the LLM and rendered back to
         # someone who never unlocked it.
-        clients = await self.clients.list_all(visible_group_ids=visible_group_ids)
         accounts = await self.accounts.list_all(visible_group_ids=visible_group_ids)
         cards = await self.cards.list_all(visible_group_ids=visible_group_ids)
-
-        ambiguous_surname = _ambiguous_requested_surname(prompt, clients)
-        if ambiguous_surname:
-            raise ValidationFailed(
-                f"Найдено несколько клиентов с фамилией {ambiguous_surname}. "
-                "Уточните полное ФИО клиента."
-            )
 
         client_ids = {f"C{i}": c for i, c in enumerate(clients, start=1)}
         account_ids = {f"A{i}": a for i, a in enumerate(accounts, start=1)}

@@ -8,8 +8,11 @@ import pytest
 
 from app.services.transfer_assistant import (
     TransferAssistant,
+    TransferConstraints,
+    _ambiguous_requested_surname,
     _client_full_name,
     _extract_transfer_constraints,
+    _template_matches,
 )
 from app.utils.errors import ValidationFailed
 
@@ -140,6 +143,66 @@ def test_extract_transfer_constraints_preserves_conflicts() -> None:
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        "баланс карты на счет",
+        "прогресс счета на карту",
+    ],
+)
+def test_extract_transfer_constraints_does_not_match_suffix_of_previous_word(
+    text: str,
+) -> None:
+    assert _extract_transfer_constraints(text).instruments == frozenset()
+
+
+def test_extract_transfer_constraints_does_not_assume_between_accounts_is_self() -> None:
+    constraints = _extract_transfer_constraints("перевод между счетами Иванова и Петрова")
+
+    assert constraints.instruments == frozenset({"A2A"})
+    assert constraints.recipients == frozenset()
+
+
+def test_extract_transfer_constraints_recognizes_colloquial_self() -> None:
+    assert _extract_transfer_constraints("перевод сам себе").recipients == frozenset(
+        {"self"}
+    )
+
+
+def test_extract_transfer_constraints_does_not_bridge_enumerated_types() -> None:
+    constraints = _extract_transfer_constraints(
+        "Переводы со счёта на счёт и с карты на карту"
+    )
+
+    assert constraints.instruments == frozenset({"A2A", "C2C"})
+
+
+def test_extract_transfer_constraints_ignores_negated_recipient() -> None:
+    constraints = _extract_transfer_constraints("не для переводов в другой банк")
+
+    assert constraints.recipients == frozenset()
+
+
+def test_template_matches_known_value_and_keeps_unknown_or_multi_value_candidate() -> None:
+    requested = TransferConstraints(instruments=frozenset({"A2A"}))
+
+    assert _template_matches(requested, TransferConstraints()) is True
+    assert (
+        _template_matches(
+            requested,
+            TransferConstraints(instruments=frozenset({"A2A", "C2C"})),
+        )
+        is True
+    )
+    assert (
+        _template_matches(
+            requested,
+            TransferConstraints(instruments=frozenset({"C2C"})),
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize(
     ("attrs", "expected"),
     [
         ({"fullName": "Иванов Иван"}, "Иванов Иван"),
@@ -152,6 +215,52 @@ def test_client_full_name_uses_supported_fallbacks(
     attrs: dict[str, str], expected: str
 ) -> None:
     assert _client_full_name(attrs) == expected
+
+
+def test_ambiguous_surname_accepts_unique_full_name() -> None:
+    clients = [
+        _client(fullName="Иванов Иван Иванович"),
+        _client(fullName="Иванов Пётр Петрович"),
+    ]
+
+    assert (
+        _ambiguous_requested_surname(
+            "перевод от клиента Иванов Иван Иванович", clients
+        )
+        is None
+    )
+
+
+def test_ambiguous_surname_rejects_duplicate_full_name() -> None:
+    clients = [
+        _client(fullName="Иванов Иван Иванович"),
+        _client(fullName="Иванов Иван Иванович"),
+    ]
+
+    assert (
+        _ambiguous_requested_surname(
+            "перевод от клиента Иванов Иван Иванович", clients
+        )
+        == "Иванов"
+    )
+
+
+def test_ambiguous_surname_recognizes_common_russian_case() -> None:
+    clients = [
+        _client(fullName="Иванов Иван Иванович"),
+        _client(fullName="Иванов Пётр Петрович"),
+    ]
+
+    assert _ambiguous_requested_surname("перевод от клиента Иванова", clients) == "Иванов"
+
+
+def test_ambiguous_surname_skips_legal_entity_prefix() -> None:
+    clients = [
+        _client(fullName="ООО Ромашка"),
+        _client(fullName="ООО Василёк"),
+    ]
+
+    assert _ambiguous_requested_surname("перевод для ООО", clients) is None
 
 
 @pytest.mark.asyncio
@@ -169,7 +278,38 @@ async def test_compose_offers_only_templates_matching_explicit_constraints() -> 
         await assistant.compose("TCC клиенту в другой банк", llm)
 
     assert [row["id"] for row in llm.template_catalogs[0]] == ["T2"]
-    assert llm.participants_called is True
+
+
+@pytest.mark.asyncio
+async def test_compose_keeps_template_with_unknown_constraints_for_llm_ranking() -> None:
+    assistant = _assistant()
+    assistant.templates = _TemplateList([_template("Перевод без технических кодов")])  # type: ignore[assignment]
+    assistant.clients = _EntityList()  # type: ignore[assignment]
+    assistant.accounts = _EntityList()  # type: ignore[assignment]
+    assistant.cards = _EntityList()  # type: ignore[assignment]
+    llm = _CapturingLLM("T1")
+
+    with pytest.raises(ValidationFailed, match="участников"):
+        await assistant.compose("TCC клиенту в другой банк", llm)
+
+    assert [row["id"] for row in llm.template_catalogs[0]] == ["T1"]
+
+
+@pytest.mark.asyncio
+async def test_compose_normalizes_none_template_summary() -> None:
+    template = _template("unused")
+    template.llm_meta["summary"] = None
+    assistant = _assistant()
+    assistant.templates = _TemplateList([template])  # type: ignore[assignment]
+    assistant.clients = _EntityList()  # type: ignore[assignment]
+    assistant.accounts = _EntityList()  # type: ignore[assignment]
+    assistant.cards = _EntityList()  # type: ignore[assignment]
+    llm = _CapturingLLM("T1")
+
+    with pytest.raises(ValidationFailed, match="участников"):
+        await assistant.compose("обычный перевод", llm)
+
+    assert llm.template_catalogs[0][0]["summary"] == ""
 
 
 @pytest.mark.asyncio
@@ -197,7 +337,7 @@ async def test_compose_rejects_explicit_type_without_exact_template() -> None:
     )  # type: ignore[assignment]
     llm = _CapturingLLM("T1")
 
-    with pytest.raises(ValidationFailed, match="точно соответствующий"):
+    with pytest.raises(ValidationFailed, match="не противоречащий"):
         await assistant.compose("TCC клиенту в другой банк", llm)
 
     assert llm.template_catalogs == []
@@ -247,9 +387,31 @@ async def test_compose_rejects_ambiguous_requested_surname() -> None:
     llm = _CapturingLLM("T1")
 
     with pytest.raises(ValidationFailed, match="несколько клиентов с фамилией Иванов"):
-        await assistant.compose("перевод от клиента Иванов", llm)
+        await assistant.compose("перевод от клиента Иванова", llm)
 
+    assert llm.template_catalogs == []
     assert llm.participants_called is False
+
+
+@pytest.mark.asyncio
+async def test_compose_accepts_full_name_among_same_surname_clients() -> None:
+    assistant = _assistant()
+    assistant.templates = _TemplateList([_template("Обычный перевод")])  # type: ignore[assignment]
+    assistant.clients = _EntityList(
+        [
+            _client(fullName="Иванов Иван Иванович"),
+            _client(fullName="Иванов Пётр Петрович"),
+        ]
+    )  # type: ignore[assignment]
+    assistant.accounts = _EntityList()  # type: ignore[assignment]
+    assistant.cards = _EntityList()  # type: ignore[assignment]
+    llm = _CapturingLLM("T1")
+
+    with pytest.raises(ValidationFailed, match="участников"):
+        await assistant.compose("перевод от клиента Иванов Иван Иванович", llm)
+
+    assert [row["id"] for row in llm.template_catalogs[0]] == ["T1"]
+    assert len(llm.participant_clients[0]) == 2
 
 
 @pytest.mark.asyncio

@@ -383,13 +383,15 @@ class PromptBuilder:
 
         system_prompt = self._system("transfer_pick")
         rows = [
-            " | ".join(
-                (
-                    row["id"],
-                    _one_line(row.get("name", "")) or "—",
-                    _one_line(row.get("description", "")) or "—",
-                    _one_line(row.get("summary", "")) or "—",
-                )
+            json.dumps(
+                {
+                    "id": row["id"],
+                    "name": _one_line(row.get("name", "")),
+                    "description": _one_line(row.get("description", "")),
+                    "summary": _one_line(row.get("summary", "")),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
             )
             for row in templates
         ]
@@ -397,7 +399,8 @@ class PromptBuilder:
             f"Запрос: {_one_line(request, 400)}\n\n"
             "Явно указанные в запросе тип перевода и адресат обязательны; "
             "противоречащий шаблон выбирать нельзя.\n\n"
-            "Шаблоны (id | название | описание | LLM-резюме):\n"
+            "Шаблоны (JSONL: id, название, описание, LLM-резюме; "
+            "один объект на строку):\n"
             + "\n".join(rows)
         )
         return system_prompt, user_prompt

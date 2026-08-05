@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, cast
 
 import pytest
@@ -230,9 +231,39 @@ def test_build_transfer_template_pick_lists_ids_and_asks_for_json() -> None:
     )
     assert '{"template"' in sys_p
     assert "перевод с карты" in user_p
-    assert "T1 | A2A transfer | Ручное описание | Перевод со счёта на счёт" in user_p
+    template_rows = [
+        json.loads(line) for line in user_p.splitlines() if line.startswith('{"id"')
+    ]
+    assert template_rows[0] == {
+        "id": "T1",
+        "name": "A2A transfer",
+        "description": "Ручное описание",
+        "summary": "Перевод со счёта на счёт",
+    }
     assert "T2" in user_p
     assert "Явно указанные" in user_p
+
+
+def test_build_transfer_template_pick_escapes_catalog_structure() -> None:
+    _, user_p = PromptBuilder().build_transfer_template_pick(
+        request="перевод",
+        templates=[
+            {
+                "id": "T1",
+                "name": "Имя | с разделителем",
+                "description": "Первая строка\nвторая строка",
+                "summary": 'Текст с "кавычками"',
+            }
+        ],
+    )
+
+    row = json.loads(next(line for line in user_p.splitlines() if line.startswith('{"id"')))
+    assert row == {
+        "id": "T1",
+        "name": "Имя | с разделителем",
+        "description": "Первая строка вторая строка",
+        "summary": 'Текст с "кавычками"',
+    }
 
 
 def test_build_transfer_template_pick_keeps_full_template_text() -> None:
