@@ -12,7 +12,9 @@ Two calls (template, then participants) keep each prompt small and single-purpos
 
 from __future__ import annotations
 
+import re
 import uuid
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode
 
@@ -33,6 +35,126 @@ _CAPACITY = {
     "limited": "ограниченно дееспособный",
     "incapable": "недееспособный",
 }
+
+_WORD_RE = re.compile(r"[^\W\d_]+(?:-[^\W\d_]+)*", re.UNICODE)
+
+
+@dataclass(frozen=True)
+class TransferConstraints:
+    """Canonical transfer constraints explicitly present in free-form text."""
+
+    instruments: frozenset[str] = frozenset()
+    recipients: frozenset[str] = frozenset()
+
+    @property
+    def specified(self) -> bool:
+        return bool(self.instruments or self.recipients)
+
+    @property
+    def conflicting(self) -> bool:
+        return len(self.instruments) > 1 or len(self.recipients) > 1
+
+
+_ACCOUNT_PHRASE = r"(?:[\w-]+\s+){0,2}счет\w*"
+_CARD_PHRASE = r"(?:[\w-]+\s+){0,2}карт\w*"
+_CURRENCY_QUALIFIER = r"(?:\s+в\s+[\w-]+)?"
+
+_INSTRUMENT_PATTERNS: dict[str, tuple[str, ...]] = {
+    "A2A": (
+        r"(?<!\w)(?:tdd|a2a)(?!\w)",
+        rf"(?<!\w)(?:с|со)\s+{_ACCOUNT_PHRASE}{_CURRENCY_QUALIFIER}"
+        rf"\s+на\s+{_ACCOUNT_PHRASE}",
+        r"(?<!\w)между\s+(?:своими\s+)?счет\w*",
+    ),
+    "A2C": (
+        r"(?<!\w)(?:tdc|a2c)(?!\w)",
+        rf"(?<!\w)(?:с|со)\s+{_ACCOUNT_PHRASE}{_CURRENCY_QUALIFIER}"
+        rf"\s+на\s+{_CARD_PHRASE}",
+    ),
+    "C2A": (
+        r"(?<!\w)(?:tcd|c2a)(?!\w)",
+        rf"(?<!\w)с\s+{_CARD_PHRASE}{_CURRENCY_QUALIFIER}"
+        rf"\s+на\s+{_ACCOUNT_PHRASE}",
+    ),
+    "C2C": (
+        r"(?<!\w)(?:tcc|c2c)(?!\w)",
+        rf"(?<!\w)с\s+{_CARD_PHRASE}{_CURRENCY_QUALIFIER}"
+        rf"\s+на\s+{_CARD_PHRASE}",
+    ),
+}
+_RECIPIENT_PATTERNS: dict[str, tuple[str, ...]] = {
+    "self": (
+        r"(?<!\w)сам(?:а|ому|ой)?\s+себе",
+        r"(?<!\w)между\s+своими\s+счет\w*",
+        r"плательщик\s+и\s+получатель\s+совпада\w*",
+    ),
+    "internal": (
+        r"(?<!\w)another_int(?!\w)",
+        r"(?<!\w)друг\w*\s+клиент\w*\s+(?:этого|того)\s+же\s+банк\w*",
+        r"(?<!\w)(?:внутри|в\s+пределах)\s+банк\w*",
+    ),
+    "external": (
+        r"(?<!\w)another_ext(?!\w)",
+        r"(?<!\w)(?:в|клиент\w*\s+в)\s+(?:друг\w*|сторонн\w*)\s+банк\w*",
+        r"(?<!\w)клиент\w*\s+(?:друг\w*|сторонн\w*)\s+банк\w*",
+    ),
+}
+_DIRECT_NEGATION_PREFIX = re.compile(
+    r"(?:^|\s)(?:без|исключая|кроме|не)"
+    r"(?:\s+для)?(?:\s+перевод\w*)?\s*$"
+)
+
+
+def _has_positive_match(pattern: str, text: str) -> bool:
+    for match in re.finditer(pattern, text):
+        # Suppress only a negation that directly qualifies this transfer phrase
+        # ("не для переводов в другой банк"). A nearby exception concerning a
+        # different noun ("кроме суммы со счёта на карту") must not suppress it.
+        if not _DIRECT_NEGATION_PREFIX.search(text[: match.start()]):
+            return True
+    return False
+
+
+def _extract_transfer_constraints(text: str) -> TransferConstraints:
+    """Recognize explicit transfer-type and recipient constraints.
+
+    The extractor intentionally understands only unambiguous codes and common
+    Russian formulations. Unrecognized prose stays an LLM ranking concern; once
+    a constraint is recognized, :meth:`TransferAssistant.compose` treats it as
+    strict and never offers conflicting templates to the model.
+    """
+
+    normalized = " ".join(str(text or "").casefold().replace("ё", "е").split())
+    instruments = frozenset(
+        value
+        for value, patterns in _INSTRUMENT_PATTERNS.items()
+        if any(_has_positive_match(pattern, normalized) for pattern in patterns)
+    )
+    recipients = frozenset(
+        value
+        for value, patterns in _RECIPIENT_PATTERNS.items()
+        if any(_has_positive_match(pattern, normalized) for pattern in patterns)
+    )
+    return TransferConstraints(instruments=instruments, recipients=recipients)
+
+
+def _template_matches(
+    requested: TransferConstraints, candidate: TransferConstraints
+) -> bool:
+    """Exclude only a candidate whose known constraints contradict the request.
+
+    Empty candidate dimensions remain eligible for LLM ranking; a description
+    that mentions multiple supported scenarios remains eligible when it includes
+    the requested one.
+    """
+
+    def compatible(expected: frozenset[str], actual: frozenset[str]) -> bool:
+        return not expected or not actual or expected.issubset(actual)
+
+    return (
+        compatible(requested.instruments, candidate.instruments)
+        and compatible(requested.recipients, candidate.recipients)
+    )
 
 ROLE_TITLES = {
     "sender": "Отправитель",
@@ -62,6 +184,120 @@ def _client_traits(attrs: dict[str, Any]) -> str:
     return ", ".join(parts)
 
 
+def _client_full_name(attrs: dict[str, Any]) -> str:
+    for key in ("fullName", "name", "shortName"):
+        value = attrs.get(key)
+        if value:
+            return str(value).strip()
+    return ""
+
+
+_LEGAL_ENTITY_PREFIXES = frozenset({"ао", "зао", "ип", "нко", "ооо", "пао"})
+
+
+def _normalized_words(value: str) -> list[str]:
+    return [word.casefold().replace("ё", "е") for word in _WORD_RE.findall(value)]
+
+
+def _surname_forms(surname: str) -> frozenset[str]:
+    """Common Russian case forms sufficient for surname mentions in requests."""
+
+    forms = {surname}
+    if surname.endswith(("ов", "ев", "ин", "ын")):
+        forms.update(f"{surname}{ending}" for ending in ("а", "е", "у", "ым"))
+    elif surname.endswith(("ский", "цкий")):
+        stem = surname[:-2]
+        forms.update(f"{stem}{ending}" for ending in ("ого", "ому", "им", "ом"))
+    elif surname.endswith(("ова", "ева", "ина", "ына")):
+        stem = surname[:-1]
+        forms.update((f"{stem}ой", f"{stem}у"))
+    elif surname.endswith(("ская", "цкая")):
+        stem = surname[:-2]
+        forms.update((f"{stem}ой", f"{stem}ую"))
+    return frozenset(forms)
+
+
+def _given_name_forms(name_part: str) -> frozenset[str]:
+    """Common Russian case forms for a given name or patronymic.
+
+    This deliberately stays a small deterministic inflector rather than adding
+    a heavyweight morphology dependency. Exact forms are always retained.
+    """
+
+    forms = {name_part}
+    if name_part.endswith("ия"):
+        stem = name_part[:-1]
+        forms.update((f"{stem}и", f"{stem}ю", f"{stem}ей"))
+    elif name_part.endswith("я"):
+        stem = name_part[:-1]
+        forms.update((f"{stem}и", f"{stem}е", f"{stem}ю", f"{stem}ей"))
+    elif name_part.endswith("а"):
+        stem = name_part[:-1]
+        genitive_ending = "и" if stem.endswith(tuple("гкхжчшщц")) else "ы"
+        forms.update(
+            (
+                f"{stem}{genitive_ending}",
+                f"{stem}е",
+                f"{stem}у",
+                f"{stem}ой",
+            )
+        )
+    elif name_part.endswith(("й", "ь")):
+        stem = name_part[:-1]
+        forms.update((f"{stem}я", f"{stem}ю", f"{stem}ем", f"{stem}е"))
+    elif name_part:
+        forms.update(
+            (
+                f"{name_part}а",
+                f"{name_part}у",
+                f"{name_part}ом",
+                f"{name_part}ем",
+                f"{name_part}е",
+            )
+        )
+    return frozenset(forms)
+
+
+def _ambiguous_requested_surname(prompt: str, clients: list[Client]) -> str | None:
+    """Return a mentioned surname shared by multiple visible clients, if any."""
+
+    request_words = set(_normalized_words(prompt or ""))
+    clients_by_surname: dict[str, list[tuple[Client, list[str]]]] = {}
+    display_surnames: dict[str, str] = {}
+    for client in clients:
+        full_name = _client_full_name(client.attributes or {})
+        display_words = _WORD_RE.findall(full_name)
+        name_words = _normalized_words(full_name)
+        if not name_words:
+            continue
+        normalized = name_words[0]
+        if normalized in _LEGAL_ENTITY_PREFIXES:
+            continue
+        display = display_words[0]
+        clients_by_surname.setdefault(normalized, []).append((client, name_words))
+        display_surnames.setdefault(normalized, display)
+
+    ambiguous: list[str] = []
+    for surname, matching_clients in clients_by_surname.items():
+        if len(matching_clients) < 2 or request_words.isdisjoint(_surname_forms(surname)):
+            continue
+        full_name_matches = [
+            client
+            for client, name_words in matching_clients
+            if len(name_words) > 1
+            and request_words.intersection(_surname_forms(name_words[0]))
+            and all(
+                not request_words.isdisjoint(_given_name_forms(word))
+                for word in name_words[1:]
+            )
+        ]
+        if len(full_name_matches) != 1:
+            ambiguous.append(surname)
+
+    ambiguous.sort()
+    return display_surnames[ambiguous[0]] if ambiguous else None
+
+
 def _with_tags(description: str | None, tags: list[str] | None) -> str:
     text = (description or "").strip()
     clean_tags = [t for t in (tags or []) if t]
@@ -74,6 +310,11 @@ def _with_tags(description: str | None, tags: list[str] | None) -> str:
 def _currency(account: Account) -> str:
     value = (account.attributes or {}).get("currency_id")
     return str(value) if value else ""
+
+
+def _template_summary(template: MessageTemplate) -> str:
+    value = (template.llm_meta or {}).get("summary")
+    return str(value) if value is not None else ""
 
 
 class TransferAssistant:
@@ -122,17 +363,60 @@ class TransferAssistant:
 
         # ---- Call 1: pick the template ----
         template_ids = {f"T{i}": tpl for i, tpl in enumerate(templates, start=1)}
+        requested_constraints = _extract_transfer_constraints(prompt)
+        if requested_constraints.conflicting:
+            raise ValidationFailed(
+                "В запросе одновременно указаны противоречащие типы перевода — "
+                "оставьте один вариант счёт/карта и одного адресата."
+            )
+
+        eligible_template_ids = template_ids
+        if requested_constraints.specified:
+            eligible_template_ids = {
+                short_id: tpl
+                for short_id, tpl in template_ids.items()
+                if _template_matches(
+                    requested_constraints,
+                    _extract_transfer_constraints(
+                        " ".join(
+                            (
+                                tpl.name or "",
+                                tpl.description or "",
+                                _template_summary(tpl),
+                            )
+                        )
+                    ),
+                )
+            }
+            if not eligible_template_ids:
+                raise ValidationFailed(
+                    "Не найден шаблон, не противоречащий явно указанному типу "
+                    "перевода и адресату."
+                )
+
+        # Surname ambiguity depends only on visible clients. Validate it before
+        # spending an LLM call on template ranking.
+        clients = await self.clients.list_all(visible_group_ids=visible_group_ids)
+        ambiguous_surname = _ambiguous_requested_surname(prompt, clients)
+        if ambiguous_surname:
+            raise ValidationFailed(
+                f"Найдено несколько клиентов с фамилией {ambiguous_surname}. "
+                "Уточните полное ФИО клиента."
+            )
+
         catalog = [
             {
                 "id": short_id,
-                "summary": (tpl.llm_meta or {}).get("summary", "") or tpl.description,
+                "name": tpl.name or "",
+                "description": tpl.description or "",
+                "summary": _template_summary(tpl),
             }
-            for short_id, tpl in template_ids.items()
+            for short_id, tpl in eligible_template_ids.items()
         ]
         chosen_id, template_debug = await llm_service.pick_transfer_template(
             request=prompt, templates=catalog
         )
-        template = template_ids.get(chosen_id) if chosen_id else None
+        template = eligible_template_ids.get(chosen_id) if chosen_id else None
         if template is None:
             raise ValidationFailed(
                 "Не удалось подобрать подходящий шаблон по запросу — "
@@ -143,7 +427,6 @@ class TransferAssistant:
         # Only data the caller may see is offered to the model — otherwise a
         # hidden group's test data would be sent to the LLM and rendered back to
         # someone who never unlocked it.
-        clients = await self.clients.list_all(visible_group_ids=visible_group_ids)
         accounts = await self.accounts.list_all(visible_group_ids=visible_group_ids)
         cards = await self.cards.list_all(visible_group_ids=visible_group_ids)
 
@@ -157,6 +440,7 @@ class TransferAssistant:
         clients_catalog = [
             {
                 "id": sid,
+                "full_name": _client_full_name(c.attributes or {}),
                 "traits": _client_traits(c.attributes or {}),
                 "description": _with_tags(c.description, c.tags),
             }

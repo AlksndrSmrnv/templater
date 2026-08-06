@@ -63,12 +63,11 @@ def _format_leaf_value(value: str) -> str:
     return flat
 
 
-def _one_line(value: str, limit: int) -> str:
-    """Collapse whitespace and cap length — keeps catalog rows to one short line
-    so the prompt stays small for a weak model on a tight token budget."""
+def _one_line(value: str, limit: int | None = None) -> str:
+    """Collapse whitespace and optionally cap a value for a compact prompt row."""
 
     flat = " ".join(str(value or "").split())
-    if len(flat) > limit:
+    if limit is not None and len(flat) > limit:
         return flat[:limit] + "…"
     return flat
 
@@ -174,8 +173,12 @@ _FIELD_MAPPING_DEFAULT = (
 
 _TRANSFER_PICK_DEFAULT = (
     "Ты подбираешь шаблон банковского перевода по запросу пользователя.\n"
-    "Дан список шаблонов: id — краткое описание.\n"
+    "Дан список шаблонов: id, название, описание и LLM-резюме.\n"
     "Выбери ОДИН id наиболее подходящего шаблона.\n"
+    "Явно указанные условия обязательны и важнее общего сходства текста: тип "
+    "счёт/карта (A2A/A2C/C2A/C2C и TDD/TDC/TCD/TCC) и адресат перевода "
+    "(самому себе, клиенту этого же банка, клиенту другого банка). Никогда не "
+    "выбирай шаблон, который противоречит таким условиям.\n"
     "Ответь СТРОГО валидным JSON без пояснений: {\"template\": \"T1\"}.\n"
     "Если ничего не подходит — {\"template\": null}.\n"
 )
@@ -189,7 +192,8 @@ _TRANSFER_PARTICIPANTS_DEFAULT = (
     "Для каждой нужной роли выбери клиента (C..). Если в запросе указан счёт или "
     "карта в конкретной валюте — выбери и конкретный счёт (A..) и/или карту (K..) "
     "этого клиента; иначе оставь null.\n"
-    "Ориентируйся на описания и признаки сущностей.\n"
+    "Ориентируйся на ФИО, описания и признаки сущностей. Явно указанная в запросе "
+    "фамилия или ФИО клиента — обязательное условие.\n"
     "$owner_rule"
     "Ответь СТРОГО валидным JSON без пояснений:\n"
     '{"sender":{"client":"C1","account":null,"card":null},'
@@ -371,18 +375,36 @@ class PromptBuilder:
     ) -> tuple[str, str]:
         """Pick ONE template id matching the user's free-form transfer request.
 
-        ``templates`` are pre-condensed rows: ``{"id": "T1", "summary": str}``.
+        ``templates`` are pre-condensed rows with ``id``, ``name``,
+        ``description`` and ``summary``.
         Only LLM-processed templates are passed in by the caller. The short ids
         keep the model from echoing long UUIDs.
         """
 
         system_prompt = self._system("transfer_pick")
+        # Keep template text complete: decisive transfer-type evidence can be at
+        # the end of a description or summary. JSONL preserves row boundaries;
+        # the request and participant catalogs retain their separate limits.
         rows = [
-            f"{row['id']} — {_one_line(row.get('summary', ''), 200)}"
+            json.dumps(
+                {
+                    "id": row["id"],
+                    "name": _one_line(row.get("name", "")),
+                    "description": _one_line(row.get("description", "")),
+                    "summary": _one_line(row.get("summary", "")),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
             for row in templates
         ]
         user_prompt = (
-            f"Запрос: {_one_line(request, 400)}\n\nШаблоны:\n" + "\n".join(rows)
+            f"Запрос: {_one_line(request, 400)}\n\n"
+            "Явно указанные в запросе тип перевода и адресат обязательны; "
+            "противоречащий шаблон выбирать нельзя.\n\n"
+            "Шаблоны (JSONL: id, название, описание, LLM-резюме; "
+            "один объект на строку):\n"
+            + "\n".join(rows)
         )
         return system_prompt, user_prompt
 
@@ -398,7 +420,8 @@ class PromptBuilder:
         """Pick participants (client/account/card per role) for the transfer.
 
         Rows are pre-condensed short-id catalogs:
-          clients  — ``{"id": "C1", "traits": str, "description": str}``
+          clients  — ``{"id": "C1", "full_name": str, "traits": str,
+                       "description": str}``
           accounts — ``{"id": "A1", "client": "C1", "currency": str, "description": str}``
           cards    — ``{"id": "K1", "account": "A1", "description": str}``
         The model answers with short ids only; the caller expands them to UUIDs.
@@ -422,7 +445,8 @@ class PromptBuilder:
         )
 
         client_rows = [
-            f"{row['id']} | {_one_line(row.get('traits', ''), 60) or '—'} | "
+            f"{row['id']} | {_one_line(row.get('full_name', ''), 160) or '—'} | "
+            f"{_one_line(row.get('traits', ''), 60) or '—'} | "
             f"{_one_line(row.get('description', ''), 160) or '—'}"
             for row in clients
         ]
@@ -439,7 +463,11 @@ class PromptBuilder:
         ]
         user_prompt = (
             f"Запрос: {_one_line(request, 400)}\n\n"
-            "Клиенты (id | признаки | описание):\n" + "\n".join(client_rows) + "\n\n"
+            "Если в запросе указана фамилия или ФИО, выбери клиента с совпадающим "
+            "ФИО — это обязательное условие.\n\n"
+            "Клиенты (id | ФИО | признаки | описание):\n"
+            + "\n".join(client_rows)
+            + "\n\n"
             "Счета (id | клиент | валюта | описание):\n" + "\n".join(account_rows) + "\n\n"
             "Карты (id | счёт | описание):\n" + "\n".join(card_rows)
         )
