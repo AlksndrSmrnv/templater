@@ -84,7 +84,7 @@ _INSTRUMENT_PATTERNS: dict[str, tuple[str, ...]] = {
 }
 _RECIPIENT_PATTERNS: dict[str, tuple[str, ...]] = {
     "self": (
-        r"(?<!\w)сам(?:ому|ой)?\s+себе",
+        r"(?<!\w)сам(?:а|ому|ой)?\s+себе",
         r"(?<!\w)между\s+своими\s+счет\w*",
         r"плательщик\s+и\s+получатель\s+совпада\w*",
     ),
@@ -99,16 +99,18 @@ _RECIPIENT_PATTERNS: dict[str, tuple[str, ...]] = {
         r"(?<!\w)клиент\w*\s+(?:друг\w*|сторонн\w*)\s+банк\w*",
     ),
 }
-_NEGATION_WORDS = frozenset({"без", "исключая", "кроме", "не"})
+_DIRECT_NEGATION_PREFIX = re.compile(
+    r"(?:^|\s)(?:без|исключая|кроме|не)"
+    r"(?:\s+для)?(?:\s+перевод\w*)?\s*$"
+)
 
 
 def _has_positive_match(pattern: str, text: str) -> bool:
     for match in re.finditer(pattern, text):
-        preceding_words = {
-            word.casefold()
-            for word in _WORD_RE.findall(text[: match.start()])[-3:]
-        }
-        if preceding_words.isdisjoint(_NEGATION_WORDS):
+        # Suppress only a negation that directly qualifies this transfer phrase
+        # ("не для переводов в другой банк"). A nearby exception concerning a
+        # different noun ("кроме суммы со счёта на карту") must not suppress it.
+        if not _DIRECT_NEGATION_PREFIX.search(text[: match.start()]):
             return True
     return False
 
@@ -215,6 +217,47 @@ def _surname_forms(surname: str) -> frozenset[str]:
     return frozenset(forms)
 
 
+def _given_name_forms(name_part: str) -> frozenset[str]:
+    """Common Russian case forms for a given name or patronymic.
+
+    This deliberately stays a small deterministic inflector rather than adding
+    a heavyweight morphology dependency. Exact forms are always retained.
+    """
+
+    forms = {name_part}
+    if name_part.endswith("ия"):
+        stem = name_part[:-1]
+        forms.update((f"{stem}и", f"{stem}ю", f"{stem}ей"))
+    elif name_part.endswith("я"):
+        stem = name_part[:-1]
+        forms.update((f"{stem}и", f"{stem}е", f"{stem}ю", f"{stem}ей"))
+    elif name_part.endswith("а"):
+        stem = name_part[:-1]
+        genitive_ending = "и" if stem.endswith(tuple("гкхжчшщц")) else "ы"
+        forms.update(
+            (
+                f"{stem}{genitive_ending}",
+                f"{stem}е",
+                f"{stem}у",
+                f"{stem}ой",
+            )
+        )
+    elif name_part.endswith(("й", "ь")):
+        stem = name_part[:-1]
+        forms.update((f"{stem}я", f"{stem}ю", f"{stem}ем", f"{stem}е"))
+    elif name_part:
+        forms.update(
+            (
+                f"{name_part}а",
+                f"{name_part}у",
+                f"{name_part}ом",
+                f"{name_part}ем",
+                f"{name_part}е",
+            )
+        )
+    return frozenset(forms)
+
+
 def _ambiguous_requested_surname(prompt: str, clients: list[Client]) -> str | None:
     """Return a mentioned surname shared by multiple visible clients, if any."""
 
@@ -243,7 +286,10 @@ def _ambiguous_requested_surname(prompt: str, clients: list[Client]) -> str | No
             for client, name_words in matching_clients
             if len(name_words) > 1
             and request_words.intersection(_surname_forms(name_words[0]))
-            and all(word in request_words for word in name_words[1:])
+            and all(
+                not request_words.isdisjoint(_given_name_forms(word))
+                for word in name_words[1:]
+            )
         ]
         if len(full_name_matches) != 1:
             ambiguous.append(surname)

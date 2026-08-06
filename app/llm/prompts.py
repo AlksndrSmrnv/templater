@@ -382,6 +382,9 @@ class PromptBuilder:
         """
 
         system_prompt = self._system("transfer_pick")
+        # Keep template text complete: decisive transfer-type evidence can be at
+        # the end of a description or summary. JSONL preserves row boundaries;
+        # the request and participant catalogs retain their separate limits.
         rows = [
             json.dumps(
                 {

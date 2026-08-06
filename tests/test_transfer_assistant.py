@@ -168,6 +168,12 @@ def test_extract_transfer_constraints_recognizes_colloquial_self() -> None:
     )
 
 
+def test_extract_transfer_constraints_recognizes_feminine_colloquial_self() -> None:
+    assert _extract_transfer_constraints("перевод сама себе").recipients == frozenset(
+        {"self"}
+    )
+
+
 def test_extract_transfer_constraints_does_not_bridge_enumerated_types() -> None:
     constraints = _extract_transfer_constraints(
         "Переводы со счёта на счёт и с карты на карту"
@@ -180,6 +186,22 @@ def test_extract_transfer_constraints_ignores_negated_recipient() -> None:
     constraints = _extract_transfer_constraints("не для переводов в другой банк")
 
     assert constraints.recipients == frozenset()
+
+
+def test_extract_transfer_constraints_does_not_apply_distant_exception() -> None:
+    constraints = _extract_transfer_constraints(
+        "Переведи всё кроме суммы со счёта на карту"
+    )
+
+    assert constraints.instruments == frozenset({"A2C"})
+
+
+def test_extract_transfer_constraints_ignores_directly_negated_instrument() -> None:
+    constraints = _extract_transfer_constraints(
+        "подбери всё кроме переводов со счёта на карту"
+    )
+
+    assert constraints.instruments == frozenset()
 
 
 def test_template_matches_known_value_and_keeps_unknown_or_multi_value_candidate() -> None:
@@ -226,6 +248,20 @@ def test_ambiguous_surname_accepts_unique_full_name() -> None:
     assert (
         _ambiguous_requested_surname(
             "перевод от клиента Иванов Иван Иванович", clients
+        )
+        is None
+    )
+
+
+def test_ambiguous_surname_accepts_declined_unique_full_name() -> None:
+    clients = [
+        _client(fullName="Иванов Иван Иванович"),
+        _client(fullName="Иванов Пётр Петрович"),
+    ]
+
+    assert (
+        _ambiguous_requested_surname(
+            "перевод от клиента Иванова Ивана Ивановича", clients
         )
         is None
     )
@@ -408,7 +444,7 @@ async def test_compose_accepts_full_name_among_same_surname_clients() -> None:
     llm = _CapturingLLM("T1")
 
     with pytest.raises(ValidationFailed, match="участников"):
-        await assistant.compose("перевод от клиента Иванов Иван Иванович", llm)
+        await assistant.compose("перевод от клиента Иванова Ивана Ивановича", llm)
 
     assert [row["id"] for row in llm.template_catalogs[0]] == ["T1"]
     assert len(llm.participant_clients[0]) == 2
