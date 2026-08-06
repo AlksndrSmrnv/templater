@@ -1327,6 +1327,15 @@ def test_home_shows_assistant_form_when_llm_active() -> None:
     assert 'id="assistant-errors"' in html
 
 
+def test_home_clears_previous_assistant_error_before_retry() -> None:
+    html = render_template("home.html", {"active": "home", "llm_active": True})
+    form = start_tags(html, "form")[0]
+
+    assert form["hx-on::before-request"] == (
+        "this.querySelector('#assistant-errors').replaceChildren()"
+    )
+
+
 def test_home_hides_assistant_form_when_llm_inactive() -> None:
     html = render_template("home.html", {"active": "home", "llm_active": False})
     assert 'name="prompt"' not in html
