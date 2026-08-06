@@ -12,6 +12,7 @@
     <form hx-post="/templater/assistant/compose"
           hx-target="#assistant-result"
           hx-swap="innerHTML"
+          hx-on::before-request="this.querySelector('#assistant-errors').replaceChildren()"
           hx-disabled-elt="find button">
         <textarea name="prompt"
                   class="assistant-prompt"
